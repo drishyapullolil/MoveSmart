@@ -19,6 +19,10 @@ function Signup() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [alertInfo, setAlertInfo] = useState({ message: "", type: "" }); // success | error
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpError, setOtpError] = useState("");
 
   // ===== Validators =====
 
@@ -86,6 +90,12 @@ function Signup() {
     const val = e.target.value;
     setEmail(val);
     setEmailError(validateEmailFormat(val));
+    if (otpSent) {
+      setOtpSent(false);
+      setOtpVerified(false);
+      setOtp("");
+      setOtpError("");
+    }
   };
 
   const handlePasswordChange = (e) => {
@@ -94,10 +104,13 @@ function Signup() {
     setPasswordError(validatePasswordFormat(val));
   };
 
-  const handleSignup = async (e) => {
-    e.preventDefault();
+  const handleOtpChange = (e) => {
+    const val = e.target.value.replace(/\D/g, "").slice(0, 6);
+    setOtp(val);
+    setOtpError("");
+  };
 
-    // Clear alert
+  const handleSendOtp = async () => {
     setAlertInfo({ message: "", type: "" });
 
     const nameValErr = validateName(name);
@@ -115,18 +128,84 @@ function Signup() {
     setLoading(true);
 
     try {
+      await axios.post("/api/auth/send-otp", { email: email.trim() });
+      setOtpSent(true);
+      setOtpVerified(false);
+      setOtp("");
+      setOtpError("");
+      setAlertInfo({
+        message: `OTP sent to ${email.trim()}. Please check your inbox.`,
+        type: "success",
+      });
+    } catch (error) {
+      const errMsg = error.response?.data?.message || "Failed to send OTP. Please try again.";
+      const detailedMessage = errMsg.includes("SMTP")
+        ? "Email delivery is not configured. Set a valid SMTP app password in the backend environment and restart the server."
+        : errMsg;
+      setAlertInfo({ message: detailedMessage, type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+
+    setAlertInfo({ message: "", type: "" });
+
+    const nameValErr = validateName(name);
+    const emailValErr = validateEmailFormat(email);
+    const passValErr = validatePasswordFormat(password);
+
+    setNameError(nameValErr);
+    setEmailError(emailValErr);
+    setPasswordError(passValErr);
+
+    if (nameValErr || emailValErr || passValErr) {
+      return;
+    }
+
+    if (!otpSent) {
+      handleSendOtp();
+      return;
+    }
+
+    if (!otpVerified) {
+      if (!otp.trim()) {
+        setOtpError("Please enter the OTP sent to your email");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await axios.post("/api/auth/verify-otp", {
+          email: email.trim(),
+          otp: otp.trim(),
+        });
+        setOtpVerified(true);
+        setAlertInfo({ message: "Email verified successfully. Creating your account...", type: "success" });
+      } catch (error) {
+        const errMsg = error.response?.data?.message || "Invalid OTP. Please try again.";
+        setOtpError(errMsg);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setLoading(true);
+
+    try {
       const response = await axios.post(
-        "http://localhost:5000/api/auth/signup",
+        "/api/auth/signup",
         { name: name.trim(), email: email.trim(), password }
       );
 
-      // Success feedback
       setAlertInfo({
         message: response.data.message || "Account created successfully!",
         type: "success",
       });
 
-      // Navigate to login page after short delay for animation
       setTimeout(() => {
         navigate("/login");
       }, 1500);
@@ -269,6 +348,45 @@ function Signup() {
             )}
           </div>
 
+          {/* OTP input */}
+          {otpSent && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="signup-otp">Email Verification Code</label>
+              <div className="input-wrapper">
+                <span className="input-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="M7 9h10" />
+                    <path d="M7 13h6" />
+                  </svg>
+                </span>
+                <input
+                  id="signup-otp"
+                  type="text"
+                  name="otp"
+                  value={otp}
+                  placeholder="Enter 6-digit code"
+                  onChange={handleOtpChange}
+                  className={otpError ? "error-state" : ""}
+                  disabled={loading}
+                  aria-invalid={!!otpError}
+                  aria-describedby={otpError ? "otp-error" : undefined}
+                  required
+                />
+              </div>
+              {otpError && (
+                <div className="error-msg" id="otp-error">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  {otpError}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Password input */}
           <div className="form-group">
             <label className="form-label" htmlFor="signup-password">Password</label>
@@ -353,8 +471,12 @@ function Signup() {
                 <div className="spinner"></div>
                 <span>Creating Account...</span>
               </>
+            ) : otpSent && !otpVerified ? (
+              <span>Verify OTP</span>
+            ) : otpVerified ? (
+              <span>Create Account</span>
             ) : (
-              <span>Sign Up</span>
+              <span>Send OTP</span>
             )}
           </button>
         </form>

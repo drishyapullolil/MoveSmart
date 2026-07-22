@@ -1,15 +1,44 @@
+/* ===================================================================
+   Design tokens — swap these into your :root (or existing theme file).
+   Moved off the typical orange/amber "starter template" accent to a
+   calmer indigo-violet, with softer neutrals and gentler shadows.
+   =================================================================== */
+:root {
+  --accent: #6C5CE7;          /* primary accent — indigo-violet */
+  --accent-bg: #F1EFFE;       /* pale tint for accent surfaces */
+  --accent-border: #B8ACF6;   /* mid-tone for hover borders */
+  --accent-hover: #5B4BD6;    /* darker accent for pressed/hover states */
+
+  --text-h: #1E1B2E;          /* heading / primary text */
+  --text-body: #4B4760;       /* secondary / body text */
+
+  --border: #E4E1F0;          /* hairline dividers */
+  --social-bg: #F7F6FC;       /* pill/button background */
+
+  --shadow: 0 6px 18px rgba(108, 92, 231, 0.16);
+  --shadow-soft: 0 2px 8px rgba(30, 27, 46, 0.06);
+}
+
+/* ===================================================================
+   Component styles
+   =================================================================== */
+
 .counter {
   font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 8px;
+  color: var(--accent-hover);
   background: var(--accent-bg);
   border: 2px solid transparent;
-  transition: border-color 0.3s;
+  box-shadow: var(--shadow-soft);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.15s ease;
   margin-bottom: 24px;
 
   &:hover {
     border-color: var(--accent-border);
+    box-shadow: var(--shadow);
+    transform: translateY(-1px);
   }
   &:focus-visible {
     outline: 2px solid var(--accent);
@@ -31,6 +60,7 @@
     width: 170px;
     position: relative;
     z-index: 0;
+    filter: drop-shadow(0 12px 24px rgba(30, 27, 46, 0.12));
   }
 
   .framework,
@@ -63,6 +93,7 @@
   place-content: center;
   place-items: center;
   flex-grow: 1;
+  color: var(--text-body);
 
   @media (max-width: 1024px) {
     padding: 32px 20px 24px;
@@ -78,6 +109,12 @@
   & > div {
     flex: 1 1 0;
     padding: 32px;
+    transition: background 0.25s ease;
+
+    &:hover {
+      background: var(--accent-bg);
+    }
+
     @media (max-width: 1024px) {
       padding: 24px 20px;
     }
@@ -87,6 +124,15 @@
     margin-bottom: 16px;
     width: 22px;
     height: 22px;
+    color: var(--accent);
+  }
+
+  h3 {
+    color: var(--text-h);
+  }
+
+  p {
+    color: var(--text-body);
   }
 
   @media (max-width: 1024px) {
@@ -118,17 +164,25 @@
   a {
     color: var(--text-h);
     font-size: 16px;
-    border-radius: 6px;
+    font-weight: 500;
+    border-radius: 8px;
     background: var(--social-bg);
     display: flex;
-    padding: 6px 12px;
+    padding: 8px 14px;
     align-items: center;
     gap: 8px;
     text-decoration: none;
-    transition: box-shadow 0.3s;
+    border: 1px solid transparent;
+    transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.15s ease;
 
     &:hover {
       box-shadow: var(--shadow);
+      border-color: var(--accent-border);
+      transform: translateY(-1px);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
     .button-icon {
       height: 18px;

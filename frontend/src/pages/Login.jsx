@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-
 function Login() {
   const navigate = useNavigate();
 
@@ -32,6 +31,16 @@ function Login() {
   });
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
+
+  useEffect(() => {
+    const hasSession = !!localStorage.getItem("user") || !!localStorage.getItem("authToken");
+    if (hasSession) {
+      const savedUser = localStorage.getItem("user");
+      const parsedUser = savedUser ? JSON.parse(savedUser) : null;
+      const targetPath = parsedUser?.role?.toLowerCase() === "admin" ? "/admin" : "/dashboard";
+      navigate(targetPath);
+    }
+  }, [navigate]);
 
   // Forgot password modal state
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -89,7 +98,7 @@ function Login() {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/auth/login",
+        "/api/auth/login",
         { email: email.trim(), password }
       );
 
@@ -107,11 +116,13 @@ function Login() {
       }
 
       // Save user info
-      localStorage.setItem("user", JSON.stringify(response.data.user));
+      const loggedInUser = response.data.user;
+      localStorage.setItem("user", JSON.stringify(loggedInUser));
+      localStorage.setItem("authToken", response.data.token || response.data.accessToken || "authenticated");
 
-      // Navigate to dashboard after short delay for animation
+      // Navigate to the correct dashboard after short delay for animation
       setTimeout(() => {
-        navigate("/dashboard");
+        navigate(loggedInUser?.role?.toLowerCase() === "admin" ? "/admin" : "/dashboard");
       }, 1000);
     } catch (error) {
       console.error(error);
