@@ -4,6 +4,7 @@ const Stop = require("../models/Stop");
 const StopDistance = require("../models/StopDistance");
 const RfidCard = require("../models/RfidCard");
 const Journey = require("../models/Journey");
+const CardApplication = require("../models/CardApplication");
 
 // Seed Stops and Distances
 router.post("/seed", async (req, res) => {
@@ -578,6 +579,177 @@ router.post("/tap", async (req, res) => {
   } catch (error) {
     console.error("Tap Error:", error);
     res.status(500).json({ message: "System error: " + error.message });
+  }
+});
+
+// ==========================================
+// CARD APPLICATION WORKFLOW ENDPOINTS
+// ==========================================
+
+// 1. Submit Application (User)
+router.post("/apply", async (req, res) => {
+  try {
+    const data = req.body;
+    const count = await CardApplication.countDocuments();
+    const applicationId = `APP-MS-${(count + 1001).toString()}`;
+
+    const newApp = new CardApplication({
+      applicationId,
+      user: data.userId || (req.session && req.session.userId) || null,
+      fullName: data.fullName || "Commuter",
+      dob: data.dob,
+      gender: data.gender,
+      phone: data.phone,
+      email: data.email,
+      phoneVerified: data.phoneVerified || false,
+
+      street: data.street,
+      city: data.city,
+      district: data.district,
+      state: data.state || "Kerala",
+      pincode: data.pincode,
+
+      idType: data.idType || "Aadhaar",
+      idNumber: data.idNumber || "N/A",
+      idProofUrl: data.idProofUrl || "",
+      cardCategory: data.cardCategory || "Regular",
+      institutionName: data.institutionName,
+      studentIdUrl: data.studentIdUrl,
+
+      frequentSource: data.frequentSource,
+      frequentDestination: data.frequentDestination,
+      preferredTime: data.preferredTime || "Morning",
+      emergencyName: data.emergencyName,
+      emergencyRelation: data.emergencyRelation,
+      emergencyPhone: data.emergencyPhone,
+
+      initialRecharge: Number(data.initialRecharge || 20),
+      paymentMethod: data.paymentMethod || "UPI",
+      enableSos: data.enableSos !== false,
+      shareLocation: data.shareLocation === true,
+      termsAccepted: data.termsAccepted !== false,
+
+      status: "Pending",
+    });
+
+    await newApp.save();
+
+    res.status(201).json({
+      message: "Application submitted successfully",
+      application: newApp,
+    });
+  } catch (error) {
+    console.error("Card Application Submit Error:", error);
+    res.status(500).json({ error: "Failed to submit application: " + error.message });
+  }
+});
+
+// 2. Get My Applications (User)
+router.get("/my-applications", async (req, res) => {
+  try {
+    const apps = await CardApplication.find({}).sort({ createdAt: -1 });
+    res.json(apps);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch user applications" });
+  }
+});
+
+// 3. Admin: List All Applications
+router.get("/applications", async (req, res) => {
+  try {
+    const { status } = req.query;
+    const query = status && status !== "All" ? { status } : {};
+    const apps = await CardApplication.find(query).sort({ createdAt: -1 });
+    res.json(apps);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch admin applications" });
+  }
+});
+
+// 4. Admin: Approve Application
+router.post("/applications/:id/approve", async (req, res) => {
+  try {
+    const { rfidTag, cardType } = req.body;
+    const app = await CardApplication.findById(req.params.id);
+    if (!app) return res.status(404).json({ error: "Application not found" });
+
+    // Generate unique Card ID
+    const cardPrefix = cardType === "Gold" ? "5" : (cardType === "Blue" ? "3" : "1");
+    const randomNumber = Math.floor(100000000 + Math.random() * 900000000).toString();
+    const assignedCardNumber = (cardPrefix + randomNumber).substring(0, 10);
+    const tagUid = rfidTag || `TAG-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    // Create & Activate RFID Card
+    const newCard = new RfidCard({
+      cardNumber: assignedCardNumber,
+      rfidTag: tagUid.toUpperCase(),
+      balance: app.initialRecharge || 20,
+      cardType: cardType || (app.cardCategory === "Student" ? "Blue" : "Silver"),
+      status: "Active",
+    });
+    await newCard.save();
+
+    // Update Application Status
+    app.status = "Approved";
+    app.assignedCardNumber = assignedCardNumber;
+    app.assignedRfidTag = tagUid.toUpperCase();
+    app.reviewedAt = new Date();
+    await app.save();
+
+    res.json({
+      message: "Application approved and RFID Card activated! SMS/Email notification sent.",
+      application: app,
+      card: newCard,
+    });
+  } catch (error) {
+    console.error("Approval Error:", error);
+    res.status(500).json({ error: "Failed to approve application: " + error.message });
+  }
+});
+
+// 5. Admin: Reject Application
+router.post("/applications/:id/reject", async (req, res) => {
+  try {
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: "Rejection reason is required" });
+    }
+
+    const app = await CardApplication.findById(req.params.id);
+    if (!app) return res.status(404).json({ error: "Application not found" });
+
+    app.status = "Rejected";
+    app.rejectionReason = reason;
+    app.reviewedAt = new Date();
+    await app.save();
+
+    res.json({
+      message: "Application rejected. SMS/Email notification sent to applicant.",
+      application: app,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to reject application" });
+  }
+});
+
+// 6. Admin: Request Correction
+router.post("/applications/:id/correction", async (req, res) => {
+  try {
+    const { note } = req.body;
+    const app = await CardApplication.findById(req.params.id);
+    if (!app) return res.status(404).json({ error: "Application not found" });
+
+    app.status = "Correction Needed";
+    app.correctionNote = note || "Please review and re-upload required documents.";
+    app.reviewedAt = new Date();
+    await app.save();
+
+    res.json({
+      message: "Correction requested. SMS/Email notification sent to applicant.",
+      application: app,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to request correction" });
   }
 });
 

@@ -216,16 +216,17 @@ function Profile() {
     <div className="rta-body-theme" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* MoveSmart Header Navigation */}
       <nav className="rta-nav">
-        <Link to="/" className="rta-logo">
-          <div className="brand-icon" style={{ display: "inline-flex", background: "var(--primary)", color: "#fff", padding: "6px", borderRadius: "8px", marginRight: "4px" }}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M12 18v2M6 18h12M6 6c0-2 2-3 6-3s6 1 6 3" />
-              <circle cx="6.5" cy="14.5" r="1.5" fill="currentColor" />
-              <circle cx="17.5" cy="14.5" r="1.5" fill="currentColor" />
-            </svg>
-          </div>
-          <span>MoveSmart Portal</span>
+        <Link to="/" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }}>
+          <img 
+            src="/logo.png" 
+            alt="MoveSmart Logo" 
+            style={{ 
+              height: "72px", 
+              width: "auto", 
+              objectFit: "contain",
+              filter: "drop-shadow(0px 2px 6px rgba(0,0,0,0.06))"
+            }} 
+          />
         </Link>
         <div className="rta-nav-menu">
           <Link to="/" className="rta-nav-link">Home</Link>

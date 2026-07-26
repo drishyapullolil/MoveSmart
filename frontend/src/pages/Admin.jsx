@@ -31,8 +31,25 @@ function Admin() {
   const [distKm, setDistKm] = useState("");
   const [distanceMessage, setDistanceMessage] = useState("");
   
-  // Admin Card adjustment Form States
-  const [adminAdjustAmount, setAdminAdjustAmount] = useState({});
+  // ---------------- Card Applications Admin States ----------------
+  const [adminApplications, setAdminApplications] = useState([]);
+  const [adminAppFilter, setAdminAppFilter] = useState("All");
+  const [actionApp, setActionApp] = useState(null);
+  const [actionType, setActionType] = useState(null); // 'details' | 'approve' | 'reject' | 'correction'
+  const [approveRfidTag, setApproveRfidTag] = useState("");
+  const [approveCardType, setApproveCardType] = useState("Silver");
+  const [rejectReason, setRejectReason] = useState("");
+  const [correctionNote, setCorrectionNote] = useState("");
+  const [adminActionMessage, setAdminActionMessage] = useState("");
+
+  const fetchAdminApplications = async () => {
+    try {
+      const res = await axios.get("/api/rfid/applications");
+      setAdminApplications(res.data || []);
+    } catch (err) {
+      console.error("Error fetching admin applications:", err);
+    }
+  };
 
   const fetchAdminRfidData = async () => {
     try {
@@ -147,6 +164,66 @@ function Admin() {
         setSimResult(err.response.data);
       }
       fetchAdminRfidData();
+    }
+  };
+
+  // ---------------- Card Applications Admin Handlers ----------------
+  const handleApproveAppSubmit = async (e) => {
+    e.preventDefault();
+    if (!actionApp) return;
+    try {
+      const res = await axios.post(`/api/rfid/applications/${actionApp._id}/approve`, {
+        rfidTag: approveRfidTag,
+        cardType: approveCardType,
+      });
+      setAdminActionMessage(`🎉 ${res.data.message || "Application Approved & RFID Card Activated!"}`);
+      setActionApp(null);
+      setActionType(null);
+      setApproveRfidTag("");
+      fetchAdminApplications();
+      fetchAdminRfidData();
+      setTimeout(() => setAdminActionMessage(""), 6000);
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to approve application");
+    }
+  };
+
+  const handleRejectAppSubmit = async (e) => {
+    e.preventDefault();
+    if (!actionApp || !rejectReason.trim()) {
+      alert("Rejection reason is required.");
+      return;
+    }
+    try {
+      const res = await axios.post(`/api/rfid/applications/${actionApp._id}/reject`, {
+        reason: rejectReason.trim(),
+      });
+      setAdminActionMessage(`❌ ${res.data.message || "Application Rejected"}`);
+      setActionApp(null);
+      setActionType(null);
+      setRejectReason("");
+      fetchAdminApplications();
+      setTimeout(() => setAdminActionMessage(""), 6000);
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to reject application");
+    }
+  };
+
+  const handleCorrectionAppSubmit = async (e) => {
+    e.preventDefault();
+    if (!actionApp) return;
+    try {
+      const res = await axios.post(`/api/rfid/applications/${actionApp._id}/correction`, {
+        note: correctionNote.trim(),
+      });
+      setAdminActionMessage(`🔄 ${res.data.message || "Correction Requested"}`);
+      setActionApp(null);
+      setActionType(null);
+      setCorrectionNote("");
+      fetchAdminApplications();
+      setTimeout(() => setAdminActionMessage(""), 6000);
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to request correction");
     }
   };
 
@@ -318,6 +395,7 @@ function Admin() {
       navigate("/login");
     } else {
       fetchAdminRfidData();
+      fetchAdminApplications();
     }
   }, [user, navigate]);
 
@@ -370,6 +448,12 @@ function Admin() {
               onClick={() => setActiveTab("overview")}
             >
               📊 Overview
+            </button>
+            <button
+              className={`profile-menu-item ${activeTab === "applications" ? "active" : ""}`}
+              onClick={() => setActiveTab("applications")}
+            >
+              📝 Card Applications ({adminApplications.filter(a => a.status === "Pending").length})
             </button>
             <button
               className={`profile-menu-item ${activeTab === "routes" ? "active" : ""}`}
@@ -930,6 +1014,322 @@ function Admin() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: CARD APPLICATIONS */}
+          {activeTab === "applications" && (
+            <div className="fade-in-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <h2 className="profile-section-title" style={{ margin: 0 }}>Card Applications Management</h2>
+                <button onClick={fetchAdminApplications} className="rta-btn-secondary" style={{ padding: "6px 14px", fontSize: "12.5px" }}>
+                  🔄 Refresh List
+                </button>
+              </div>
+
+              {adminActionMessage && (
+                <div style={{ padding: "12px 16px", borderRadius: "12px", background: "rgba(34, 197, 94, 0.1)", border: "1px solid rgba(34, 197, 94, 0.3)", color: "#15803d", fontWeight: "700", marginBottom: "20px", fontSize: "13.5px" }}>
+                  {adminActionMessage}
+                </div>
+              )}
+
+              {/* Status Filters */}
+              <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
+                {["All", "Pending", "Approved", "Rejected", "Correction Needed"].map((st) => {
+                  const isSelected = adminAppFilter === st;
+                  const count = st === "All" ? adminApplications.length : adminApplications.filter(a => a.status === st).length;
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setAdminAppFilter(st)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: "20px",
+                        border: `1px solid ${isSelected ? "var(--primary)" : "var(--rta-gray-border)"}`,
+                        background: isSelected ? "var(--primary)" : "#ffffff",
+                        color: isSelected ? "#ffffff" : "#475569",
+                        fontWeight: "700",
+                        fontSize: "13px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {st} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Applications List */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {adminApplications.filter(a => adminAppFilter === "All" || a.status === adminAppFilter).length === 0 ? (
+                  <div className="rta-card" style={{ padding: "30px", textAlign: "center", color: "#64748b", fontStyle: "italic" }}>
+                    No applications found under the "{adminAppFilter}" status filter.
+                  </div>
+                ) : (
+                  adminApplications
+                    .filter(a => adminAppFilter === "All" || a.status === adminAppFilter)
+                    .map((app) => {
+                      const badge = app.status === "Approved"
+                        ? { bg: "rgba(34, 197, 94, 0.12)", text: "#15803d", border: "rgba(34, 197, 94, 0.3)" }
+                        : app.status === "Rejected"
+                        ? { bg: "rgba(225, 29, 72, 0.12)", text: "#be123c", border: "rgba(225, 29, 72, 0.3)" }
+                        : app.status === "Correction Needed"
+                        ? { bg: "rgba(245, 158, 11, 0.15)", text: "#b45309", border: "rgba(245, 158, 11, 0.35)" }
+                        : { bg: "rgba(139, 92, 246, 0.12)", text: "#6d28d9", border: "rgba(139, 92, 246, 0.3)" };
+
+                      return (
+                        <div key={app._id} className="rta-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px" }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                              <span style={{ fontWeight: "800", fontSize: "16px", color: "#1e293b" }}>{app.fullName}</span>
+                              <span style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--primary)", fontWeight: "700" }}>{app.applicationId}</span>
+                              <span style={{ fontSize: "11px", fontWeight: "800", padding: "3px 10px", borderRadius: "999px", background: badge.bg, color: badge.text, border: `1px solid ${badge.border}` }}>
+                                {app.status}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "12.5px", color: "#64748b", marginTop: "4px" }}>
+                              {app.cardCategory || "Regular"} Pass · ID: {app.idType} ({app.idNumber}) · Phone: {app.phone || "N/A"} · {app.city || "Kerala"}, {app.state || "Kerala"}
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              onClick={() => { setActionApp(app); setActionType("details"); }}
+                              className="rta-btn-secondary"
+                              style={{ padding: "6px 12px", fontSize: "12.5px" }}
+                            >
+                              👁️ View Details
+                            </button>
+
+                            {app.status === "Pending" || app.status === "Correction Needed" ? (
+                              <>
+                                <button
+                                  onClick={() => { setActionApp(app); setActionType("approve"); setApproveRfidTag(""); setApproveCardType(app.cardCategory === "Student" ? "Blue" : "Silver"); }}
+                                  className="rta-btn-primary"
+                                  style={{ padding: "6px 14px", fontSize: "12.5px", background: "#16a34a" }}
+                                >
+                                  ✅ Approve
+                                </button>
+                                <button
+                                  onClick={() => { setActionApp(app); setActionType("correction"); setCorrectionNote(""); }}
+                                  className="rta-btn-secondary"
+                                  style={{ padding: "6px 12px", fontSize: "12.5px", color: "#d97706", borderColor: "rgba(245, 158, 11, 0.4)" }}
+                                >
+                                  🔄 Correction
+                                </button>
+                                <button
+                                  onClick={() => { setActionApp(app); setActionType("reject"); setRejectReason(""); }}
+                                  className="rta-btn-secondary"
+                                  style={{ padding: "6px 12px", fontSize: "12.5px", color: "#dc2626", borderColor: "rgba(220, 38, 38, 0.4)" }}
+                                >
+                                  ❌ Reject
+                                </button>
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ACTION MODALS */}
+          {actionApp && actionType && (
+            <div className="modal-overlay" style={{ zIndex: 200 }}>
+              <div className="modal-content" style={{ maxWidth: "560px", width: "92%", padding: "28px" }}>
+                
+                {/* 1. DETAILS MODAL */}
+                {actionType === "details" && (
+                  <div>
+                    <h3 style={{ fontSize: "18px", fontWeight: "800", marginBottom: "4px" }}>
+                      Application Details: {actionApp.applicationId}
+                    </h3>
+                    <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "16px" }}>
+                      Review complete applicant submission and uploaded documents.
+                    </p>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px", maxHeight: "360px", overflowY: "auto", paddingRight: "6px" }}>
+                      
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                        <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>👤 Personal Information</div>
+                        <div><strong>Name:</strong> {actionApp.fullName}</div>
+                        <div><strong>DOB:</strong> {actionApp.dob || "N/A"} · <strong>Gender:</strong> {actionApp.gender || "N/A"}</div>
+                        <div>
+                          <strong>Phone:</strong> {actionApp.phone || "N/A"}{" "}
+                          <span style={{ fontSize: "11px", fontWeight: "700", color: actionApp.phoneVerified ? "#16a34a" : "#dc2626" }}>
+                            ({actionApp.phoneVerified ? "✓ Verified" : "⚠️ Unverified Phone"})
+                          </span>
+                        </div>
+                        <div><strong>Email:</strong> {actionApp.email || "N/A"}</div>
+                      </div>
+
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                        <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>📍 Address Details</div>
+                        <div>{actionApp.street ? `${actionApp.street}, ` : ""}{actionApp.city}, {actionApp.district}, {actionApp.state || "Kerala"} - {actionApp.pincode}</div>
+                      </div>
+
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                        <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>🪪 Identification & Category</div>
+                        <div><strong>Category:</strong> {actionApp.cardCategory || "Regular"}</div>
+                        <div><strong>ID Type:</strong> {actionApp.idType} (<strong>No:</strong> {actionApp.idNumber})</div>
+                        {actionApp.idProofUrl && <div><strong>Uploaded ID Proof:</strong> 📄 <code>{actionApp.idProofUrl}</code></div>}
+                        
+                        {actionApp.cardCategory === "Student" && (
+                          <div style={{ marginTop: "6px", paddingTop: "6px", borderTop: "1px dashed #cbd5e1" }}>
+                            <div><strong>Institution:</strong> {actionApp.institutionName || "N/A"}</div>
+                            {actionApp.studentIdUrl && <div><strong>Student ID Proof:</strong> 📄 <code>{actionApp.studentIdUrl}</code></div>}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                        <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>🚌 Travel & Emergency Contact</div>
+                        <div><strong>Frequent Route:</strong> {actionApp.frequentSource || "Any"} ➔ {actionApp.frequentDestination || "Any"}</div>
+                        <div><strong>Preferred Time:</strong> {actionApp.preferredTime || "Morning"}</div>
+                        <div><strong>Emergency Contact:</strong> {actionApp.emergencyName || "N/A"} ({actionApp.emergencyRelation || "Relative"}) - {actionApp.emergencyPhone || "N/A"}</div>
+                      </div>
+
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                        <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>💳 Wallet & Safety Settings</div>
+                        <div><strong>Initial Wallet Balance:</strong> {actionApp.initialRecharge} AED/INR (Paid via {actionApp.paymentMethod})</div>
+                        <div><strong>SOS Feature:</strong> {actionApp.enableSos ? "ENABLED ✅" : "DISABLED"} · <strong>Location Sharing:</strong> {actionApp.shareLocation ? "ENABLED ✅" : "DISABLED"}</div>
+                      </div>
+
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "20px" }}>
+                      <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} className="rta-btn-secondary">
+                        Close Details
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. APPROVAL MODAL */}
+                {actionType === "approve" && (
+                  <form onSubmit={handleApproveAppSubmit}>
+                    <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#16a34a", marginBottom: "4px" }}>
+                      ✅ Approve Application & Issue Card
+                    </h3>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "16px" }}>
+                      Assign an RFID/NFC Tag UID for applicant <strong>{actionApp.fullName}</strong> ({actionApp.applicationId}).
+                    </p>
+
+                    <div className="rta-input-group" style={{ marginBottom: "14px" }}>
+                      <label>Select Card Class / Tier</label>
+                      <select className="rta-input-field" value={approveCardType} onChange={(e) => setApproveCardType(e.target.value)}>
+                        <option value="Silver">Silver Card (Standard Rate)</option>
+                        <option value="Gold">Gold Card (Premium Class)</option>
+                        <option value="Blue">Blue Card (Student / Concession Pass)</option>
+                      </select>
+                    </div>
+
+                    <div className="rta-input-group" style={{ marginBottom: "20px" }}>
+                      <label>RFID / NFC Hardware Tag UID (Hex or Tag Serial)</label>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <input
+                          type="text"
+                          className="rta-input-field"
+                          placeholder="e.g. 4A:2B:3C:4D or 047A221980"
+                          value={approveRfidTag}
+                          onChange={(e) => setApproveRfidTag(e.target.value.toUpperCase())}
+                        />
+                        <button
+                          type="button"
+                          className="rta-btn-secondary"
+                          style={{ fontSize: "12px", whiteSpace: "nowrap" }}
+                          onClick={() => {
+                            const bytes = Array.from({ length: 4 }, () => Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0'));
+                            setApproveRfidTag(bytes.join(":"));
+                          }}
+                        >
+                          Gen Tag
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                      <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} className="rta-btn-secondary">
+                        Cancel
+                      </button>
+                      <button type="submit" className="rta-btn-primary" style={{ background: "#16a34a", width: "auto" }}>
+                        Confirm Approval & Activate Card
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* 3. REJECTION MODAL */}
+                {actionType === "reject" && (
+                  <form onSubmit={handleRejectAppSubmit}>
+                    <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#dc2626", marginBottom: "4px" }}>
+                      ❌ Reject Application
+                    </h3>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "16px" }}>
+                      Enter the mandatory rejection reason to notify <strong>{actionApp.fullName}</strong>.
+                    </p>
+
+                    <div className="rta-input-group" style={{ marginBottom: "20px" }}>
+                      <label>Rejection Reason <span style={{ color: "#dc2626" }}>*</span></label>
+                      <textarea
+                        className="rta-input-field"
+                        rows="3"
+                        placeholder="e.g. Invalid ID proof provided or unreadable document image."
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        required
+                        style={{ fontFamily: "inherit" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                      <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} className="rta-btn-secondary">
+                        Cancel
+                      </button>
+                      <button type="submit" className="rta-btn-primary" style={{ background: "#dc2626", width: "auto" }}>
+                        Confirm Rejection & Send SMS
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* 4. CORRECTION REQUEST MODAL */}
+                {actionType === "correction" && (
+                  <form onSubmit={handleCorrectionAppSubmit}>
+                    <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#d97706", marginBottom: "4px" }}>
+                      🔄 Request Application Correction
+                    </h3>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "16px" }}>
+                      Notify <strong>{actionApp.fullName}</strong> to update missing or invalid details.
+                    </p>
+
+                    <div className="rta-input-group" style={{ marginBottom: "20px" }}>
+                      <label>Correction Details / Instructions</label>
+                      <textarea
+                        className="rta-input-field"
+                        rows="3"
+                        placeholder="e.g. Please upload a valid Student ID card with current academic year."
+                        value={correctionNote}
+                        onChange={(e) => setCorrectionNote(e.target.value)}
+                        style={{ fontFamily: "inherit" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                      <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} className="rta-btn-secondary">
+                        Cancel
+                      </button>
+                      <button type="submit" className="rta-btn-primary" style={{ background: "#d97706", width: "auto" }}>
+                        Send Correction Request
+                      </button>
+                    </div>
+                  </form>
+                )}
+
               </div>
             </div>
           )}

@@ -1,26 +1,29 @@
 :root {
-  /* Color Palette - Light Purple (Soft Lavender background, Frosted White Glass card, Rich Violet Accents) */
-  --bg-primary: #f5f3ff;
+  /* Color Palette - Light Green & Light Purple (MoveSmart Brand Theme) */
+  --bg-primary: #f3faf5;
   --bg-secondary: #ffffff;
-  --bg-card: rgba(255, 255, 255, 0.75);
-  --border-color: rgba(124, 58, 237, 0.12);
-  --border-focus: #8b5cf6;
+  --bg-card: rgba(255, 255, 255, 0.85);
+  --border-color: rgba(56, 161, 105, 0.18);
+  --border-focus: #38a169;
   
-  --primary: #7c3aed;
-  --primary-hover: #6d28d9;
-  --primary-glow: rgba(124, 58, 237, 0.2);
-  --primary-light: #f3e8ff;
+  --primary: #38a169;
+  --primary-hover: #2f855a;
+  --primary-glow: rgba(56, 161, 105, 0.25);
+  --primary-light: #e6f4ea;
+
+  --accent-purple: #8b5cf6;
+  --accent-purple-hover: #7c3aed;
+  --accent-purple-light: #f3e8ff;
+  --accent-purple-glow: rgba(139, 92, 246, 0.25);
   
-  --success: #059669;
-  --success-glow: rgba(5, 150, 105, 0.1);
+  --success: #22c55e;
+  --success-glow: rgba(34, 197, 94, 0.15);
   --error: #e11d48;
   --error-glow: rgba(225, 29, 72, 0.1);
   
-  --text-main: #1e1b4b;
-  /* was #6b7280 — bumped for more headroom on the translucent glass card (bg-card is only 75% opaque, which eats into contrast) */
-  --text-muted: #5b6472;
-  /* was #8b5cf6 (only ~4.2:1 on white, fails AA for body text). Reuses --primary-hover, which passes ~7:1 */
-  --text-link: #6d28d9;
+  --text-main: #19271d;
+  --text-muted: #4a5d50;
+  --text-link: #2f855a;
 
   /* Typography & Layout */
   --font-display: 'Outfit', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
@@ -45,7 +48,7 @@ body {
   position: relative;
 }
 
-/* Static Decorative Background - soft purple accents (NO ROTATION) */
+/* Static Decorative Background - soft light green & light purple accents */
 body::before {
   content: "";
   position: absolute;
@@ -53,9 +56,9 @@ body::before {
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle at 30% 30%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
-              radial-gradient(circle at 70% 70%, rgba(124, 58, 237, 0.10) 0%, transparent 45%),
-              radial-gradient(circle at 50% 10%, rgba(167, 139, 250, 0.08) 0%, transparent 35%);
+  background: radial-gradient(circle at 30% 30%, rgba(56, 161, 105, 0.14) 0%, transparent 40%),
+              radial-gradient(circle at 70% 70%, rgba(139, 92, 246, 0.14) 0%, transparent 45%),
+              radial-gradient(circle at 50% 10%, rgba(72, 187, 120, 0.10) 0%, transparent 35%);
   z-index: -2;
 }
 
@@ -64,8 +67,8 @@ body::after {
   position: absolute;
   inset: 0;
   background-image: 
-    linear-gradient(rgba(124, 58, 237, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(124, 58, 237, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(56, 161, 105, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 92, 246, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
   background-position: center;
   mask-image: radial-gradient(ellipse at center, black, transparent 80%);
@@ -107,7 +110,7 @@ body::after {
   left: -100%;
   width: 200%;
   height: 3px;
-  background: linear-gradient(90deg, transparent, var(--primary), #c4b5fd, transparent);
+  background: linear-gradient(90deg, transparent, #38a169, #8b5cf6, transparent);
   animation: borderGlow 6s infinite linear;
 }
 
@@ -515,7 +518,7 @@ input::-webkit-strong-password-auto-fill-button {
 .btn-primary {
   width: 100%;
   padding: 14px;
-  background: linear-gradient(135deg, var(--primary), #6d28d9);
+  background: linear-gradient(135deg, #38a169, #8b5cf6);
   color: white;
   border: none;
   border-radius: 12px;
@@ -523,7 +526,7 @@ input::-webkit-strong-password-auto-fill-button {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.25s ease;
-  box-shadow: 0 4px 12px var(--primary-glow);
+  box-shadow: 0 4px 14px rgba(56, 161, 105, 0.25);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -534,8 +537,8 @@ input::-webkit-strong-password-auto-fill-button {
 .container button:hover:not(:disabled),
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px var(--primary-glow);
-  background: linear-gradient(135deg, #5b21b6, var(--primary-hover));
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.3);
+  background: linear-gradient(135deg, #2f855a, #7c3aed);
 }
 
 .container button:active:not(:disabled),
@@ -1318,16 +1321,16 @@ select:focus-visible,
    ========================================================================== */
 
 :root {
-  --rta-red: var(--primary);
-  --rta-red-dark: var(--primary-hover);
-  --rta-gold: #c4b5fd;
-  --rta-silver: #a78bfa;
-  --rta-blue: #8b5cf6;
-  --rta-gray-dark: #1e1b4b;
+  --rta-red: #38a169;
+  --rta-red-dark: #2f855a;
+  --rta-gold: #8b5cf6;
+  --rta-silver: #48bb78;
+  --rta-blue: #7c3aed;
+  --rta-gray-dark: #19271d;
   --rta-gray-light: var(--bg-primary);
   --rta-gray-border: var(--border-color);
-  --rta-shadow: 0 12px 28px rgba(124, 58, 237, 0.06);
-  --rta-shadow-hover: 0 20px 40px rgba(124, 58, 237, 0.12);
+  --rta-shadow: 0 12px 28px rgba(56, 161, 105, 0.08);
+  --rta-shadow-hover: 0 20px 40px rgba(139, 92, 246, 0.15);
   --rta-font-title: 'Outfit', sans-serif;
 }
 
@@ -1432,7 +1435,7 @@ select:focus-visible,
 
 /* Hero & Wojhati Planner */
 .rta-hero {
-  background: linear-gradient(135deg, #1A1D20 0%, #2D3238 100%);
+  background: linear-gradient(135deg, #132418 0%, #1f1938 100%);
   padding: 60px 5% 120px;
   color: #FFFFFF;
   text-align: center;
@@ -1448,7 +1451,9 @@ select:focus-visible,
 }
 
 .rta-hero-title span {
-  color: var(--rta-gold);
+  background: linear-gradient(135deg, #48bb78, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .rta-hero-subtitle {

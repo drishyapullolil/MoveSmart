@@ -51,7 +51,6 @@ function Signup() {
     if (!val) return "Password is required";
     if (val.length < 6) return "Password must be at least 6 characters";
     if (val.length > 72) return "Password is too long";
-    if (/\s/.test(val)) return "Password cannot contain spaces";
     return "";
   };
 
@@ -241,15 +240,8 @@ function Signup() {
 
       <div className="container">
         {/* Brand Header */}
-        <div className="brand-header">
-          <div className="brand-icon">
-            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M12 18v2M6 18h12M6 6c0-2 2-3 6-3s6 1 6 3" />
-              <circle cx="6.5" cy="14.5" r="1.5" fill="currentColor" />
-              <circle cx="17.5" cy="14.5" r="1.5" fill="currentColor" />
-            </svg>
-          </div>
+        <div className="brand-header" style={{ textAlign: "center" }}>
+          <img src="/logo.png" alt="MoveSmart Logo" style={{ height: "60px", width: "auto", objectFit: "contain", marginBottom: "8px" }} />
           <h2>Create Account</h2>
           <p className="brand-subtitle">Join MoveSmart Transit Platform</p>
         </div>

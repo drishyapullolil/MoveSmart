@@ -7,37 +7,61 @@ const router = express.Router();
 
 const otpStore = new Map();
 
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: false,
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-    }
-});
+const normalizeSmtpValue = (value) => {
+    if (typeof value !== "string") return value;
+    return value.trim().replace(/\s+/g, "");
+};
 
-transporter.verify((error) => {
-    if (error) {
-        console.log("SMTP configuration error:", error.message);
-    } else {
-        console.log("SMTP ready to send emails ✅");
-    }
-});
+const createTransporter = () => {
+    const smtpUser = normalizeSmtpValue(process.env.SMTP_USER);
+    const smtpPass = normalizeSmtpValue(process.env.SMTP_PASS);
+
+    return nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+            user: smtpUser,
+            pass: smtpPass
+        }
+    });
+};
+
+const verifySmtpConnection = () => {
+    const transporter = createTransporter();
+    transporter.verify((error) => {
+        if (error) {
+            console.log("SMTP configuration error:", error.message);
+        } else {
+            console.log("SMTP ready to send emails ✅");
+        }
+    });
+};
+
+verifySmtpConnection();
 
 const sendOtpEmail = async (email, otp) => {
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    const smtpUser = normalizeSmtpValue(process.env.SMTP_USER);
+    const smtpPass = normalizeSmtpValue(process.env.SMTP_PASS);
+
+    if (!smtpUser || !smtpPass) {
         throw new Error("SMTP credentials are not configured. Set SMTP_USER and SMTP_PASS in the backend environment.");
     }
 
+    const transporter = createTransporter();
     const mailOptions = {
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        from: process.env.SMTP_FROM || smtpUser,
         to: email,
         subject: "MoveSmart Email Verification OTP",
         text: `Your MoveSmart verification code is ${otp}. It expires in 10 minutes.`
     };
 
-    await transporter.sendMail(mailOptions);
+    try {
+        await transporter.sendMail(mailOptions);
+    } catch (error) {
+        if (error.code === "EAUTH" || error.responseCode === 535) {
+            throw new Error("Gmail rejected the SMTP credentials. Make sure 2-Step Verification is enabled and you are using a 16-character Google App Password.");
+        }
+        throw error;
+    }
 };
 
 router.post("/send-otp", async (req, res) => {

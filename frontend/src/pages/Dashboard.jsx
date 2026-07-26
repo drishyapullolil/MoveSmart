@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
+import CardApplication from "./Cardapplication";
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -21,8 +22,8 @@ function Dashboard() {
   const [journeyHistory, setJourneyHistory] = useState([]);
 
   // Wojhati Planner States
-  const [origin, setOrigin] = useState("Al Ghubaiba Bus Station");
-  const [destination, setDestination] = useState("Dubai Mall Bus Station");
+  const [origin, setOrigin] = useState("Kochi Bus Stand");
+  const [destination, setDestination] = useState("Thiruvananthapuram Central");
   const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
   const [planTime, setPlanTime] = useState("12:00");
   const [plannerResults, setPlannerResults] = useState(null);
@@ -42,65 +43,92 @@ function Dashboard() {
   const [scheduleResult, setScheduleResult] = useState(null);
 
   // Intercity Booking States
-  const [intercityFrom, setIntercityFrom] = useState("Dubai (Al Ghubaiba)");
-  const [intercityTo, setIntercityTo] = useState("Abu Dhabi (Central Bus Station)");
+  const [intercityFrom, setIntercityFrom] = useState("Kochi (M.G. Road)");
+  const [intercityTo, setIntercityTo] = useState("Calicut (KSRTC)");
   const [intercitySeats, setIntercitySeats] = useState("1");
   const [intercitySuccess, setIntercitySuccess] = useState(false);
 
   // Mahboub Chatbot States
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
-    { sender: "bot", text: "Marhaban! I am Mahboub, your RTA Virtual Assistant. How can I help you navigate Dubai today?" }
+    { sender: "bot", text: "Namaskaram! I am Mahboub, your MoveSmart Virtual Assistant. How can I help you navigate today?" }
   ]);
   const [chatInput, setChatInput] = useState("");
 
   // Wojhati Search Handler
   const handleSearchRoutes = () => {
     if (!origin || !destination) return;
-    
-    // Mock route generation
+
     const mockRoutes = [
       {
         id: 1,
-        mode: "Bus + Metro",
-        duration: "45 mins",
-        fare: "7.50 AED",
+        mode: "Express Bus",
+        busName: "Kerala Express",
+        busNumber: "KL-101",
+        source: origin,
+        destination,
+        departureTime: planTime,
+        arrivalTime: "10:30",
+        travelDate: planDate,
+        seatsAvailable: 25,
+        fare: "120.00",
+        distance: "200 km",
+        rating: "4.9",
+        status: "Seats Available",
         steps: [
-          { type: "Walk", desc: `Walk from ${origin} to nearest stop (2 mins)` },
-          { type: "Bus", desc: "Board Bus C01 towards Gold Souq (4 stops)" },
-          { type: "Metro", desc: "Transfer at Union Metro Station (Red Line) to Dubai Mall" },
-          { type: "Walk", desc: `Arrive at ${destination} (3 mins)` }
+          { type: "Walk", desc: `Walk from ${origin} to the main bus stop (5 mins)` },
+          { type: "Bus", desc: "Premium air‑conditioned coach with Wi‑Fi" },
+          { type: "Walk", desc: `Arrive at ${destination} (5 mins)` }
         ]
       },
       {
         id: 2,
-        mode: "Direct Bus",
-        duration: "65 mins",
-        fare: "5.00 AED",
+        mode: "Direct Coach",
+        busName: "Kerala Deluxe",
+        busNumber: "KL-202",
+        source: origin,
+        destination,
+        departureTime: "14:00",
+        arrivalTime: "16:20",
+        travelDate: planDate,
+        seatsAvailable: 0,
+        fare: "100.00",
+        distance: "150 km",
+        rating: "4.7",
+        status: "Bus Full",
         steps: [
-          { type: "Bus", desc: `Board Bus 29 from ${origin} directly` },
-          { type: "Walk", desc: `Alight and walk to ${destination} (5 mins)` }
+          { type: "Bus", desc: `Direct coach from ${origin} to ${destination}` },
+          { type: "Walk", desc: `Alight and walk to the terminal (3 mins)` }
         ]
       }
     ];
     setPlannerResults(mockRoutes);
   };
 
-  // Fetch my cards, book cards, select card and history logic
-  useEffect(() => {
-    if (user && user.email) {
-      fetchMyCards();
-    }
-  }, [user]);
+  const fetchMyCards = useCallback(async () => {
+    if (!user?.email) return;
 
-  const fetchMyCards = async () => {
     try {
       const res = await axios.get(`/api/rfid/my-cards?email=${user.email}`);
       setMyCards(res.data.cards || []);
     } catch (err) {
       console.error("Error fetching cards:", err);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user?.role?.toLowerCase() === "driver") {
+      navigate("/dashboard/driver");
+      return;
+    }
+    if (user?.email) {
+      const timer = window.setTimeout(() => {
+        void fetchMyCards();
+      }, 0);
+
+      return () => window.clearTimeout(timer);
+    }
+  }, [user, fetchMyCards, navigate]);
 
   const handleBookCard = async (e) => {
     e.preventDefault();
@@ -196,23 +224,23 @@ function Dashboard() {
     const q = routeQuery.toUpperCase().trim();
 
     const mockRoutesDb = {
-      "C01": {
-        name: "Al Ghubaiba Bus Station ➜ Gold Souq Bus Station",
-        frequency: "Every 8 mins",
-        stops: ["Al Ghubaiba Station", "Falcon Intersection", "Plaza Hotel", "Khaleej Road", "Gold Souq Station"],
-        timetable: ["06:00", "06:08", "06:16", "06:24", "06:32", "06:40"]
+      "K01": {
+        name: "Kochi Bus Stand ➜ Thiruvananthapuram Central",
+        frequency: "Every 30 mins",
+        stops: ["Kochi Bus Stand", "Alappuzha", "Kollam", "Thiruvananthapuram Central"],
+        timetable: ["06:00", "06:30", "07:00", "07:30", "08:00"]
       },
-      "8": {
-        name: "Ibn Battuta Metro Station ➜ Gold Souq Bus Station",
-        frequency: "Every 15 mins",
-        stops: ["Ibn Battuta Metro", "Jumeirah Beach Residence", "Dubai Marina", "Burj Al Arab", "Jumeirah Mosque", "Gold Souq Station"],
-        timetable: ["05:30", "05:45", "06:00", "06:15", "06:30"]
+      "K02": {
+        name: "Kochi (M.G. Road) ➜ Calicut (KSRTC)",
+        frequency: "Every 45 mins",
+        stops: ["Kochi (M.G. Road)", "Thrissur", "Palakkad", "Calicut (KSRTC)"],
+        timetable: ["05:45", "06:30", "07:15", "08:00", "08:45"]
       },
-      "F11": {
-        name: "Rowdah Stop ➜ Financial Centre Metro Station",
-        frequency: "Every 12 mins",
-        stops: ["Rowdah Stop", "Satwa Bus Station", "Iranian Hospital", "Financial Centre Metro Station"],
-        timetable: ["06:10", "06:22", "06:34", "06:46", "06:58"]
+      "K03": {
+        name: "Thiruvananthapuram ➜ Kottayam",
+        frequency: "Every 20 mins",
+        stops: ["Thiruvananthapuram Central", "Nedumangad", "Kottayam"],
+        timetable: ["06:10", "06:30", "06:50", "07:10", "07:30"]
       }
     };
 
@@ -224,7 +252,7 @@ function Dashboard() {
     } else {
       setScheduleResult({
         route: q,
-        error: "Route not found. Try searching C01, 8, or F11."
+        error: "Route not found. Try searching K01, K02, or K03."
       });
     }
   };
@@ -250,17 +278,17 @@ function Dashboard() {
 
     // Simulate smart bot typing answers
     setTimeout(() => {
-      let botResponse = "I'm sorry, I didn't quite catch that. You can ask me to 'Check C01 schedule', 'Check Nol types' or 'Fares'.";
+      let botResponse = "I'm sorry, I didn't quite catch that. You can ask me to 'Check K01 schedule', 'Check Kerala bus types' or 'Fares'.";
       const q = userText.toLowerCase();
 
-      if (q.includes("c01") || q.includes("route 8") || q.includes("f11")) {
-        botResponse = "You can search for live timetables on the Bus Schedule tab on the main page. C01 operates every 8 minutes from Al Ghubaiba.";
-      } else if (q.includes("nol") || q.includes("card")) {
-        botResponse = "Dubai offers Silver, Gold, Blue (Personalized), and Red Nol cards. You can top up or apply directly in the Nol Card tab above!";
-      } else if (q.includes("abu dhabi") || q.includes("intercity")) {
-        botResponse = "Yes, intercity buses (e.g. E101) run from Al Ghubaiba and Ibn Battuta to Abu Dhabi Central Station. Check out the Intercity tab!";
+      if (q.includes("k01") || q.includes("k02") || q.includes("k03")) {
+        botResponse = "You can search for live timetables on the Bus Schedule tab on the main page. K01 operates every 30 minutes from Kochi Bus Stand.";
+      } else if (q.includes("rfid") || q.includes("card")) {
+        botResponse = "MoveSmart supports various RFID cards for seamless boarding. You can top up or apply directly in the RFID Card tab above!";
+      } else if (q.includes("intercity")) {
+        botResponse = "Yes, intercity buses run from major hubs like Kochi and Thiruvananthapuram. Check out the Intercity tab!";
       } else if (q.includes("fare") || q.includes("price")) {
-        botResponse = "Fares depend on transit zones. A 1-zone trip costs 3.00 AED on Silver Nol and 6.00 AED on Gold Nol.";
+        botResponse = "Fares depend on transit distances. Express services have dynamic pricing based on your destination.";
       }
 
       setChatMessages(prev => [...prev, { sender: "bot", text: botResponse }]);
@@ -284,22 +312,24 @@ function Dashboard() {
     <div className="rta-body-theme">
       {/* MoveSmart Header Navigation */}
       <nav className="rta-nav">
-        <Link to="/" className="rta-logo">
-          <div className="brand-icon" style={{ display: "inline-flex", background: "var(--primary)", color: "#fff", padding: "6px", borderRadius: "8px", marginRight: "4px" }}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M12 18v2M6 18h12M6 6c0-2 2-3 6-3s6 1 6 3" />
-              <circle cx="6.5" cy="14.5" r="1.5" fill="currentColor" />
-              <circle cx="17.5" cy="14.5" r="1.5" fill="currentColor" />
-            </svg>
-          </div>
-          <span>MoveSmart Portal</span>
+        <Link to="/" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }}>
+          <img 
+            src="/logo.png" 
+            alt="MoveSmart Logo" 
+            style={{ 
+              height: "72px", 
+              width: "auto", 
+              objectFit: "contain",
+              filter: "drop-shadow(0px 2px 6px rgba(0,0,0,0.06))"
+            }} 
+          />
         </Link>
 
         <div className="rta-nav-menu">
           <a href="#services" className="rta-nav-link">Bus Services</a>
-          <a href="#nol-hub" className="rta-nav-link">Nol Portal</a>
+          <a href="#nol-hub" className="rta-nav-link">RFID Portal</a>
           <a href="#schedules" className="rta-nav-link">Schedules</a>
+          <Link to="/dashboard/card-application" className="rta-nav-link">Card Application</Link>
           {user ? (
             <>
               <Link
@@ -325,7 +355,7 @@ function Dashboard() {
       <header className="rta-hero">
         <h1 className="rta-hero-title">MoveSmart <span>Transit Portal</span></h1>
         <p className="rta-hero-subtitle">
-          Plan urban routes, manage your virtual Nol wallet, view timetables, and book intercity coach lines on the smart grid.
+          Plan inter-district routes, manage your virtual RFID wallet, view timetables, and book express coach lines on the state grid.
         </p>
       </header>
 
@@ -337,13 +367,13 @@ function Dashboard() {
               className={`rta-tab-btn ${activeTab === "planner" ? "active" : ""}`}
               onClick={() => setActiveTab("planner")}
             >
-              Wojhati Journey Planner
+              Journey Planner
             </button>
             <button 
               className={`rta-tab-btn ${activeTab === "nol" ? "active" : ""}`}
               onClick={() => setActiveTab("nol")}
             >
-              Nol Card Portal
+              RFID Card Portal
             </button>
             <button 
               className={`rta-tab-btn ${activeTab === "schedules" ? "active" : ""}`}
@@ -355,7 +385,7 @@ function Dashboard() {
               className={`rta-tab-btn ${activeTab === "intercity" ? "active" : ""}`}
               onClick={() => setActiveTab("intercity")}
             >
-              Intercity Tickets
+              Express Tickets
             </button>
           </div>
 
@@ -371,7 +401,7 @@ function Dashboard() {
                     className="rta-input-field" 
                     value={origin}
                     onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="e.g. Al Ghubaiba Bus Station"
+                    placeholder="e.g. Kochi Bus Stand"
                   />
                 </div>
                 
@@ -389,7 +419,7 @@ function Dashboard() {
                     className="rta-input-field" 
                     value={destination}
                     onChange={(e) => setDestination(e.target.value)}
-                    placeholder="e.g. Dubai Mall Bus Station"
+                    placeholder="e.g. Thiruvananthapuram Central"
                   />
                 </div>
 
@@ -427,28 +457,72 @@ function Dashboard() {
                 <div style={{ marginTop: "30px", borderTop: "1px solid var(--rta-gray-border)", paddingTop: "25px" }}>
                   <h3 style={{ fontSize: "18px", fontWeight: "800", marginBottom: "15px" }}>Recommended Routes</h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
-                    {plannerResults.map((res) => (
-                      <div key={res.id} className="rta-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "15px" }}>
-                        <div style={{ flex: "1" }}>
-                          <span style={{ backgroundColor: "rgba(214, 28, 28, 0.1)", color: "var(--rta-red)", padding: "4px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: "700" }}>
-                            {res.mode}
-                          </span>
-                          <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                            {res.steps.map((s, idx) => (
-                              <div key={idx} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-                                <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "var(--rta-red)", marginTop: "6px" }}></span>
-                                <span style={{ fontSize: "14px", color: "#4A515A" }}>{s.desc}</span>
+                    {plannerResults.map((res) => {
+                      const isFull = res.seatsAvailable <= 0;
+                      return (
+                        <div
+                          key={res.id}
+                          className="rta-card"
+                          style={{
+                            padding: "18px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "14px",
+                            background: "linear-gradient(135deg, #ffffff 0%, #f8fbff 100%)",
+                            border: "1px solid rgba(15, 23, 42, 0.08)",
+                            boxShadow: "0 10px 24px rgba(15, 23, 42, 0.06)",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: "15px", fontWeight: "800", color: "#111827" }}>{res.busName}</span>
+                                <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748b", background: "#f1f5f9", padding: "4px 8px", borderRadius: "999px" }}>
+                                  {res.busNumber}
+                                </span>
                               </div>
-                            ))}
+                              <div style={{ marginTop: "6px", fontSize: "13px", color: "#64748b" }}>
+                                {res.source} → {res.destination}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", background: isFull ? "rgba(239, 68, 68, 0.1)" : "rgba(34, 197, 94, 0.12)", color: isFull ? "#dc2626" : "#16a34a", padding: "6px 10px", borderRadius: "999px", fontSize: "12px", fontWeight: "700", whiteSpace: "nowrap" }}>
+                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: isFull ? "#dc2626" : "#22c55e" }} />
+                              {isFull ? "Bus Full" : "Seats Available"}
+                            </div>
+                          </div>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px" }}>
+                            <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "10px" }}>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>Departure</div>
+                              <div style={{ fontSize: "14px", fontWeight: "700", color: "#111827", marginTop: "4px" }}>{res.departureTime}</div>
+                            </div>
+                            <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "10px" }}>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>Arrival</div>
+                              <div style={{ fontSize: "14px", fontWeight: "700", color: "#111827", marginTop: "4px" }}>{res.arrivalTime}</div>
+                            </div>
+                            <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "10px" }}>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>Date</div>
+                              <div style={{ fontSize: "14px", fontWeight: "700", color: "#111827", marginTop: "4px" }}>{res.travelDate}</div>
+                            </div>
+                            <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "10px" }}>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>Seats</div>
+                              <div style={{ fontSize: "14px", fontWeight: "700", color: "#111827", marginTop: "4px" }}>{res.seatsAvailable}</div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              <button className="rta-btn-primary" style={{ padding: "8px 14px", fontSize: "12.5px" }}>Book Seat</button>
+                              <button className="rta-btn-secondary" style={{ padding: "8px 14px", fontSize: "12.5px" }}>View Details</button>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontSize: "16px", fontWeight: "800", color: "#111827" }}>{res.fare} AED</div>
+                              <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>⭐ {res.rating} • {res.distance} • Live tracking</div>
+                            </div>
                           </div>
                         </div>
-                        <div style={{ textAlign: "right", minWidth: "100px" }}>
-                          <div style={{ fontSize: "18px", fontWeight: "800", color: "#1F2226" }}>{res.duration}</div>
-                          <div style={{ fontSize: "14px", color: "var(--rta-gold)", fontWeight: "700" }}>{res.fare} est.</div>
-                          <button className="rta-btn-primary" style={{ padding: "6px 14px", fontSize: "12.5px", marginTop: "12px" }}>Select</button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -639,7 +713,11 @@ function Dashboard() {
                       </form>
                     )}
                   </div>
-
+                  
+                  {/* Card Application Component */}
+                  <div id="card-application-section" style={{ marginTop: "20px" }}>
+                      <CardApplication />
+                    </div>
                   <hr style={{ border: "none", borderTop: "1px solid var(--rta-gray-border)", margin: "20px 0" }} />
 
                   {/* My Booked Cards & History */}
@@ -1022,16 +1100,20 @@ function Dashboard() {
       <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "40px 5%", borderTop: "3px solid var(--primary)" }}>
         <div style={{ maxWidth: "1200px", margin: "0 auto", display: "flex", justifySelf: "space-between", flexWrap: "wrap", gap: "30px" }}>
           <div>
-            <div className="rta-logo" style={{ color: "#FFFFFF", marginBottom: "15px" }}>
-              <div className="brand-icon" style={{ display: "inline-flex", background: "var(--primary)", color: "#fff", padding: "6px", borderRadius: "8px", marginRight: "4px" }}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="6" width="20" height="12" rx="2" />
-                  <path d="M12 18v2M6 18h12M6 6c0-2 2-3 6-3s6 1 6 3" />
-                  <circle cx="6.5" cy="14.5" r="1.5" fill="currentColor" />
-                  <circle cx="17.5" cy="14.5" r="1.5" fill="currentColor" />
-                </svg>
-              </div>
-              <span style={{ color: "#fff" }}>MoveSmart</span>
+            <div className="rta-logo" style={{ marginBottom: "15px" }}>
+              <img 
+                src="/logo.png" 
+                alt="MoveSmart Logo" 
+                style={{ 
+                  height: "70px", 
+                  width: "auto", 
+                  objectFit: "contain", 
+                  background: "#ffffff", 
+                  padding: "6px 14px", 
+                  borderRadius: "12px",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
+                }} 
+              />
             </div>
             <p style={{ fontSize: "13px", maxWidth: "320px", lineHeight: "1.6", color: "#b7aed6" }}>
               Smart Urban Transit &amp; Logistics portal companion. Optimized route scheduling, Nol wallet tracking, and carbon-footprint reduction diagnostics.

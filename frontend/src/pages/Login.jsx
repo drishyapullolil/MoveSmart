@@ -37,7 +37,8 @@ function Login() {
     if (hasSession) {
       const savedUser = localStorage.getItem("user");
       const parsedUser = savedUser ? JSON.parse(savedUser) : null;
-      const targetPath = parsedUser?.role?.toLowerCase() === "admin" ? "/admin" : "/dashboard";
+      const role = parsedUser?.role?.toLowerCase();
+      const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
       navigate(targetPath);
     }
   }, [navigate]);
@@ -122,7 +123,9 @@ function Login() {
 
       // Navigate to the correct dashboard after short delay for animation
       setTimeout(() => {
-        navigate(loggedInUser?.role?.toLowerCase() === "admin" ? "/admin" : "/dashboard");
+        const role = loggedInUser?.role?.toLowerCase();
+        const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
+        navigate(targetPath);
       }, 1000);
     } catch (error) {
       console.error(error);
@@ -184,17 +187,9 @@ function Login() {
       `}</style>
       <div className="container">
         {/* Brand Header */}
-        <div className="brand-header">
-          <div className="brand-icon">
-            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M12 18v2M6 18h12M6 6c0-2 2-3 6-3s6 1 6 3" />
-              <circle cx="6.5" cy="14.5" r="1.5" fill="currentColor" />
-              <circle cx="17.5" cy="14.5" r="1.5" fill="currentColor" />
-            </svg>
-          </div>
-          <h2>MoveSmart</h2>
-          <p className="brand-subtitle">Smart Urban Transit &amp; Logistics</p>
+        <div className="brand-header" style={{ textAlign: "center" }}>
+          <img src="/logo.png" alt="MoveSmart Logo" style={{ height: "64px", width: "auto", objectFit: "contain", marginBottom: "8px" }} />
+          <p className="brand-subtitle">Smart Travel • Safe Journeys</p>
         </div>
 
         {/* Inline Alerts */}
