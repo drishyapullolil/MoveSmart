@@ -249,22 +249,23 @@ router.post("/login", async (req, res) => {
 // GOOGLE SIGN-IN API
 router.post("/google-login", async (req, res) => {
     try {
-        const { email, name, googleId, picture } = req.body;
+        const { email, name } = req.body;
 
         if (!email) {
             return res.status(400).json({ message: "Google email is required" });
         }
 
-        let user = await User.findOne({ email: email.toLowerCase() });
+        const normalizedEmail = email.trim().toLowerCase();
+        let user = await User.findOne({ email: normalizedEmail });
 
         if (!user) {
             // Auto-register user with Google details
             const randomPassword = await bcrypt.hash(`GoogleAuth_${Date.now()}_${Math.random()}`, 10);
             user = new User({
-                name: name || email.split("@")[0],
-                email: email.toLowerCase(),
+                name: (name || normalizedEmail.split("@")[0]).trim(),
+                email: normalizedEmail,
                 password: randomPassword,
-                role: "User",
+                role: "user",
             });
             await user.save();
         }
@@ -276,7 +277,7 @@ router.post("/google-login", async (req, res) => {
                 id: user._id,
                 name: user.name,
                 email: user.email,
-                role: user.role || "User",
+                role: user.role || "user",
             }
         });
     } catch (error) {

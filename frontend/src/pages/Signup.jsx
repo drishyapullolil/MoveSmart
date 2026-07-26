@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { signInWithGoogleFirebase } from "../firebase";
+import { signInWithGoogleFirebase, checkFirebaseRedirectResult } from "../firebase";
 
 function Signup() {
   const navigate = useNavigate();
@@ -219,35 +219,60 @@ function Signup() {
       });
       setLoading(false);
     }
-  };  const handleGoogleSignIn = async () => {
+  };
+
+  useEffect(() => {
+    const checkRedirect = async () => {
+      const redirectRes = await checkFirebaseRedirectResult();
+      if (redirectRes.success && redirectRes.user) {
+        await processGoogleUser(redirectRes.user);
+      }
+    };
+    checkRedirect();
+  }, [navigate]);
+
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     setAlertInfo({ message: "", type: "" });
 
     try {
-      // 1. Try Firebase Google Popup Auth
       const firebaseRes = await signInWithGoogleFirebase();
-      let googleUser = null;
 
-      if (firebaseRes.success && firebaseRes.user) {
-        googleUser = firebaseRes.user;
-      } else {
-        // Fallback prompt if Firebase popup is closed/cancelled
-        const inputEmail = window.prompt("Enter your Google Account email to Sign Up / Sign In:");
-        if (!inputEmail) {
-          setLoading(false);
-          return;
-        }
-        googleUser = {
-          email: inputEmail.trim(),
-          name: inputEmail.trim().split("@")[0],
-        };
+      if (firebaseRes.redirecting) {
+        setAlertInfo({
+          message: "Redirecting to Google Sign-In...",
+          type: "success",
+        });
+        return;
       }
 
-      // 2. Authenticate/Register User in MongoDB Backend
+      if (firebaseRes.success && firebaseRes.user) {
+        await processGoogleUser(firebaseRes.user);
+        return;
+      }
+
+      setAlertInfo({
+        message: firebaseRes.error || "Google Sign-In failed",
+        type: "error",
+      });
+      setLoading(false);
+    } catch (err) {
+      console.error("Google Auth error:", err);
+      setAlertInfo({
+        message: err.message || "Google Sign-In failed",
+        type: "error",
+      });
+      setLoading(false);
+    }
+  };
+
+  const processGoogleUser = async (googleUser) => {
+    setLoading(true);
+    try {
       const response = await axios.post("/api/auth/google-login", googleUser);
 
       setAlertInfo({
-        message: response.data.message || "Google Firebase Sign-In successful!",
+        message: response.data.message || "Google Sign-In successful!",
         type: "success",
       });
 
@@ -261,7 +286,6 @@ function Signup() {
         navigate(targetPath);
       }, 1000);
     } catch (error) {
-      console.error("Google Sign In error:", error);
       setAlertInfo({
         message: error.response?.data?.message || "Google Sign-In failed",
         type: "error",
