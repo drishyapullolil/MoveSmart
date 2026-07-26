@@ -306,8 +306,13 @@ function Signup() {
       <div className="container">
         {/* Brand Header */}
         <div className="brand-header" style={{ textAlign: "center" }}>
-          <img src="/logo.png" alt="MoveSmart Logo" style={{ height: "60px", width: "auto", objectFit: "contain", marginBottom: "8px" }} />
-          <h2>Create Account</h2>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "12px", marginBottom: "6px" }}>
+            <img src="/logo.png" alt="MoveSmart Logo" style={{ height: "48px", width: "auto", objectFit: "contain" }} />
+            <span style={{ fontSize: "26px", fontWeight: "800", background: "linear-gradient(135deg, #38a169, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              MoveSmart
+            </span>
+          </div>
+          <h2 style={{ margin: "4px 0 0" }}>Create Account</h2>
           <p className="brand-subtitle">Join MoveSmart Transit Platform</p>
         </div>
 

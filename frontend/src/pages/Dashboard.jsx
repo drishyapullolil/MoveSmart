@@ -44,7 +44,7 @@ function Dashboard() {
 
   // Intercity Booking States
   const [intercityFrom, setIntercityFrom] = useState("Kochi (M.G. Road)");
-  const [intercityTo, setIntercityTo] = useState("Calicut (KSRTC)");
+  const [intercityTo, setIntercityTo] = useState("Calicut (Private Bus Stand)");
   const [intercitySeats, setIntercitySeats] = useState("1");
   const [intercitySuccess, setIntercitySuccess] = useState(false);
 
@@ -231,9 +231,9 @@ function Dashboard() {
         timetable: ["06:00", "06:30", "07:00", "07:30", "08:00"]
       },
       "K02": {
-        name: "Kochi (M.G. Road) ➜ Calicut (KSRTC)",
+        name: "Kochi (M.G. Road) ➜ Calicut (Private Bus Stand)",
         frequency: "Every 45 mins",
-        stops: ["Kochi (M.G. Road)", "Thrissur", "Palakkad", "Calicut (KSRTC)"],
+        stops: ["Kochi (M.G. Road)", "Thrissur", "Palakkad", "Calicut (Private Bus Stand)"],
         timetable: ["05:45", "06:30", "07:15", "08:00", "08:45"]
       },
       "K03": {
@@ -312,17 +312,20 @@ function Dashboard() {
     <div className="rta-body-theme">
       {/* MoveSmart Header Navigation */}
       <nav className="rta-nav">
-        <Link to="/" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }}>
+        <Link to="/" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
           <img 
             src="/logo.png" 
             alt="MoveSmart Logo" 
             style={{ 
-              height: "72px", 
+              height: "52px", 
               width: "auto", 
               objectFit: "contain",
               filter: "drop-shadow(0px 2px 6px rgba(0,0,0,0.06))"
             }} 
           />
+          <span style={{ fontSize: "22px", fontWeight: "800", background: "linear-gradient(135deg, #38a169, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+            MoveSmart
+          </span>
         </Link>
 
         <div className="rta-nav-menu">
@@ -360,7 +363,7 @@ function Dashboard() {
       </header>
 
       {/* Wojhati & Travel Services Container */}
-      <main className="rta-section" style={{ marginTop: "0" }}>
+      <main className="rta-section" style={{ marginTop: "0", flex: "1 0 auto" }}>
         <div className="rta-planner-card">
           <div className="rta-tabs-header">
             <button 
@@ -1097,15 +1100,15 @@ function Dashboard() {
       </div>
 
       {/* Footer Branding */}
-      <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "40px 5%", borderTop: "3px solid var(--primary)" }}>
+      <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "40px 5%", borderTop: "3px solid var(--primary)", marginTop: "auto" }}>
         <div style={{ maxWidth: "1200px", margin: "0 auto", display: "flex", justifySelf: "space-between", flexWrap: "wrap", gap: "30px" }}>
           <div>
-            <div className="rta-logo" style={{ marginBottom: "15px" }}>
+            <div className="rta-logo" style={{ marginBottom: "15px", display: "inline-flex", alignItems: "center", gap: "12px" }}>
               <img 
                 src="/logo.png" 
                 alt="MoveSmart Logo" 
                 style={{ 
-                  height: "70px", 
+                  height: "56px", 
                   width: "auto", 
                   objectFit: "contain", 
                   background: "#ffffff", 
@@ -1114,31 +1117,34 @@ function Dashboard() {
                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
                 }} 
               />
+              <span style={{ fontSize: "22px", fontWeight: "800", color: "#ffffff" }}>
+                MoveSmart Kerala
+              </span>
             </div>
-            <p style={{ fontSize: "13px", maxWidth: "320px", lineHeight: "1.6", color: "#b7aed6" }}>
-              Smart Urban Transit &amp; Logistics portal companion. Optimized route scheduling, Nol wallet tracking, and carbon-footprint reduction diagnostics.
+            <p style={{ fontSize: "13px", maxWidth: "340px", lineHeight: "1.6", color: "#b7aed6" }}>
+              Smart Private Bus Fleet Management &amp; Passenger Portal for Kerala. Real-time bus tracking, RFID pass management, and digital ticketing.
             </p>
           </div>
           <div style={{ display: "flex", gap: "40px" }}>
             <div>
               <h4 style={{ color: "#FFFFFF", marginBottom: "12px", fontSize: "14px" }}>Transit Services</h4>
               <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Dubai Bus Routes</a></li>
-                <li><a href="#nol-hub" style={{ color: "#b7aed6", textDecoration: "none" }}>Nol Card System</a></li>
-                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Intercity Coaches</a></li>
+                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Private Bus City Routes</a></li>
+                <li><a href="#nol-hub" style={{ color: "#b7aed6", textDecoration: "none" }}>MoveSmart RFID Pass</a></li>
+                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Intercity Express Routes</a></li>
               </ul>
             </div>
             <div>
               <h4 style={{ color: "#FFFFFF", marginBottom: "12px", fontSize: "14px" }}>Support</h4>
               <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><span style={{ cursor: "pointer", color: "#b7aed6" }} onClick={() => setChatOpen(true)}>Chat with Mahboub</span></li>
-                <li><span style={{ color: "#b7aed6" }}>Call Center 800 9090</span></li>
+                <li><span style={{ cursor: "pointer", color: "#b7aed6" }} onClick={() => setChatOpen(true)}>Chat Assistant</span></li>
+                <li><span style={{ color: "#b7aed6" }}>Kerala Transit Helpline: 1800-425-4747</span></li>
               </ul>
             </div>
           </div>
         </div>
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: "30px", paddingTop: "20px", textAlign: "center", fontSize: "12px", color: "#717B87" }}>
-          © {new Date().getFullYear()} MoveSmart. Every trip counted. All rights reserved.
+          © {new Date().getFullYear()} MoveSmart Kerala. Smart Urban Transit System. All rights reserved.
         </div>
       </footer>
     </div>

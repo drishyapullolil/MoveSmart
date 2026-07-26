@@ -51,20 +51,21 @@ body {
 /* Static Decorative Background - soft light green & light purple accents */
 body::before {
   content: "";
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   background: radial-gradient(circle at 30% 30%, rgba(56, 161, 105, 0.14) 0%, transparent 40%),
               radial-gradient(circle at 70% 70%, rgba(139, 92, 246, 0.14) 0%, transparent 45%),
               radial-gradient(circle at 50% 10%, rgba(72, 187, 120, 0.10) 0%, transparent 35%);
   z-index: -2;
+  pointer-events: none;
 }
 
 body::after {
   content: "";
-  position: absolute;
+  position: fixed;
   inset: 0;
   background-image: 
     linear-gradient(rgba(56, 161, 105, 0.04) 1px, transparent 1px),
@@ -74,6 +75,7 @@ body::after {
   mask-image: radial-gradient(ellipse at center, black, transparent 80%);
   -webkit-mask-image: radial-gradient(ellipse at center, black, transparent 80%);
   z-index: -1;
+  pointer-events: none;
 }
 
 /* Centering Wrapper for Auth Pages (Login & Signup) */
@@ -1339,6 +1341,17 @@ select:focus-visible,
   background-color: var(--rta-gray-light);
   font-family: 'Plus Jakarta Sans', sans-serif;
   color: #2D3136;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.rta-body-theme main {
+  flex: 1 0 auto;
+}
+
+.rta-body-theme footer {
+  margin-top: auto;
 }
 
 /* Navigation */
