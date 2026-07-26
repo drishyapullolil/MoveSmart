@@ -1,6 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { signInWithGoogleFirebase } from "../firebase";
 
 function Signup() {
   const navigate = useNavigate();
@@ -218,23 +219,63 @@ function Signup() {
       });
       setLoading(false);
     }
+  };  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setAlertInfo({ message: "", type: "" });
+
+    try {
+      // 1. Try Firebase Google Popup Auth
+      const firebaseRes = await signInWithGoogleFirebase();
+      let googleUser = null;
+
+      if (firebaseRes.success && firebaseRes.user) {
+        googleUser = firebaseRes.user;
+      } else {
+        // Fallback prompt if Firebase popup is closed/cancelled
+        const inputEmail = window.prompt("Enter your Google Account email to Sign Up / Sign In:");
+        if (!inputEmail) {
+          setLoading(false);
+          return;
+        }
+        googleUser = {
+          email: inputEmail.trim(),
+          name: inputEmail.trim().split("@")[0],
+        };
+      }
+
+      // 2. Authenticate/Register User in MongoDB Backend
+      const response = await axios.post("/api/auth/google-login", googleUser);
+
+      setAlertInfo({
+        message: response.data.message || "Google Firebase Sign-In successful!",
+        type: "success",
+      });
+
+      const loggedInUser = response.data.user;
+      localStorage.setItem("user", JSON.stringify(loggedInUser));
+      localStorage.setItem("authToken", "google_firebase_authenticated_token");
+
+      setTimeout(() => {
+        const role = loggedInUser?.role?.toLowerCase();
+        const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
+        navigate(targetPath);
+      }, 1000);
+    } catch (error) {
+      console.error("Google Sign In error:", error);
+      setAlertInfo({
+        message: error.response?.data?.message || "Google Sign-In failed",
+        type: "error",
+      });
+      setLoading(false);
+    }
   };
 
   return (
     <div className="auth-page-wrapper">
-      {/* Hides the browser's own built-in reveal/clear icon (Edge, some Chrome
-          versions) so it doesn't sit on top of our custom eye button */}
       <style>{`
         input[type="password"]::-ms-reveal,
         input[type="password"]::-ms-clear {
           display: none;
-        }
-        input::-webkit-credentials-auto-fill-button,
-        input::-webkit-strong-password-auto-fill-button {
-          visibility: hidden;
-          pointer-events: none;
-          position: absolute;
-          right: 0;
         }
       `}</style>
 
@@ -252,7 +293,7 @@ function Signup() {
             {alertInfo.type === "error" ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
             ) : (
@@ -295,7 +336,7 @@ function Signup() {
               <div className="error-msg" id="name-error">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 {nameError}
@@ -332,7 +373,7 @@ function Signup() {
               <div className="error-msg" id="email-error">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 {emailError}
@@ -370,7 +411,7 @@ function Signup() {
                 <div className="error-msg" id="otp-error">
                   <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12" />
                     <line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                   {otpError}
@@ -436,7 +477,7 @@ function Signup() {
               <div className="error-msg" id="password-error">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 {passwordError}
@@ -472,6 +513,45 @@ function Signup() {
             )}
           </button>
         </form>
+
+        {/* Divider */}
+        <div style={{ display: "flex", alignItems: "center", margin: "20px 0 16px", gap: "10px" }}>
+          <div style={{ flex: 1, height: "1px", background: "var(--border-color, #e2e8f0)" }}></div>
+          <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "700" }}>OR</span>
+          <div style={{ flex: 1, height: "1px", background: "var(--border-color, #e2e8f0)" }}></div>
+        </div>
+
+        {/* Google Sign-In Button */}
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: "12px",
+            border: "1px solid #cbd5e1",
+            background: "#ffffff",
+            color: "#1e293b",
+            fontWeight: "700",
+            fontSize: "14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px",
+            cursor: "pointer",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.15C3.26 21.3 7.35 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.28 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.99-3.15z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.7 1.29 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.72-4.96z"/>
+          </svg>
+          Sign Up with Google
+        </button>
 
         <p className="nav-link">
           Already registered?

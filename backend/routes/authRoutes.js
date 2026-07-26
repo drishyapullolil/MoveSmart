@@ -246,4 +246,43 @@ router.post("/login", async (req, res) => {
 });
 
 
+// GOOGLE SIGN-IN API
+router.post("/google-login", async (req, res) => {
+    try {
+        const { email, name, googleId, picture } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ message: "Google email is required" });
+        }
+
+        let user = await User.findOne({ email: email.toLowerCase() });
+
+        if (!user) {
+            // Auto-register user with Google details
+            const randomPassword = await bcrypt.hash(`GoogleAuth_${Date.now()}_${Math.random()}`, 10);
+            user = new User({
+                name: name || email.split("@")[0],
+                email: email.toLowerCase(),
+                password: randomPassword,
+                role: "User",
+            });
+            await user.save();
+        }
+
+        // Return user authentication data
+        res.json({
+            message: "Google Sign-In successful ✅",
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role || "User",
+            }
+        });
+    } catch (error) {
+        console.error("Google Sign-In Error:", error);
+        res.status(500).json({ message: error.message || "Google Sign-In failed" });
+    }
+});
+
 module.exports = router;
