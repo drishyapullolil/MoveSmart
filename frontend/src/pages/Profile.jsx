@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { processRazorpayPayment } from "../utils/razorpay";
 
 function Profile() {
   const navigate = useNavigate();
@@ -187,26 +188,41 @@ function Profile() {
     showToast("Password updated successfully! 🔒");
   };
 
-  // Handle Wallet Recharge
+  // Handle Wallet Recharge via Razorpay
   const handleRechargeWallet = (e) => {
     e.preventDefault();
     const amountNum = parseFloat(rechargeAmount);
     if (isNaN(amountNum) || amountNum <= 0) return;
 
-    const newBalance = walletBalance + amountNum;
-    setWalletBalance(newBalance);
+    processRazorpayPayment({
+      amount: amountNum,
+      description: `MoveSmart Wallet Recharge`,
+      userEmail: user?.email || "",
+      userName: user?.name || "Transit Passenger",
+      userPhone: user?.phone || "",
+      paymentType: "wallet",
+      onSuccess: (res) => {
+        const newBalance = walletBalance + amountNum;
+        setWalletBalance(newBalance);
 
-    const newTxn = {
-      id: `TXN-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: `Wallet Top-Up via ${paymentMethod}`,
-      date: "Just now",
-      amount: `+ ₹ ${amountNum.toFixed(2)}`,
-      isDebit: false,
-    };
+        const newTxn = {
+          id: `TXN-${Math.floor(1000 + Math.random() * 9000)}`,
+          title: `Wallet Top-Up via Razorpay (${res.paymentId || "Success"})`,
+          date: "Just now",
+          amount: `+ ₹ ${amountNum.toFixed(2)}`,
+          isDebit: false,
+        };
 
-    setTransactions([newTxn, ...transactions]);
-    setShowRechargeModal(false);
-    showToast(`Successfully added ₹ ${amountNum.toFixed(2)} to your MoveSmart Wallet! 💳`);
+        setTransactions([newTxn, ...transactions]);
+        setShowRechargeModal(false);
+        showToast(`Successfully added ₹ ${amountNum.toFixed(2)} to your MoveSmart Wallet! 💳`);
+      },
+      onError: (err) => {
+        if (!err.message?.includes("cancelled")) {
+          showToast(`⚠️ Payment error: ${err.message}`);
+        }
+      },
+    });
   };
 
   // Handle Logout

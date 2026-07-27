@@ -8,13 +8,13 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBropBFqlFHH2VK30yOFhSjgZk2hwDIhcw",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "movesmart-c3c2b.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "movesmart-c3c2b",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "movesmart-c3c2b.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "255078469903",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:255078469903:web:693e510fff445e306b6e7a",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-HGKJPL6L2D",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 export const app = initializeApp(firebaseConfig);

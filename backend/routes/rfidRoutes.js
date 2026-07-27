@@ -6,8 +6,108 @@ const RfidCard = require("../models/RfidCard");
 const Journey = require("../models/Journey");
 const CardApplication = require("../models/CardApplication");
 
+const Razorpay = require("razorpay");
+const crypto = require("crypto");
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// Create Razorpay Order
+router.post("/create-razorpay-order", async (req, res) => {
+  try {
+    const { amount, currency = "INR", receipt } = req.body;
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({ message: "Valid amount is required" });
+    }
+
+    const options = {
+      amount: Math.round(Number(amount) * 100), // convert to paise
+      currency: currency || "INR",
+      receipt: receipt || `rcpt_${Date.now()}`,
+    };
+
+    const order = await razorpay.orders.create(options);
+    res.json({
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    console.error("Razorpay Create Order Error:", error);
+    res.status(500).json({ message: "Failed to create payment order: " + error.message });
+  }
+});
+
+// Verify Razorpay Payment Signature
+router.post("/verify-razorpay-payment", async (req, res) => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      paymentType,
+      tagId,
+      amount,
+    } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ message: "Missing Razorpay payment parameters" });
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    const generated_signature = crypto
+      .createHmac("sha256", secret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    if (generated_signature !== razorpay_signature) {
+      return res.status(400).json({ message: "Invalid payment signature. Verification failed." });
+    }
+
+    const numericAmount = Number(amount);
+
+    if (paymentType === "topup") {
+      if (!tagId) {
+        return res.status(400).json({ message: "Card tagId is required for top-up" });
+      }
+      const queryVal = tagId.toUpperCase().trim();
+      let card = await RfidCard.findOne({
+        $or: [{ rfidTag: queryVal }, { cardNumber: queryVal }],
+      });
+
+      if (!card) {
+        return res.status(404).json({ message: "RFID Card not found" });
+      }
+
+      card.balance += numericAmount;
+      await card.save();
+
+      return res.json({
+        success: true,
+        message: `Successfully topped up ₹${numericAmount.toFixed(2)} via Razorpay! New balance: ₹${card.balance.toFixed(2)} ✅`,
+        card,
+        paymentId: razorpay_payment_id,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Payment verified successfully ✅",
+      paymentId: razorpay_payment_id,
+    });
+  } catch (error) {
+    console.error("Razorpay Verification Error:", error);
+    res.status(500).json({ message: "Failed to verify payment: " + error.message });
+  }
+});
+
 // Seed Stops and Distances
 router.post("/seed", async (req, res) => {
+
   try {
     // Clear existing stops and distances to avoid duplicate key issues on re-run
     await Stop.deleteMany({});
@@ -624,7 +724,7 @@ router.post("/apply", async (req, res) => {
       emergencyPhone: data.emergencyPhone,
 
       initialRecharge: Number(data.initialRecharge || 20),
-      paymentMethod: data.paymentMethod || "UPI",
+      paymentMethod: data.paymentMethod || "Razorpay",
       enableSos: data.enableSos !== false,
       shareLocation: data.shareLocation === true,
       termsAccepted: data.termsAccepted !== false,

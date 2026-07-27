@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import CardApplication from "./Cardapplication";
+import { processRazorpayPayment } from "../utils/razorpay";
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -190,32 +191,40 @@ function Dashboard() {
     }
   };
 
-  // Nol Top Up Handler
-  const handleTopUpSubmit = async (e) => {
+  // Nol Top Up Handler via Razorpay
+  const handleTopUpSubmit = (e) => {
     e.preventDefault();
     if (!topUpTagId) {
       alert("Please enter a valid Card Number or Tag ID.");
       return;
     }
-    try {
-      const res = await axios.post("/api/rfid/topup", {
-        tagId: topUpTagId.trim(),
-        amount: Number(topUpAmount)
-      });
-      setTopUpSuccess(true);
-      if (user && user.email) {
-        fetchMyCards();
-      }
-      if (selectedCard && (selectedCard.cardNumber === res.data.card.cardNumber || selectedCard.rfidTag === res.data.card.rfidTag)) {
-        selectCard(res.data.card);
-      }
-      setTimeout(() => {
-        setTopUpSuccess(false);
-        setTopUpTagId("");
-      }, 4000);
-    } catch (err) {
-      alert(err.response?.data?.message || "Failed to top up card.");
-    }
+
+    processRazorpayPayment({
+      amount: Number(topUpAmount),
+      description: `MoveSmart Nol Card Top-Up (${topUpTagId.trim()})`,
+      userEmail: user?.email || "",
+      userName: user?.name || "Transit Rider",
+      paymentType: "topup",
+      tagId: topUpTagId.trim(),
+      onSuccess: (data) => {
+        setTopUpSuccess(true);
+        if (user && user.email) {
+          fetchMyCards();
+        }
+        if (selectedCard && data.card && (selectedCard.cardNumber === data.card.cardNumber || selectedCard.rfidTag === data.card.rfidTag)) {
+          selectCard(data.card);
+        }
+        setTimeout(() => {
+          setTopUpSuccess(false);
+          setTopUpTagId("");
+        }, 4000);
+      },
+      onError: (err) => {
+        if (!err.message?.includes("cancelled")) {
+          alert(`Top-Up Payment Error: ${err.message}`);
+        }
+      },
+    });
   };
 
   // Route Schedule Search Handler

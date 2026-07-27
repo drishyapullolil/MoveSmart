@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
+import { processRazorpayPayment } from "../utils/razorpay";
 
 const API_BASE = "/api/rfid";
 
@@ -60,7 +61,7 @@ const INITIAL_FORM = {
 
   // 5. Wallet & Safety
   initialRecharge: "20",
-  paymentMethod: "UPI",
+  paymentMethod: "Razorpay",
   enableSos: true,
   shareLocation: false,
   termsAccepted: false,
@@ -208,27 +209,51 @@ export default function CardApplication() {
     setSubmitting(true);
     setFormError("");
 
-    try {
-      const payload = {
-        ...formData,
-        userId: user?.id || user?._id || null,
-        idProofUrl: formData.idProofName ? `uploads/id_${formData.idProofName}` : "",
-        studentIdUrl: formData.studentIdName ? `uploads/student_${formData.studentIdName}` : "",
-      };
+    const initialAmount = Number(formData.initialRecharge) || 20;
 
-      const res = await axios.post(`${API_BASE}/apply`, payload, {
-        withCredentials: true,
-      });
+    const executeSubmission = async (paymentId = "") => {
+      try {
+        const payload = {
+          ...formData,
+          paymentId: paymentId || undefined,
+          paymentMethod: "Razorpay",
+          userId: user?.id || user?._id || null,
+          idProofUrl: formData.idProofName ? `uploads/id_${formData.idProofName}` : "",
+          studentIdUrl: formData.studentIdName ? `uploads/student_${formData.studentIdName}` : "",
+        };
 
-      const newApp = res.data.application;
-      setSubmittedAppInfo(newApp);
-      await fetchApplications();
-    } catch (err) {
-      const message = err.response?.data?.error || err.response?.data?.message || "Failed to submit application. Please try again.";
-      setFormError(message);
-    } finally {
-      setSubmitting(false);
-    }
+        const res = await axios.post(`${API_BASE}/apply`, payload, {
+          withCredentials: true,
+        });
+
+        const newApp = res.data.application;
+        setSubmittedAppInfo(newApp);
+        await fetchApplications();
+      } catch (err) {
+        const message = err.response?.data?.error || err.response?.data?.message || "Failed to submit application. Please try again.";
+        setFormError(message);
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
+    processRazorpayPayment({
+      amount: initialAmount,
+      description: `MoveSmart Nol Card Application (${formData.cardCategory})`,
+      userEmail: formData.email || user?.email || "",
+      userName: formData.fullName || user?.name || "Card Applicant",
+      userPhone: formData.phone || "",
+      paymentType: "card_application",
+      onSuccess: (data) => {
+        executeSubmission(data.paymentId);
+      },
+      onError: (err) => {
+        setSubmitting(false);
+        if (!err.message?.includes("cancelled")) {
+          setFormError(`Payment error: ${err.message}`);
+        }
+      },
+    });
   };
 
   return (
@@ -843,9 +868,9 @@ export default function CardApplication() {
                           Payment Method
                         </label>
                         <select id="paymentMethod" name="paymentMethod" className="rta-input-field" value={formData.paymentMethod} onChange={handleChange}>
-                          <option value="UPI">UPI / GooglePay / PhonePe</option>
-                          <option value="Card">Debit / Credit Card</option>
-                          <option value="Cash">Cash at Station Counter</option>
+                          <option value="Razorpay">Razorpay Gateway (UPI / Cards / NetBanking)</option>
+                          <option value="UPI">Razorpay Instant UPI (Google Pay, PhonePe, Paytm)</option>
+                          <option value="Card">Razorpay Credit / Debit Card</option>
                         </select>
                       </div>
                     </div>

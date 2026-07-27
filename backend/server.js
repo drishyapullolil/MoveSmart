@@ -13,7 +13,7 @@ app.use(express.json());
 
 
 // MongoDB Atlas Connection
-const mongoURI = process.env.MONGODB_URI || "mongodb+srv://drishyajose2027_db_user:Drishya%402003@cluster0.bdjk1sz.mongodb.net/movesmart?appName=Cluster0";
+const mongoURI = process.env.MONGODB_URI;
 
 mongoose.connect(mongoURI)
 .then(() => {

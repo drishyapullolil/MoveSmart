@@ -44,7 +44,7 @@ const cardApplicationSchema = new mongoose.Schema({
 
   // 5. Wallet & Safety
   initialRecharge: { type: Number, default: 20 },
-  paymentMethod: { type: String, enum: ["UPI", "Card", "Cash"], default: "UPI" },
+  paymentMethod: { type: String, enum: ["Razorpay", "UPI", "Card", "Cash"], default: "Razorpay" },
   enableSos: { type: Boolean, default: true },
   shareLocation: { type: Boolean, default: false },
   termsAccepted: { type: Boolean, default: true },
