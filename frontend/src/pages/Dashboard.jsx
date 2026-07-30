@@ -3,15 +3,15 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import CardApplication from "./Cardapplication";
 import { processRazorpayPayment } from "../utils/razorpay";
+import { getStoredUser, clearStoredSession } from "../utils/session";
+import Header from "../components/Header";
+import Footer from "../components/Footer";
 
 function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const [activeTab, setActiveTab] = useState("planner");
-  const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
+  const [user, setUser] = useState(() => getStoredUser());
 
   // Real RFID States
   const [myCards, setMyCards] = useState([]);
@@ -311,8 +311,7 @@ function Dashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("user");
-    localStorage.removeItem("authToken");
+    clearStoredSession();
     setUser(null);
     navigate("/");
   };
@@ -320,48 +319,7 @@ function Dashboard() {
   return (
     <div className="rta-body-theme">
       {/* MoveSmart Header Navigation */}
-      <nav className="rta-nav">
-        <Link to="/" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
-          <img 
-            src="/logo.png" 
-            alt="MoveSmart Logo" 
-            style={{ 
-              height: "52px", 
-              width: "auto", 
-              objectFit: "contain",
-              filter: "drop-shadow(0px 2px 6px rgba(0,0,0,0.06))"
-            }} 
-          />
-          <span style={{ fontSize: "22px", fontWeight: "800", background: "linear-gradient(135deg, #38a169, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-            MoveSmart
-          </span>
-        </Link>
-
-        <div className="rta-nav-menu">
-          <a href="#services" className="rta-nav-link">Bus Services</a>
-          <a href="#nol-hub" className="rta-nav-link">RFID Portal</a>
-          <a href="#schedules" className="rta-nav-link">Schedules</a>
-          <Link to="/dashboard/card-application" className="rta-nav-link">Card Application</Link>
-          {user ? (
-            <>
-              <Link
-                to="/profile"
-                className={`rta-nav-link ${location.pathname === "/profile" ? "active" : ""}`}
-              >
-                Profile ({user.name})
-              </Link>
-              <button onClick={handleLogout} className="rta-btn-secondary" style={{ padding: "8px 16px" }}>
-                Sign Out
-              </button>
-            </>
-          ) : (
-            <>
-              <Link to="/login" className="rta-nav-link">Sign In</Link>
-              <Link to="/signup" className="rta-btn-primary">Register</Link>
-            </>
-          )}
-        </div>
-      </nav>
+      <Header />
 
       {/* MoveSmart Hero Portal section */}
       <header className="rta-hero">
@@ -1108,54 +1066,7 @@ function Dashboard() {
         )}
       </div>
 
-      {/* Footer Branding */}
-      <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "40px 5%", borderTop: "3px solid var(--primary)", marginTop: "auto" }}>
-        <div style={{ maxWidth: "1200px", margin: "0 auto", display: "flex", justifySelf: "space-between", flexWrap: "wrap", gap: "30px" }}>
-          <div>
-            <div className="rta-logo" style={{ marginBottom: "15px", display: "inline-flex", alignItems: "center", gap: "12px" }}>
-              <img 
-                src="/logo.png" 
-                alt="MoveSmart Logo" 
-                style={{ 
-                  height: "56px", 
-                  width: "auto", 
-                  objectFit: "contain", 
-                  background: "#ffffff", 
-                  padding: "6px 14px", 
-                  borderRadius: "12px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
-                }} 
-              />
-              <span style={{ fontSize: "22px", fontWeight: "800", color: "#ffffff" }}>
-                MoveSmart Kerala
-              </span>
-            </div>
-            <p style={{ fontSize: "13px", maxWidth: "340px", lineHeight: "1.6", color: "#b7aed6" }}>
-              Smart Private Bus Fleet Management &amp; Passenger Portal for Kerala. Real-time bus tracking, RFID pass management, and digital ticketing.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "40px" }}>
-            <div>
-              <h4 style={{ color: "#FFFFFF", marginBottom: "12px", fontSize: "14px" }}>Transit Services</h4>
-              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Private Bus City Routes</a></li>
-                <li><a href="#nol-hub" style={{ color: "#b7aed6", textDecoration: "none" }}>MoveSmart RFID Pass</a></li>
-                <li><a href="#services" style={{ color: "#b7aed6", textDecoration: "none" }}>Intercity Express Routes</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 style={{ color: "#FFFFFF", marginBottom: "12px", fontSize: "14px" }}>Support</h4>
-              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><span style={{ cursor: "pointer", color: "#b7aed6" }} onClick={() => setChatOpen(true)}>Chat Assistant</span></li>
-                <li><span style={{ color: "#b7aed6" }}>Kerala Transit Helpline: 1800-425-4747</span></li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: "30px", paddingTop: "20px", textAlign: "center", fontSize: "12px", color: "#717B87" }}>
-          © {new Date().getFullYear()} MoveSmart Kerala. Smart Urban Transit System. All rights reserved.
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -1,36 +1,34 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { getStoredUser, clearStoredSession } from "../utils/session";
 
 function Admin() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
+  const [user, setUser] = useState(() => getStoredUser());
   const [activeTab, setActiveTab] = useState("overview");
 
   // ---------------- Real RFID & Stop States ----------------
   const [dbCards, setDbCards] = useState([]);
   const [dbStops, setDbStops] = useState([]);
   const [dbDistances, setDbDistances] = useState([]);
-  
+
   // Simulation States
   const [simCardTag, setSimCardTag] = useState("");
   const [simStopCode, setSimStopCode] = useState("");
   const [simResult, setSimResult] = useState(null);
   const [simError, setSimError] = useState("");
-  
+
   // Stop & Distance management Form States
   const [newStopName, setNewStopName] = useState("");
   const [newStopCode, setNewStopCode] = useState("");
   const [stopMessage, setStopMessage] = useState("");
-  
+
   const [distFromStop, setDistFromStop] = useState("");
   const [distToStop, setDistToStop] = useState("");
   const [distKm, setDistKm] = useState("");
   const [distanceMessage, setDistanceMessage] = useState("");
-  
+
   // ---------------- Card Applications Admin States ----------------
   const [adminApplications, setAdminApplications] = useState([]);
   const [adminAppFilter, setAdminAppFilter] = useState("All");
@@ -42,6 +40,100 @@ function Admin() {
   const [correctionNote, setCorrectionNote] = useState("");
   const [adminActionMessage, setAdminActionMessage] = useState("");
 
+  // ---------------- Driver Leaves & Driver Verification Admin States ----------------
+  const [adminLeaves, setAdminLeaves] = useState([]);
+  const [leaveFilterStatus, setLeaveFilterStatus] = useState("All");
+  const [leaveActionMessage, setLeaveActionMessage] = useState("");
+
+  const [adminDrivers, setAdminDrivers] = useState([]);
+  const [driverActionMessage, setDriverActionMessage] = useState("");
+
+  const [adminBusRequests, setAdminBusRequests] = useState([]);
+  const [busReqActionMessage, setBusReqActionMessage] = useState("");
+
+  const fetchAdminBusRequests = async () => {
+    try {
+      const res = await axios.get("/api/admin/bus-requests");
+      setAdminBusRequests(res.data.requests || []);
+    } catch (err) {
+      console.error("Error fetching admin bus requests:", err);
+    }
+  };
+
+  const handleUpdateBusRequestStatus = async (requestId, status) => {
+    try {
+      const comment = prompt(
+        `Enter review note for driver bus request (${status}):`,
+        status === "Approved" ? "Driver bus assignment approved by Admin." : "Driver bus assignment request rejected."
+      );
+      const res = await axios.put(`/api/admin/bus-request/${requestId}/status`, {
+        status,
+        adminComment: comment !== null ? comment : "",
+      });
+      setBusReqActionMessage(`✓ ${res.data.message}`);
+      fetchAdminBusRequests();
+      fetchAdminDrivers();
+      fetchAdminLeaves();
+      setTimeout(() => setBusReqActionMessage(""), 5000);
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to update bus request status");
+    }
+  };
+
+  const fetchAdminLeaves = async () => {
+    try {
+      const res = await axios.get("/api/admin/leaves");
+      setAdminLeaves(res.data.leaves || []);
+    } catch (err) {
+      console.error("Error fetching admin leaves:", err);
+    }
+  };
+
+  const fetchAdminDrivers = async () => {
+    try {
+      const res = await axios.get("/api/admin/drivers");
+      setAdminDrivers(res.data.drivers || []);
+    } catch (err) {
+      console.error("Error fetching admin drivers:", err);
+    }
+  };
+
+  const handleUpdateLeaveStatus = async (leaveId, status) => {
+    try {
+      const comment = prompt(
+        `Enter optional feedback note for ${status.toLowerCase()} leave application:`,
+        status === "Approved" ? "Accepted and approved by Admin." : "Leave request rejected."
+      );
+      await axios.put(`/api/admin/leave/${leaveId}/status`, {
+        status,
+        adminComment: comment !== null ? comment : "",
+      });
+      setLeaveActionMessage(`✓ Leave request ${status === "Approved" ? "ACCEPTED & APPROVED" : "REJECTED"} successfully!`);
+      fetchAdminLeaves();
+      setTimeout(() => setLeaveActionMessage(""), 5000);
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to update leave status");
+    }
+  };
+
+  const handleUpdateDriverVerification = async (driverId, status) => {
+    try {
+      const note = prompt(
+        `Enter verification review note for driver (${status}):`,
+        status === "Approved" ? "Driving license and profile picture verified & approved by Admin." : "Driving license verification rejected."
+      );
+      await axios.put(`/api/admin/driver/${driverId}/verification`, {
+        status,
+        note: note !== null ? note : "",
+      });
+      setDriverActionMessage(`✓ Driver verification ${status === "Approved" ? "ACCEPTED & APPROVED ✅" : "REJECTED ❌"}!`);
+      fetchAdminDrivers();
+      setTimeout(() => setDriverActionMessage(""), 5000);
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to update driver verification");
+    }
+  };
+
   const fetchAdminApplications = async () => {
     try {
       const res = await axios.get("/api/rfid/applications");
@@ -50,6 +142,13 @@ function Admin() {
       console.error("Error fetching admin applications:", err);
     }
   };
+
+  useEffect(() => {
+    fetchAdminApplications();
+    fetchAdminRfidData();
+    fetchAdminLeaves();
+    fetchAdminDrivers();
+  }, []);
 
   const fetchAdminRfidData = async () => {
     try {
@@ -396,12 +495,14 @@ function Admin() {
     } else {
       fetchAdminRfidData();
       fetchAdminApplications();
+      fetchAdminLeaves();
+      fetchAdminDrivers();
+      fetchAdminBusRequests();
     }
   }, [user, navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem("user");
-    localStorage.removeItem("authToken");
+    clearStoredSession();
     navigate("/login");
   };
 
@@ -429,7 +530,7 @@ function Admin() {
           <span>MoveSmart Portal</span>
         </Link>
         <div className="rta-nav-menu">
-          <span className="rta-nav-link active">Admin</span>
+          <span className="rta-nav-link active">Admin Console</span>
           <button onClick={handleLogout} className="rta-btn-secondary" style={{ padding: "8px 16px" }}>Sign Out</button>
         </div>
       </nav>
@@ -461,6 +562,13 @@ function Admin() {
             >
               🚌 Routes &amp; Schedules
             </button>
+            <Link
+              to="/admin/bus-routes"
+              className="profile-menu-item"
+              style={{ textDecoration: "none", color: "var(--primary)", fontWeight: "800" }}
+            >
+              ➕ Add Bus &amp; Route Page
+            </Link>
             <button
               className={`profile-menu-item ${activeTab === "users" ? "active" : ""}`}
               onClick={() => setActiveTab("users")}
@@ -478,6 +586,24 @@ function Admin() {
               onClick={() => setActiveTab("bookings")}
             >
               🚍 Intercity Bookings
+            </button>
+            <button
+              className={`profile-menu-item ${activeTab === "driverLeaves" ? "active" : ""}`}
+              onClick={() => setActiveTab("driverLeaves")}
+            >
+              🌴 Driver Leaves ({adminLeaves.filter(l => l.status === "Pending").length})
+            </button>
+            <button
+              className={`profile-menu-item ${activeTab === "driverAssignments" ? "active" : ""}`}
+              onClick={() => setActiveTab("driverAssignments")}
+            >
+              🚌 Bus Driver Requests ({adminBusRequests.filter(r => r.status === "Pending").length})
+            </button>
+            <button
+              className={`profile-menu-item ${activeTab === "driverVerifications" ? "active" : ""}`}
+              onClick={() => setActiveTab("driverVerifications")}
+            >
+              🪪 Driver Verifications ({adminDrivers.filter(d => d.verificationStatus === "Pending").length})
             </button>
           </div>
         </aside>
@@ -534,7 +660,27 @@ function Admin() {
           {/* TAB: ROUTES & SCHEDULES */}
           {activeTab === "routes" && (
             <div className="fade-in-section">
-              <h2 className="profile-section-title">Manage Bus Routes</h2>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", flexWrap: "wrap", gap: "10px" }}>
+                <h2 className="profile-section-title" style={{ margin: 0 }}>Manage Bus Routes</h2>
+                <Link
+                  to="/admin/bus-routes"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 18px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, var(--primary), #2f855a)",
+                    color: "#ffffff",
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    textDecoration: "none",
+                    boxShadow: "0 4px 12px rgba(56, 161, 105, 0.3)",
+                  }}
+                >
+                  🚍 Open Full Add Bus &amp; Route Console ➔
+                </Link>
+              </div>
 
               {routeMessage && (
                 <div style={{ color: "#059669", fontWeight: "700", marginBottom: "15px", fontSize: "13.5px" }}>
@@ -689,9 +835,9 @@ function Admin() {
           {/* TAB: NOL CARDS */}
           {activeTab === "cards" && (
             <div className="fade-in-section">
-              
+
               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "30px", alignItems: "start" }}>
-                
+
                 {/* Left side: Oversight List */}
                 <div>
                   <h2 className="profile-section-title">Nol Card Oversight</h2>
@@ -712,14 +858,14 @@ function Admin() {
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
-                    {dbCards.filter(c => 
-                      c.cardNumber.includes(cardSearch) || 
+                    {dbCards.filter(c =>
+                      c.cardNumber.includes(cardSearch) ||
                       c.rfidTag.includes(cardSearch.toUpperCase()) ||
                       (c.user && c.user.name.toLowerCase().includes(cardSearch.toLowerCase()))
                     ).length === 0 ? (
                       <p style={{ color: "#717B87", fontStyle: "italic" }}>No cards match your search.</p>
-                    ) : dbCards.filter(c => 
-                      c.cardNumber.includes(cardSearch) || 
+                    ) : dbCards.filter(c =>
+                      c.cardNumber.includes(cardSearch) ||
                       c.rfidTag.includes(cardSearch.toUpperCase()) ||
                       (c.user && c.user.name.toLowerCase().includes(cardSearch.toLowerCase()))
                     ).map(c => (
@@ -773,7 +919,7 @@ function Admin() {
 
                 {/* Right side: Simulator & Stops/Distances */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "25px" }}>
-                  
+
                   {/* Tap Simulator */}
                   <div style={{ backgroundColor: "#F8FAFC", border: "1px solid var(--rta-gray-border)", borderRadius: "12px", padding: "20px" }}>
                     <h3 style={{ fontSize: "16px", fontWeight: "800", color: "var(--rta-blue-navy)", marginBottom: "12px" }}>
@@ -786,8 +932,8 @@ function Admin() {
                     <form onSubmit={handleSimulateTap}>
                       <div className="rta-input-group" style={{ marginBottom: "12px" }}>
                         <label htmlFor="sim-card-select">Select RFID Card</label>
-                        <select 
-                          id="sim-card-select" 
+                        <select
+                          id="sim-card-select"
                           className="rta-input-field"
                           value={simCardTag}
                           onChange={(e) => setSimCardTag(e.target.value)}
@@ -803,8 +949,8 @@ function Admin() {
 
                       <div className="rta-input-group" style={{ marginBottom: "16px" }}>
                         <label htmlFor="sim-stop-select">Select Bus Stop</label>
-                        <select 
-                          id="sim-stop-select" 
+                        <select
+                          id="sim-stop-select"
                           className="rta-input-field"
                           value={simStopCode}
                           onChange={(e) => setSimStopCode(e.target.value)}
@@ -836,7 +982,7 @@ function Admin() {
                           Reader Log Output: {simResult.action}
                         </div>
                         <div style={{ color: "#FFF", marginBottom: "4px" }}>{simResult.message}</div>
-                        
+
                         {simResult.card && (
                           <div style={{ color: "#94A3B8" }}>
                             Card: {simResult.card.cardNumber} ({simResult.card.cardType})<br />
@@ -860,9 +1006,9 @@ function Admin() {
                       <h3 style={{ fontSize: "16px", fontWeight: "800", color: "var(--rta-blue-navy)", margin: 0 }}>
                         ⚙️ Stop Distance Settings
                       </h3>
-                      <button 
-                        onClick={handleReSeed} 
-                        className="rta-btn-secondary" 
+                      <button
+                        onClick={handleReSeed}
+                        className="rta-btn-secondary"
                         style={{ padding: "4px 8px", fontSize: "11px", borderColor: "var(--rta-gold)", color: "var(--rta-gold)" }}
                       >
                         Re-Seed Defaults
@@ -873,20 +1019,20 @@ function Admin() {
                     <form onSubmit={handleAddStop} style={{ marginBottom: "20px" }}>
                       <h4 style={{ fontSize: "13px", fontWeight: "700", marginBottom: "8px" }}>Add New Stop</h4>
                       <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-                        <input 
-                          type="text" 
-                          placeholder="Stop Name" 
-                          className="rta-input-field" 
-                          value={newStopName} 
+                        <input
+                          type="text"
+                          placeholder="Stop Name"
+                          className="rta-input-field"
+                          value={newStopName}
                           onChange={(e) => setNewStopName(e.target.value)}
                           required
                           style={{ padding: "6px 10px", fontSize: "12.5px" }}
                         />
-                        <input 
-                          type="text" 
-                          placeholder="Code" 
-                          className="rta-input-field" 
-                          value={newStopCode} 
+                        <input
+                          type="text"
+                          placeholder="Code"
+                          className="rta-input-field"
+                          value={newStopCode}
                           onChange={(e) => setNewStopCode(e.target.value)}
                           required
                           style={{ padding: "6px 10px", fontSize: "12.5px", width: "80px" }}
@@ -906,9 +1052,9 @@ function Admin() {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "8px" }}>
                         <div>
                           <label style={{ fontSize: "10px", color: "#717B87" }}>From Stop</label>
-                          <select 
-                            className="rta-input-field" 
-                            value={distFromStop} 
+                          <select
+                            className="rta-input-field"
+                            value={distFromStop}
                             onChange={(e) => setDistFromStop(e.target.value)}
                             style={{ padding: "4px", fontSize: "12px" }}
                           >
@@ -919,9 +1065,9 @@ function Admin() {
                         </div>
                         <div>
                           <label style={{ fontSize: "10px", color: "#717B87" }}>To Stop</label>
-                          <select 
-                            className="rta-input-field" 
-                            value={distToStop} 
+                          <select
+                            className="rta-input-field"
+                            value={distToStop}
                             onChange={(e) => setDistToStop(e.target.value)}
                             style={{ padding: "4px", fontSize: "12px" }}
                           >
@@ -933,13 +1079,13 @@ function Admin() {
                       </div>
                       <div className="rta-input-group" style={{ marginBottom: "10px" }}>
                         <label style={{ fontSize: "11px" }}>Distance (kilometers)</label>
-                        <input 
-                          type="number" 
-                          step="0.1" 
-                          min="0.1" 
-                          placeholder="e.g. 5.6" 
-                          className="rta-input-field" 
-                          value={distKm} 
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          placeholder="e.g. 5.6"
+                          className="rta-input-field"
+                          value={distKm}
                           onChange={(e) => setDistKm(e.target.value)}
                           required
                           style={{ padding: "6px 10px", fontSize: "12.5px" }}
@@ -1018,6 +1164,271 @@ function Admin() {
             </div>
           )}
 
+          {/* TAB: DRIVER LEAVES */}
+          {activeTab === "driverLeaves" && (
+            <div className="fade-in-section">
+              <h2 className="profile-section-title">Driver Leave Applications &amp; Approvals</h2>
+
+              {leaveActionMessage && (
+                <div style={{ color: "#059669", fontWeight: "700", marginBottom: "15px", fontSize: "14px", background: "#ecfdf5", padding: "12px", borderRadius: "10px", border: "1px solid #a7f3d0" }}>
+                  {leaveActionMessage}
+                </div>
+              )}
+
+              {/* Status Filter */}
+              <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+                {["All", "Pending", "Approved", "Rejected"].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setLeaveFilterStatus(st)}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: "10px",
+                      border: "none",
+                      fontWeight: "700",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      background: leaveFilterStatus === st ? "var(--primary)" : "#f1f5f9",
+                      color: leaveFilterStatus === st ? "#ffffff" : "#475569",
+                    }}
+                  >
+                    {st} {st !== "All" && `(${adminLeaves.filter((l) => l.status === st).length})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Leave Request List */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {adminLeaves.filter((l) => leaveFilterStatus === "All" || l.status === leaveFilterStatus).length === 0 ? (
+                  <p style={{ color: "#717B87", fontStyle: "italic", padding: "20px 0" }}>No driver leave requests match this filter.</p>
+                ) : (
+                  adminLeaves
+                    .filter((l) => leaveFilterStatus === "All" || l.status === leaveFilterStatus)
+                    .map((l) => (
+                      <div key={l._id} className="rta-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            <span style={{ fontWeight: "800", fontSize: "16px", color: "#1F2226" }}>{l.driverName}</span>
+                            <span style={{ fontSize: "12px", color: "#717B87" }}>({l.driverEmail})</span>
+                            <span style={{
+                              fontSize: "12px", fontWeight: "800", padding: "3px 10px", borderRadius: "12px",
+                              color: l.status === "Approved" ? "#059669" : l.status === "Rejected" ? "#dc2626" : "#d97706",
+                              backgroundColor: l.status === "Approved" ? "rgba(5, 150, 105, 0.1)" : l.status === "Rejected" ? "rgba(220, 38, 38, 0.1)" : "rgba(217, 119, 6, 0.1)"
+                            }}>
+                              {l.status === "Approved" ? "Accepted & Approved ✅" : l.status === "Rejected" ? "Rejected ❌" : "Pending Approval ⏳"}
+                            </span>
+                          </div>
+
+                          <div style={{ fontSize: "13.5px", fontWeight: "700", color: "#2563eb", marginTop: "6px" }}>
+                            📅 Date: {l.leaveDate} · <strong style={{ color: "#7c3aed" }}>Type: {l.leaveType}</strong>
+                            {l.leaveType === "Half Day" && ` (${l.halfDaySlot})`}
+                          </div>
+
+                          <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
+                            Reason: <em>"{l.reason}"</em>
+                          </div>
+
+                          {l.adminComment && (
+                            <div style={{ fontSize: "12px", color: "#334155", fontStyle: "italic", marginTop: "6px", background: "#f8fafc", padding: "6px 10px", borderRadius: "6px" }}>
+                              💬 Admin Note: {l.adminComment}
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ display: "flex", gap: "10px" }}>
+                          {l.status !== "Approved" && (
+                            <button
+                              onClick={() => handleUpdateLeaveStatus(l._id, "Approved")}
+                              className="rta-btn-primary"
+                              style={{ padding: "8px 16px", fontSize: "13px", background: "#16a34a", width: "auto" }}
+                            >
+                              Accept Request ✓
+                            </button>
+                          )}
+                          {l.status !== "Rejected" && (
+                            <button
+                              onClick={() => handleUpdateLeaveStatus(l._id, "Rejected")}
+                              className="rta-btn-secondary"
+                              style={{ padding: "8px 16px", fontSize: "13px", color: "#dc2626", borderColor: "#fca5a5" }}
+                            >
+                              Reject Request
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: DRIVER BUS REQUESTS & ASSIGNMENTS */}
+          {activeTab === "driverAssignments" && (
+            <div className="fade-in-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <div>
+                  <h2 className="profile-section-title" style={{ margin: 0 }}>Driver Bus Assignment Requests</h2>
+                  <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0" }}>
+                    Review driver requests to claim/drive buses and manage fleet driver assignments. (Submitted &gt; 2 hrs before departure)
+                  </p>
+                </div>
+              </div>
+
+              {busReqActionMessage && (
+                <div style={{ background: "#dcfce7", color: "#166534", padding: "12px 16px", borderRadius: "10px", fontWeight: "700", marginBottom: "16px", border: "1px solid #bbf7d0" }}>
+                  {busReqActionMessage}
+                </div>
+              )}
+
+              {adminBusRequests.length === 0 ? (
+                <div className="rta-card" style={{ padding: "30px", textAlign: "center", color: "#717B87" }}>
+                  No driver bus requests found in system.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  {adminBusRequests.map((req) => (
+                    <div key={req._id} className="rta-card" style={{ padding: "18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                          <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: "#e2e8f0", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "800", color: "#6d28d9" }}>
+                            {req.driverPhoto ? (
+                              <img src={req.driverPhoto} alt={req.driverName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                              req.driverName ? req.driverName[0] : "D"
+                            )}
+                          </div>
+
+                          <div>
+                            <h3 style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                              {req.driverName} ({req.driverEmail})
+                            </h3>
+                            <div style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>
+                              🪪 License: <strong>{req.driverLicense || "N/A"}</strong> | 📞 {req.driverPhone || "N/A"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className={req.status === "Approved" ? "status-badge-approved" : req.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
+                          {req.status === "Approved" ? "Approved & Assigned ✅" : req.status === "Rejected" ? "Rejected ❌" : "Pending Admin Approval ⏳"}
+                        </span>
+                      </div>
+
+                      <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13px", color: "#334155", marginBottom: "14px" }}>
+                        <div>🚌 <strong>Bus Requested:</strong> Bus {req.busNumber} ({req.busName})</div>
+                        <div>📍 <strong>Route:</strong> {req.routeName}</div>
+                        <div>⏰ <strong>Scheduled Departure:</strong> <span style={{ color: "#7c3aed", fontWeight: "800" }}>{req.departureTime}</span> (Verified: &gt; 2 hrs rule compliant)</div>
+                        {req.adminComment && <div style={{ fontSize: "12px", color: "#64748b", fontStyle: "italic", marginTop: "4px" }}>Admin Note: {req.adminComment}</div>}
+                      </div>
+
+                      {req.status === "Pending" && (
+                        <div style={{ display: "flex", gap: "10px" }}>
+                          <button
+                            onClick={() => handleUpdateBusRequestStatus(req._id, "Approved")}
+                            className="rta-btn-primary"
+                            style={{ flex: 1, padding: "10px", fontSize: "13px", background: "#16a34a", justifyContent: "center" }}
+                          >
+                            Approve &amp; Assign Driver to Bus ✓
+                          </button>
+                          <button
+                            onClick={() => handleUpdateBusRequestStatus(req._id, "Rejected")}
+                            className="rta-btn-secondary"
+                            style={{ padding: "10px", fontSize: "13px", color: "#dc2626", borderColor: "#fca5a5" }}
+                          >
+                            Reject Request ❌
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: DRIVER VERIFICATIONS */}
+          {activeTab === "driverVerifications" && (
+            <div className="fade-in-section">
+              <h2 className="profile-section-title">Driver Profile &amp; License Verifications</h2>
+              <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "20px" }}>
+                Verify driver profile pictures and driving license photo documents before accepting them for passenger view.
+              </p>
+
+              {driverActionMessage && (
+                <div style={{ color: "#059669", fontWeight: "700", marginBottom: "15px", fontSize: "14px", background: "#ecfdf5", padding: "12px", borderRadius: "10px", border: "1px solid #a7f3d0" }}>
+                  {driverActionMessage}
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: "20px" }}>
+                {adminDrivers.length === 0 ? (
+                  <p style={{ color: "#717B87", fontStyle: "italic" }}>No registered drivers found in system.</p>
+                ) : (
+                  adminDrivers.map((d) => (
+                    <div key={d._id} className="rta-card" style={{ padding: "20px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "14px" }}>
+                          <div style={{ width: "56px", height: "56px", borderRadius: "50%", overflow: "hidden", background: "#f1f5f9", border: "2px solid #38a169", flexShrink: 0 }}>
+                            {d.profilePic ? (
+                              <img src={d.profilePic} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "800", color: "#38a169", fontSize: "20px" }}>
+                                {d.name ? d.name[0] : "D"}
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <h3 style={{ fontSize: "16px", fontWeight: "800", color: "#1F2226", margin: 0 }}>{d.name}</h3>
+                            <div style={{ fontSize: "12px", color: "#717B87" }}>{d.email} · {d.phone || "No Phone"}</div>
+                            <span style={{
+                              fontSize: "11px", fontWeight: "800", padding: "2px 8px", borderRadius: "10px", marginTop: "4px", display: "inline-block",
+                              color: d.verificationStatus === "Approved" ? "#059669" : d.verificationStatus === "Rejected" ? "#dc2626" : "#d97706",
+                              backgroundColor: d.verificationStatus === "Approved" ? "rgba(5, 150, 105, 0.1)" : d.verificationStatus === "Rejected" ? "rgba(220, 38, 38, 0.1)" : "rgba(217, 119, 6, 0.1)"
+                            }}>
+                              {d.verificationStatus === "Approved" ? "Admin Verified Driver ✅" : d.verificationStatus === "Pending" ? "Pending Approval ⏳" : "Unverified / Rejected"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "12.5px", marginBottom: "14px" }}>
+                          <div>🪪 <strong>Driving License No:</strong> <span style={{ fontFamily: "monospace", fontWeight: "800", color: "#7c3aed" }}>{d.licenseNumber || "Not Provided"}</span></div>
+                          <div>⏳ <strong>Experience:</strong> {d.experienceYears || 5} Years</div>
+                          {d.verificationNote && <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px", fontStyle: "italic" }}>Note: {d.verificationNote}</div>}
+                        </div>
+
+                        {d.licenseImage ? (
+                          <div style={{ marginBottom: "14px" }}>
+                            <div style={{ fontSize: "11px", fontWeight: "800", color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>Submitted Driving License Document:</div>
+                            <img src={d.licenseImage} alt="License Doc" style={{ width: "100%", maxHeight: "140px", objectFit: "contain", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: "12px", color: "#94a3b8", fontStyle: "italic", marginBottom: "14px" }}>No document photo attached.</div>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <button
+                          onClick={() => handleUpdateDriverVerification(d._id, "Approved")}
+                          className="rta-btn-primary"
+                          style={{ flex: 1, padding: "10px", fontSize: "13px", background: "#16a34a", justifyContent: "center" }}
+                        >
+                          Accept &amp; Approve Driver ✓
+                        </button>
+                        <button
+                          onClick={() => handleUpdateDriverVerification(d._id, "Rejected")}
+                          className="rta-btn-secondary"
+                          style={{ padding: "10px", fontSize: "13px", color: "#dc2626", borderColor: "#fca5a5" }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
           {/* TAB: CARD APPLICATIONS */}
           {activeTab === "applications" && (
             <div className="fade-in-section">
@@ -1074,10 +1485,10 @@ function Admin() {
                       const badge = app.status === "Approved"
                         ? { bg: "rgba(34, 197, 94, 0.12)", text: "#15803d", border: "rgba(34, 197, 94, 0.3)" }
                         : app.status === "Rejected"
-                        ? { bg: "rgba(225, 29, 72, 0.12)", text: "#be123c", border: "rgba(225, 29, 72, 0.3)" }
-                        : app.status === "Correction Needed"
-                        ? { bg: "rgba(245, 158, 11, 0.15)", text: "#b45309", border: "rgba(245, 158, 11, 0.35)" }
-                        : { bg: "rgba(139, 92, 246, 0.12)", text: "#6d28d9", border: "rgba(139, 92, 246, 0.3)" };
+                          ? { bg: "rgba(225, 29, 72, 0.12)", text: "#be123c", border: "rgba(225, 29, 72, 0.3)" }
+                          : app.status === "Correction Needed"
+                            ? { bg: "rgba(245, 158, 11, 0.15)", text: "#b45309", border: "rgba(245, 158, 11, 0.35)" }
+                            : { bg: "rgba(139, 92, 246, 0.12)", text: "#6d28d9", border: "rgba(139, 92, 246, 0.3)" };
 
                       return (
                         <div key={app._id} className="rta-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px" }}>
@@ -1141,7 +1552,7 @@ function Admin() {
           {actionApp && actionType && (
             <div className="modal-overlay" style={{ zIndex: 200 }}>
               <div className="modal-content" style={{ maxWidth: "560px", width: "92%", padding: "28px" }}>
-                
+
                 {/* 1. DETAILS MODAL */}
                 {actionType === "details" && (
                   <div>
@@ -1153,7 +1564,7 @@ function Admin() {
                     </p>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px", maxHeight: "360px", overflowY: "auto", paddingRight: "6px" }}>
-                      
+
                       <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
                         <div style={{ fontWeight: "800", color: "var(--primary)", marginBottom: "4px" }}>👤 Personal Information</div>
                         <div><strong>Name:</strong> {actionApp.fullName}</div>
@@ -1177,7 +1588,7 @@ function Admin() {
                         <div><strong>Category:</strong> {actionApp.cardCategory || "Regular"}</div>
                         <div><strong>ID Type:</strong> {actionApp.idType} (<strong>No:</strong> {actionApp.idNumber})</div>
                         {actionApp.idProofUrl && <div><strong>Uploaded ID Proof:</strong> 📄 <code>{actionApp.idProofUrl}</code></div>}
-                        
+
                         {actionApp.cardCategory === "Student" && (
                           <div style={{ marginTop: "6px", paddingTop: "6px", borderTop: "1px dashed #cbd5e1" }}>
                             <div><strong>Institution:</strong> {actionApp.institutionName || "N/A"}</div>
@@ -1338,9 +1749,9 @@ function Admin() {
       </main>
 
       {/* Footer Branding */}
-      <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "40px 5%", borderTop: "3px solid var(--primary)" }}>
+      <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "30px 5%", borderTop: "3px solid var(--primary)", marginTop: "auto" }}>
         <div style={{ maxWidth: "1200px", margin: "0 auto", textAlign: "center", fontSize: "12px", color: "#717B87" }}>
-          © {new Date().getFullYear()} MoveSmart Admin Console. Internal use only.
+          © {new Date().getFullYear()} MoveSmart Admin Console. Internal Administrative Use Only.
         </div>
       </footer>
     </div>

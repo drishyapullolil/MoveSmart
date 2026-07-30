@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { signInWithGoogleFirebase, checkFirebaseRedirectResult } from "../firebase";
+import { setStoredUser, setStoredToken } from "../utils/session";
 
 function Signup() {
   const navigate = useNavigate();
@@ -24,6 +25,19 @@ function Signup() {
   const [otp, setOtp] = useState("");
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpError, setOtpError] = useState("");
+  const [resendTimer, setResendTimer] = useState(0);
+
+  useEffect(() => {
+    let interval = null;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [resendTimer]);
 
   // ===== Validators =====
 
@@ -133,8 +147,9 @@ function Signup() {
       setOtpVerified(false);
       setOtp("");
       setOtpError("");
+      setResendTimer(60);
       setAlertInfo({
-        message: `OTP sent to ${email.trim()}. Please check your inbox.`,
+        message: `Verification code sent to ${email.trim()}. Please check your inbox or spam folder.`,
         type: "success",
       });
     } catch (error) {
@@ -277,8 +292,9 @@ function Signup() {
       });
 
       const loggedInUser = response.data.user;
-      localStorage.setItem("user", JSON.stringify(loggedInUser));
-      localStorage.setItem("authToken", "google_firebase_authenticated_token");
+      const authToken = response.data.token || "google_firebase_authenticated_token";
+      setStoredUser(loggedInUser, true);
+      setStoredToken(authToken, true);
 
       setTimeout(() => {
         const role = loggedInUser?.role?.toLowerCase();
@@ -413,7 +429,26 @@ function Signup() {
           {/* OTP input */}
           {otpSent && (
             <div className="form-group">
-              <label className="form-label" htmlFor="signup-otp">Email Verification Code</label>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <label className="form-label" htmlFor="signup-otp" style={{ margin: 0 }}>Email Verification Code</label>
+                <button
+                  type="button"
+                  onClick={handleSendOtp}
+                  disabled={loading || resendTimer > 0 || otpVerified}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: resendTimer > 0 || otpVerified ? "#94a3b8" : "#2563eb",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: resendTimer > 0 || otpVerified ? "default" : "pointer",
+                    padding: 0,
+                    textDecoration: "underline"
+                  }}
+                >
+                  {otpVerified ? "Verified ✅" : resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend Code"}
+                </button>
+              </div>
               <div className="input-wrapper">
                 <span className="input-icon">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -430,7 +465,7 @@ function Signup() {
                   placeholder="Enter 6-digit code"
                   onChange={handleOtpChange}
                   className={otpError ? "error-state" : ""}
-                  disabled={loading}
+                  disabled={loading || otpVerified}
                   aria-invalid={!!otpError}
                   aria-describedby={otpError ? "otp-error" : undefined}
                   required

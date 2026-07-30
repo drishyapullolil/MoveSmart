@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { signInWithGoogleFirebase, checkFirebaseRedirectResult } from "../firebase";
+import { getStoredUser, getStoredToken, setStoredUser, setStoredToken } from "../utils/session";
 function Login() {
   const navigate = useNavigate();
 
@@ -11,7 +12,7 @@ function Login() {
   });
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(() => {
-    return !!localStorage.getItem("moveSmart_rememberedEmail");
+    return localStorage.getItem("moveSmart_rememberMe") !== "false";
   });
 
   // UI States
@@ -41,11 +42,10 @@ function Login() {
         return;
       }
 
-      const hasSession = !!localStorage.getItem("user") || !!localStorage.getItem("authToken");
-      if (hasSession) {
-        const savedUser = localStorage.getItem("user");
-        const parsedUser = savedUser ? JSON.parse(savedUser) : null;
-        const role = parsedUser?.role?.toLowerCase();
+      const savedUser = getStoredUser();
+      const savedToken = getStoredToken();
+      if (savedUser || savedToken) {
+        const role = savedUser?.role?.toLowerCase();
         const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
         navigate(targetPath);
       }
@@ -55,9 +55,18 @@ function Login() {
 
   // Forgot password modal state
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1: Email/Send OTP, 2: Enter OTP & New Password
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotEmailError, setForgotEmailError] = useState("");
-  const [forgotModalSuccess, setForgotModalSuccess] = useState(false);
+  const [forgotOtp, setForgotOtp] = useState("");
+  const [forgotOtpError, setForgotOtpError] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordError, setNewPasswordError] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [confirmPasswordError, setConfirmPasswordError] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotAlert, setForgotAlert] = useState({ message: "", type: "" });
 
   // ===== Validators =====
 
@@ -75,7 +84,7 @@ function Login() {
     return "";
   };
 
-  // ===== Field handlers (validate on every keystroke) =====
+  // ===== Field handlers =====
 
   const handleEmailChange = (e) => {
     const val = e.target.value;
@@ -119,17 +128,18 @@ function Login() {
         type: "success",
       });
 
-      // Handle remember me
+      const loggedInUser = response.data.user;
+      const authToken = response.data.token || response.data.accessToken || "authenticated";
+
       if (rememberMe) {
         localStorage.setItem("moveSmart_rememberedEmail", email.trim());
+        localStorage.setItem("moveSmart_rememberMe", "true");
       } else {
         localStorage.removeItem("moveSmart_rememberedEmail");
+        localStorage.setItem("moveSmart_rememberMe", "false");
       }
-
-      // Save user info
-      const loggedInUser = response.data.user;
-      localStorage.setItem("user", JSON.stringify(loggedInUser));
-      localStorage.setItem("authToken", response.data.token || response.data.accessToken || "authenticated");
+      setStoredUser(loggedInUser, rememberMe);
+      setStoredToken(authToken, rememberMe);
 
       // Navigate to the correct dashboard after short delay for animation
       setTimeout(() => {
@@ -149,13 +159,23 @@ function Login() {
     }
   };
 
-  const handleForgotEmailChange = (e) => {
-    const val = e.target.value;
-    setForgotEmail(val);
-    setForgotEmailError(validateEmailFormat(val));
+  // ===== Forgot Password Handlers =====
+
+  const openForgotModal = () => {
+    setShowForgotModal(true);
+    setForgotStep(1);
+    setForgotEmail(email || "");
+    setForgotEmailError("");
+    setForgotOtp("");
+    setForgotOtpError("");
+    setNewPassword("");
+    setNewPasswordError("");
+    setConfirmPassword("");
+    setConfirmPasswordError("");
+    setForgotAlert({ message: "", type: "" });
   };
 
-  const handleForgotPasswordSubmit = (e) => {
+  const handleSendForgotOtp = async (e) => {
     e.preventDefault();
     const err = validateEmailFormat(forgotEmail);
     if (err) {
@@ -163,19 +183,85 @@ function Login() {
       return;
     }
     setForgotEmailError("");
+    setForgotLoading(true);
+    setForgotAlert({ message: "", type: "" });
 
-    // Simulate sending email
-    setForgotModalSuccess(true);
-    setTimeout(() => {
-      setShowForgotModal(false);
-      setForgotEmail("");
-      setForgotEmailError("");
-      setForgotModalSuccess(false);
-      setAlertInfo({
-        message: "Password reset link sent to your email!",
+    try {
+      const response = await axios.post("/api/auth/forgot-password", {
+        email: forgotEmail.trim(),
+      });
+      setForgotAlert({
+        message: response.data.message || "OTP code sent to your email!",
         type: "success",
       });
-    }, 2000);
+      setForgotStep(2);
+    } catch (error) {
+      const msg = error.response?.data?.message || "Failed to send reset code. Please try again.";
+      setForgotAlert({ message: msg, type: "error" });
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setForgotAlert({ message: "", type: "" });
+    setForgotOtpError("");
+    setNewPasswordError("");
+    setConfirmPasswordError("");
+
+    let hasErr = false;
+
+    if (!forgotOtp.trim()) {
+      setForgotOtpError("OTP code is required");
+      hasErr = true;
+    }
+    if (!newPassword) {
+      setNewPasswordError("New password is required");
+      hasErr = true;
+    } else if (newPassword.length < 6) {
+      setNewPasswordError("Password must be at least 6 characters");
+      hasErr = true;
+    }
+    if (newPassword !== confirmPassword) {
+      setConfirmPasswordError("Passwords do not match");
+      hasErr = true;
+    }
+
+    if (hasErr) return;
+
+    setForgotLoading(true);
+    try {
+      const response = await axios.post("/api/auth/reset-password", {
+        email: forgotEmail.trim(),
+        otp: forgotOtp.trim(),
+        newPassword: newPassword,
+      });
+
+      setForgotAlert({
+        message: response.data.message || "Password reset successful!",
+        type: "success",
+      });
+
+      setTimeout(() => {
+        setShowForgotModal(false);
+        setForgotStep(1);
+        setForgotEmail("");
+        setForgotOtp("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setForgotAlert({ message: "", type: "" });
+        setAlertInfo({
+          message: "Password reset successful! You can now log in with your new password.",
+          type: "success",
+        });
+      }, 1500);
+    } catch (error) {
+      const msg = error.response?.data?.message || "Failed to reset password. Please verify your OTP.";
+      setForgotAlert({ message: msg, type: "error" });
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -224,8 +310,9 @@ function Login() {
       });
 
       const loggedInUser = response.data.user;
-      localStorage.setItem("user", JSON.stringify(loggedInUser));
-      localStorage.setItem("authToken", "google_firebase_authenticated_token");
+      const authToken = response.data.token || "google_firebase_authenticated_token";
+      setStoredUser(loggedInUser, true);
+      setStoredToken(authToken, true);
 
       setTimeout(() => {
         const role = loggedInUser?.role?.toLowerCase();
@@ -405,7 +492,7 @@ function Login() {
             <button
               type="button"
               className="forgot-password"
-              onClick={() => setShowForgotModal(true)}
+              onClick={openForgotModal}
               disabled={loading}
             >
               Forgot Password?
@@ -472,48 +559,163 @@ function Login() {
 
       {/* Forgot Password Modal */}
       {showForgotModal && (
-        <div className="modal-overlay" onClick={() => !forgotModalSuccess && setShowForgotModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Reset Password</h3>
-            <p className="modal-desc">
-              Enter your email address and we'll send you a link to reset your password.
+        <div className="modal-overlay" onClick={() => !forgotLoading && setShowForgotModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "440px", width: "90%" }}>
+            <h3 className="modal-title">
+              {forgotStep === 1 ? "Reset Password" : "Set New Password"}
+            </h3>
+            <p className="modal-desc" style={{ marginBottom: "16px", color: "#64748b", fontSize: "14px" }}>
+              {forgotStep === 1
+                ? "Enter your email address to receive a 6-digit OTP code to reset your password."
+                : `Enter the 6-digit OTP sent to ${forgotEmail} along with your new password.`}
             </p>
-            {forgotModalSuccess ? (
-              <div className="alert alert-success">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-                <span>Reset email sent successfully!</span>
+
+            {forgotAlert.message && (
+              <div className={`alert alert-${forgotAlert.type}`} role="status" style={{ marginBottom: "16px" }}>
+                {forgotAlert.type === "error" ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                )}
+                <span>{forgotAlert.message}</span>
               </div>
-            ) : (
-              <form onSubmit={handleForgotPasswordSubmit} noValidate>
+            )}
+
+            {forgotStep === 1 ? (
+              <form onSubmit={handleSendForgotOtp} noValidate>
                 <div className="form-group">
                   <label className="form-label" htmlFor="forgot-email">Email Address</label>
                   <input
                     id="forgot-email"
                     type="email"
                     value={forgotEmail}
-                    onChange={handleForgotEmailChange}
+                    onChange={(e) => {
+                      setForgotEmail(e.target.value);
+                      setForgotEmailError(validateEmailFormat(e.target.value));
+                    }}
                     placeholder="name@example.com"
                     className={forgotEmailError ? "error-state" : ""}
-                    aria-invalid={!!forgotEmailError}
+                    disabled={forgotLoading}
                     required
                   />
                   {forgotEmailError && (
                     <div className="error-msg">{forgotEmailError}</div>
                   )}
                 </div>
-                <div className="modal-buttons">
+                <div className="modal-buttons" style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "20px" }}>
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => setShowForgotModal(false)}
+                    disabled={forgotLoading}
+                    style={{ padding: "10px 16px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer" }}
                   >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary">
-                    Send Link
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={forgotLoading}
+                    style={{ padding: "10px 20px", borderRadius: "8px", border: "none", background: "linear-gradient(135deg, #38a169, #8b5cf6)", color: "#fff", fontWeight: "700", cursor: "pointer" }}
+                  >
+                    {forgotLoading ? "Sending OTP..." : "Send Reset OTP"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPasswordSubmit} noValidate>
+                <div className="form-group" style={{ marginBottom: "14px" }}>
+                  <label className="form-label" htmlFor="forgot-otp">6-Digit OTP Code</label>
+                  <input
+                    id="forgot-otp"
+                    type="text"
+                    maxLength="6"
+                    value={forgotOtp}
+                    onChange={(e) => setForgotOtp(e.target.value)}
+                    placeholder="123456"
+                    className={forgotOtpError ? "error-state" : ""}
+                    style={{ letterSpacing: "4px", fontSize: "18px", fontWeight: "700", textAlign: "center" }}
+                    disabled={forgotLoading}
+                    required
+                  />
+                  {forgotOtpError && <div className="error-msg">{forgotOtpError}</div>}
+                </div>
+
+                <div className="form-group" style={{ marginBottom: "14px" }}>
+                  <label className="form-label" htmlFor="new-password">New Password</label>
+                  <div className="input-wrapper" style={{ position: "relative" }}>
+                    <input
+                      id="new-password"
+                      type={showNewPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Enter at least 6 characters"
+                      className={newPasswordError ? "error-state" : ""}
+                      disabled={forgotLoading}
+                      style={{ paddingRight: "54px" }}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      style={{
+                        position: "absolute",
+                        right: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "#64748b",
+                        fontWeight: "600",
+                        fontSize: "12px"
+                      }}
+                    >
+                      {showNewPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                  {newPasswordError && <div className="error-msg">{newPasswordError}</div>}
+                </div>
+
+                <div className="form-group" style={{ marginBottom: "14px" }}>
+                  <label className="form-label" htmlFor="confirm-password">Confirm New Password</label>
+                  <input
+                    id="confirm-password"
+                    type={showNewPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className={confirmPasswordError ? "error-state" : ""}
+                    disabled={forgotLoading}
+                    required
+                  />
+                  {confirmPasswordError && <div className="error-msg">{confirmPasswordError}</div>}
+                </div>
+
+                <div className="modal-buttons" style={{ display: "flex", gap: "10px", justifyContent: "space-between", marginTop: "20px" }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setForgotStep(1)}
+                    disabled={forgotLoading}
+                    style={{ padding: "10px 16px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer" }}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={forgotLoading}
+                    style={{ padding: "10px 20px", borderRadius: "8px", border: "none", background: "linear-gradient(135deg, #38a169, #8b5cf6)", color: "#fff", fontWeight: "700", cursor: "pointer" }}
+                  >
+                    {forgotLoading ? "Resetting..." : "Reset Password"}
                   </button>
                 </div>
               </form>

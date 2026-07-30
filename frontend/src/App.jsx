@@ -6,8 +6,10 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
+import AdminAddBusRoute from "./pages/AdminAddBusRoute";
 import CardApplication from "./pages/Cardapplication";
 import Driver from "./pages/Driver";
+import BusBooking from "./pages/BusBooking";
 
 function App(){
   return(
@@ -20,8 +22,11 @@ function App(){
         <Route path="/dashboard/card-application" element={<CardApplication />} />
         <Route path="/dashboard/driver" element={<Driver />} />
         <Route path="/driver" element={<Driver />} />
+        <Route path="/book-bus" element={<BusBooking />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/admin/bus-routes" element={<AdminAddBusRoute />} />
+        <Route path="/admin/add-bus-route" element={<AdminAddBusRoute />} />
       </Routes>
     </BrowserRouter>
   );

@@ -1,68 +1,13 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
-const nodemailer = require("nodemailer");
+const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const { sendOtpEmail } = require("../utils/mailer");
 
 const router = express.Router();
 
 const otpStore = new Map();
 
-const normalizeSmtpValue = (value) => {
-    if (typeof value !== "string") return value;
-    return value.trim().replace(/\s+/g, "");
-};
-
-const createTransporter = () => {
-    const smtpUser = normalizeSmtpValue(process.env.SMTP_USER);
-    const smtpPass = normalizeSmtpValue(process.env.SMTP_PASS);
-
-    return nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: smtpUser,
-            pass: smtpPass
-        }
-    });
-};
-
-const verifySmtpConnection = () => {
-    const transporter = createTransporter();
-    transporter.verify((error) => {
-        if (error) {
-            console.log("SMTP configuration error:", error.message);
-        } else {
-            console.log("SMTP ready to send emails ✅");
-        }
-    });
-};
-
-verifySmtpConnection();
-
-const sendOtpEmail = async (email, otp) => {
-    const smtpUser = normalizeSmtpValue(process.env.SMTP_USER);
-    const smtpPass = normalizeSmtpValue(process.env.SMTP_PASS);
-
-    if (!smtpUser || !smtpPass) {
-        throw new Error("SMTP credentials are not configured. Set SMTP_USER and SMTP_PASS in the backend environment.");
-    }
-
-    const transporter = createTransporter();
-    const mailOptions = {
-        from: process.env.SMTP_FROM || smtpUser,
-        to: email,
-        subject: "MoveSmart Email Verification OTP",
-        text: `Your MoveSmart verification code is ${otp}. It expires in 10 minutes.`
-    };
-
-    try {
-        await transporter.sendMail(mailOptions);
-    } catch (error) {
-        if (error.code === "EAUTH" || error.responseCode === 535) {
-            throw new Error("Gmail rejected the SMTP credentials. Make sure 2-Step Verification is enabled and you are using a 16-character Google App Password.");
-        }
-        throw error;
-    }
-};
 
 router.post("/send-otp", async (req, res) => {
     try {
@@ -219,17 +164,21 @@ router.post("/login", async (req, res) => {
         }
 
 
+        const token = jwt.sign(
+            { id: user._id, role: user.role, email: user.email },
+            process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026",
+            { expiresIn: "7d" }
+        );
+
         res.json({
-
             message: "Login successful",
-
+            token,
             user: {
                 id: user._id,
                 name: user.name,
                 email: user.email,
                 role: user.role
             }
-
         });
 
 
@@ -270,9 +219,16 @@ router.post("/google-login", async (req, res) => {
             await user.save();
         }
 
+        const token = jwt.sign(
+            { id: user._id, role: user.role, email: user.email },
+            process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026",
+            { expiresIn: "7d" }
+        );
+
         // Return user authentication data
         res.json({
             message: "Google Sign-In successful ✅",
+            token,
             user: {
                 id: user._id,
                 name: user.name,
@@ -283,6 +239,102 @@ router.post("/google-login", async (req, res) => {
     } catch (error) {
         console.error("Google Sign-In Error:", error);
         res.status(500).json({ message: error.message || "Google Sign-In failed" });
+    }
+});
+
+// FORGOT PASSWORD - Send OTP
+router.post("/forgot-password", async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = await User.findOne({ email: normalizedEmail });
+
+        if (!user) {
+            return res.status(404).json({ message: "No account found registered with this email address" });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        otpStore.set(`reset_${normalizedEmail}`, { otp, verified: false, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+        await sendOtpEmail(normalizedEmail, otp, "MoveSmart Password Reset OTP");
+
+        res.json({ message: "Password reset OTP sent successfully to your email" });
+    } catch (error) {
+        console.error("Forgot Password Error:", error);
+        res.status(500).json({ message: error.message || "Failed to send reset OTP. Please try again." });
+    }
+});
+
+// FORGOT PASSWORD - Verify OTP
+router.post("/verify-reset-otp", async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) {
+            return res.status(400).json({ message: "Email and OTP are required" });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const stored = otpStore.get(`reset_${normalizedEmail}`);
+
+        if (!stored) {
+            return res.status(400).json({ message: "OTP not found or expired. Please request a new code." });
+        }
+
+        if (Date.now() > stored.expiresAt) {
+            otpStore.delete(`reset_${normalizedEmail}`);
+            return res.status(400).json({ message: "OTP expired. Please request a new code." });
+        }
+
+        if (stored.otp !== otp.trim()) {
+            return res.status(400).json({ message: "Invalid OTP code" });
+        }
+
+        stored.verified = true;
+        res.json({ message: "OTP verified successfully. You can now set a new password." });
+    } catch (error) {
+        console.error("Verify Reset OTP Error:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// FORGOT PASSWORD - Reset Password
+router.post("/reset-password", async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ message: "Email, OTP, and new password are required" });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: "New password must be at least 6 characters long" });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const stored = otpStore.get(`reset_${normalizedEmail}`);
+
+        if (!stored || stored.otp !== otp.trim() || Date.now() > stored.expiresAt) {
+            return res.status(400).json({ message: "Invalid or expired OTP session. Please request a new code." });
+        }
+
+        const user = await User.findOne({ email: normalizedEmail });
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        user.password = hashedPassword;
+        await user.save();
+
+        otpStore.delete(`reset_${normalizedEmail}`);
+
+        res.json({ message: "Password reset successful! You can now log in with your new password." });
+    } catch (error) {
+        console.error("Reset Password Error:", error);
+        res.status(500).json({ message: error.message || "Failed to reset password" });
     }
 });
 

@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { processRazorpayPayment } from "../utils/razorpay";
+import { getStoredUser } from "../utils/session";
+import Header from "../components/Header";
+import Footer from "../components/Footer";
 
 const API_BASE = "/api/rfid";
 
@@ -81,10 +84,7 @@ export default function CardApplication() {
   const [enteredOtp, setEnteredOtp] = useState("");
   const [otpMessage, setOtpMessage] = useState("");
 
-  const [user] = useState(() => {
-    const saved = localStorage.getItem("user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user] = useState(() => getStoredUser());
 
   // Pre-fill user details if available
   useEffect(() => {
@@ -259,24 +259,7 @@ export default function CardApplication() {
   return (
     <div className="rta-body-theme" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg-primary)" }}>
       {/* Navigation Header */}
-      <nav className="rta-nav" style={{ padding: "14px 5%", background: "#ffffff", borderBottom: "2px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Link to="/dashboard" className="rta-logo" style={{ display: "inline-flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
-          <img 
-            src="/logo.png" 
-            alt="MoveSmart Logo" 
-            style={{ height: "52px", width: "auto", objectFit: "contain", filter: "drop-shadow(0px 2px 5px rgba(0,0,0,0.06))" }} 
-          />
-          <span style={{ fontSize: "22px", fontWeight: "800", background: "linear-gradient(135deg, #38a169, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-            MoveSmart
-          </span>
-        </Link>
-        <Link to="/dashboard" className="rta-btn-secondary" style={{ padding: "8px 16px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px", borderRadius: "10px", fontSize: "14px", fontWeight: "600" }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-          Back to Dashboard
-        </Link>
-      </nav>
+      <Header />
 
       {/* Hero Banner Header */}
       <header className="rta-hero" style={{ background: "linear-gradient(135deg, #132418 0%, #1f1938 100%)", padding: "50px 5% 90px", textAlign: "center", color: "#fff" }}>
@@ -1071,52 +1054,7 @@ export default function CardApplication() {
       </main>
 
       {/* Footer Branding */}
-      <footer style={{ backgroundColor: "#0f172a", color: "#94a3b8", padding: "40px 5% 24px", borderTop: "3px solid #38a169", marginTop: "auto" }}>
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "30px" }}>
-          <div>
-            <div className="rta-logo" style={{ marginBottom: "12px", display: "inline-flex", alignItems: "center", gap: "12px" }}>
-              <img 
-                src="/logo.png" 
-                alt="MoveSmart Logo" 
-                style={{ 
-                  height: "44px", 
-                  width: "auto", 
-                  objectFit: "contain", 
-                  background: "#ffffff", 
-                  padding: "4px 10px", 
-                  borderRadius: "10px"
-                }} 
-              />
-              <span style={{ fontSize: "20px", fontWeight: "800", color: "#ffffff" }}>
-                MoveSmart Kerala
-              </span>
-            </div>
-            <p style={{ fontSize: "13px", maxWidth: "340px", lineHeight: "1.6", color: "#94a3b8", margin: 0 }}>
-              Smart Private Bus Fleet Management &amp; Passenger Portal for Kerala. Real-time bus tracking, RFID pass management, and digital ticketing.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "40px" }}>
-            <div>
-              <h4 style={{ color: "#ffffff", marginBottom: "12px", fontSize: "14px", fontWeight: "700" }}>Transit Services</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><Link to="/dashboard" style={{ color: "#94a3b8", textDecoration: "none" }}>Private Bus City Routes</Link></li>
-                <li><Link to="/dashboard/card-application" style={{ color: "#94a3b8", textDecoration: "none" }}>MoveSmart RFID Pass</Link></li>
-                <li><Link to="/dashboard" style={{ color: "#94a3b8", textDecoration: "none" }}>Intercity Express Routes</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 style={{ color: "#ffffff", marginBottom: "12px", fontSize: "14px", fontWeight: "700" }}>Support</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><Link to="/profile" style={{ color: "#94a3b8", textDecoration: "none" }}>Help Center</Link></li>
-                <li><span style={{ color: "#94a3b8" }}>Kerala Transit Helpline: 1800-425-4747</span></li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "24px", paddingTop: "16px", textAlign: "center", fontSize: "12px", color: "#64748b" }}>
-          © {new Date().getFullYear()} MoveSmart Kerala. Smart Urban Transit System. All rights reserved.
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -5,6 +5,7 @@ const StopDistance = require("../models/StopDistance");
 const RfidCard = require("../models/RfidCard");
 const Journey = require("../models/Journey");
 const CardApplication = require("../models/CardApplication");
+const { sendApplicationStatusEmail } = require("../utils/mailer");
 
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
@@ -796,8 +797,15 @@ router.post("/applications/:id/approve", async (req, res) => {
     app.reviewedAt = new Date();
     await app.save();
 
+    if (app.email) {
+      sendApplicationStatusEmail(app.email, app.fullName, "Approved", {
+        assignedRfidTag: tagUid.toUpperCase(),
+        assignedCardNumber
+      }).catch(err => console.error("Failed to send approval email:", err));
+    }
+
     res.json({
-      message: "Application approved and RFID Card activated! SMS/Email notification sent.",
+      message: "Application approved and RFID Card activated! Confirmation email sent to applicant.",
       application: app,
       card: newCard,
     });
@@ -823,8 +831,14 @@ router.post("/applications/:id/reject", async (req, res) => {
     app.reviewedAt = new Date();
     await app.save();
 
+    if (app.email) {
+      sendApplicationStatusEmail(app.email, app.fullName, "Rejected", {
+        rejectionReason: reason
+      }).catch(err => console.error("Failed to send rejection email:", err));
+    }
+
     res.json({
-      message: "Application rejected. SMS/Email notification sent to applicant.",
+      message: "Application rejected. Notification email sent to applicant.",
       application: app,
     });
   } catch (error) {
@@ -844,8 +858,14 @@ router.post("/applications/:id/correction", async (req, res) => {
     app.reviewedAt = new Date();
     await app.save();
 
+    if (app.email) {
+      sendApplicationStatusEmail(app.email, app.fullName, "Correction Needed", {
+        correctionNote: app.correctionNote
+      }).catch(err => console.error("Failed to send correction email:", err));
+    }
+
     res.json({
-      message: "Correction requested. SMS/Email notification sent to applicant.",
+      message: "Correction requested. Notification email sent to applicant.",
       application: app,
     });
   } catch (error) {
