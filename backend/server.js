@@ -6,12 +6,34 @@ const cors = require("cors");
 
 const app = express();
 
+// CORS Configuration with Credentials & Custom Authorization Header Support
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:5000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5000",
+];
 
-// Middleware
-app.use(cors());
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, Postman) or any local dev origin
+    if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
 
 // MongoDB Atlas Connection
 const mongoURI = process.env.MONGODB_URI;
@@ -23,7 +45,6 @@ mongoose.connect(mongoURI)
 .catch((error) => {
     console.error("MongoDB Error ❌:", error);
 });
-
 
 // Middleware to check database connection status
 app.use((req, res, next) => {
@@ -47,12 +68,14 @@ app.use((req, res, next) => {
     next();
 });
 
-
 // Authentication Routes
 app.use("/api/auth", require("./routes/authRoutes"));
 
 // RFID Transit Routes
 app.use("/api/rfid", require("./routes/rfidRoutes"));
+
+// Wallet & Payment Routes
+app.use("/api/wallet", require("./routes/walletRoutes"));
 
 // Bus Search & Booking Routes
 app.use("/api", require("./routes/bookingRoutes"));
@@ -60,14 +83,10 @@ app.use("/api", require("./routes/bookingRoutes"));
 // Driver & Leave Management Routes
 app.use("/api", require("./routes/driverRoutes"));
 
-
-
-
 // Test Route
 app.get("/", (req, res) => {
     res.send("Backend running 🚀");
 });
-
 
 const printRoutes = () => {
     const routes = app._router?.stack
@@ -78,7 +97,6 @@ const printRoutes = () => {
         console.log("Registered routes:", routes);
     }
 };
-
 
 // Start Server
 if (require.main === module) {

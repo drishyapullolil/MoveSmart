@@ -120,6 +120,10 @@ export default function BusBooking() {
     if (selectedSeats.includes(seatId)) {
       setSelectedSeats((prev) => prev.filter((s) => s !== seatId));
     } else {
+      if (selectedSeats.length >= 6) {
+        alert("You can select a maximum of 6 seats per booking.");
+        return;
+      }
       setSelectedSeats((prev) => [...prev, seatId]);
     }
   };
@@ -136,6 +140,8 @@ export default function BusBooking() {
         passengerName: bookingData.passengerName,
         passengerEmail: bookingData.passengerEmail,
         passengerPhone: bookingData.passengerPhone,
+        fromLocation: bookingData.fromLocation || searchParams.from || activeBus.fromLocation,
+        toLocation: bookingData.toLocation || searchParams.to || activeBus.toLocation,
         travelDate: bookingData.travelDate,
         selectedSeats: bookingData.selectedSeats,
         totalPrice: bookingData.totalPrice,
@@ -144,7 +150,10 @@ export default function BusBooking() {
       const response = await axios.post("/api/bookings", payload);
 
       if (response.data && response.data.booking) {
-        setConfirmedBooking(response.data.booking);
+        setConfirmedBooking({
+          ...response.data.booking,
+          bus: activeBus,
+        });
         fetchBuses();
         fetchMyBookings();
       }
@@ -421,6 +430,8 @@ export default function BusBooking() {
                     <BusCard
                       key={bus._id}
                       bus={bus}
+                      searchFrom={searchParams.from}
+                      searchTo={searchParams.to}
                       isSelected={activeBusId === bus._id}
                       onToggleSeats={handleToggleSeats}
                     />
@@ -443,6 +454,8 @@ export default function BusBooking() {
                 <BookingSummary
                   bus={activeBus}
                   selectedSeats={selectedSeats}
+                  searchFrom={searchParams.from}
+                  searchTo={searchParams.to}
                   travelDate={searchParams.date}
                   currentUser={currentUser}
                   onConfirmBooking={handleConfirmBooking}

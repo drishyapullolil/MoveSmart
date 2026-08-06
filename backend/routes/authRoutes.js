@@ -170,16 +170,17 @@ router.post("/login", async (req, res) => {
             { expiresIn: "7d" }
         );
 
-        res.json({
-            message: "Login successful",
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role
-            }
-        });
+            res.json({
+                message: "Login successful",
+                token,
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    verificationStatus: user.verificationStatus
+                }
+            });
 
 
     } catch (error) {
@@ -335,6 +336,56 @@ router.post("/reset-password", async (req, res) => {
     } catch (error) {
         console.error("Reset Password Error:", error);
         res.status(500).json({ message: error.message || "Failed to reset password" });
+    }
+});
+
+// GET /me API
+const { protect } = require("../middleware/authMiddleware");
+
+router.get("/me", protect, async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select("-password");
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        res.json({
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                verificationStatus: user.verificationStatus
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// APPLY DRIVER POST API
+router.post("/apply-driver", protect, async (req, res) => {
+    try {
+        const { licenseNumber, experienceYears, phone, profilePic, licenseImage } = req.body;
+        const user = await User.findById(req.user._id);
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        user.licenseNumber = licenseNumber;
+        user.experienceYears = experienceYears;
+        user.phone = phone;
+        if (profilePic) user.profilePic = profilePic;
+        if (licenseImage) user.licenseImage = licenseImage;
+        user.verificationStatus = "Pending";
+
+        await user.save();
+
+        res.json({ message: "Application submitted successfully! Your status is now Pending Admin Approval.", user });
+    } catch (error) {
+        console.error("Apply Driver Error:", error);
+        res.status(500).json({ message: "Failed to submit application", error: error.message });
     }
 });
 

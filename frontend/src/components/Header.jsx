@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Bus,
   CreditCard,
+  Wallet,
   User,
   LogOut,
   Sparkles,
@@ -175,6 +176,48 @@ export default function Header() {
             <span>RFID Pass</span>
           </Link>
 
+          <Link
+            to="/wallet"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "12px",
+              fontSize: "13px",
+              fontWeight: "700",
+              textDecoration: "none",
+              transition: "all 0.2s ease",
+              background: isActive("/wallet") ? "linear-gradient(135deg, #16a34a, #15803d)" : "transparent",
+              color: isActive("/wallet") ? "#ffffff" : "var(--text-main)",
+              boxShadow: isActive("/wallet") ? "0 4px 12px rgba(22, 163, 74, 0.3)" : "none",
+            }}
+          >
+            <Wallet size={15} />
+            <span>Wallet</span>
+          </Link>
+
+          <Link
+            to="/apply-driver"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "12px",
+              fontSize: "13px",
+              fontWeight: "700",
+              textDecoration: "none",
+              transition: "all 0.2s ease",
+              background: isActive("/apply-driver") ? "linear-gradient(135deg, #6d28d9, #4c1d95)" : "transparent",
+              color: isActive("/apply-driver") ? "#ffffff" : "var(--text-main)",
+              boxShadow: isActive("/apply-driver") ? "0 4px 12px rgba(109, 40, 217, 0.3)" : "none",
+            }}
+          >
+            <UserCheck size={15} />
+            <span>Apply Driver</span>
+          </Link>
+
           {user?.role?.toLowerCase() === "driver" && (
             <Link
               to="/driver"
@@ -224,6 +267,27 @@ export default function Header() {
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           {user ? (
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Link
+                to="/wallet"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 14px",
+                  borderRadius: "14px",
+                  background: isActive("/wallet") ? "#16a34a" : "rgba(34, 197, 94, 0.1)",
+                  border: "1px solid rgba(34, 197, 94, 0.3)",
+                  color: isActive("/wallet") ? "#ffffff" : "#15803d",
+                  fontWeight: "800",
+                  fontSize: "13px",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                <span>💰</span>
+                <span>Wallet</span>
+              </Link>
+
               <Link
                 to="/profile"
                 style={{
@@ -369,6 +433,20 @@ export default function Header() {
             style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
           >
             <CreditCard size={16} /> RFID Card Pass
+          </Link>
+          <Link
+            to="/wallet"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#15803d", background: "rgba(34, 197, 94, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Wallet size={16} /> MoveSmart Wallet
+          </Link>
+          <Link
+            to="/apply-driver"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#6d28d9", background: "rgba(109, 40, 217, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <UserCheck size={16} /> Apply Driver
           </Link>
           {user ? (
             <Link

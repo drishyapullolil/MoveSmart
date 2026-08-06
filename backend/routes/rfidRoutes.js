@@ -5,6 +5,7 @@ const StopDistance = require("../models/StopDistance");
 const RfidCard = require("../models/RfidCard");
 const Journey = require("../models/Journey");
 const CardApplication = require("../models/CardApplication");
+const Transaction = require("../models/Transaction");
 const { sendApplicationStatusEmail } = require("../utils/mailer");
 
 const Razorpay = require("razorpay");
@@ -43,7 +44,7 @@ router.post("/create-razorpay-order", async (req, res) => {
   }
 });
 
-// Verify Razorpay Payment Signature
+// Verify Razorpay Payment Signature & Record Transaction in Database
 router.post("/verify-razorpay-payment", async (req, res) => {
   try {
     const {
@@ -53,6 +54,7 @@ router.post("/verify-razorpay-payment", async (req, res) => {
       paymentType,
       tagId,
       amount,
+      userId,
     } = req.body;
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -71,7 +73,7 @@ router.post("/verify-razorpay-payment", async (req, res) => {
 
     const numericAmount = Number(amount);
 
-    if (paymentType === "topup") {
+    if (paymentType === "topup" || paymentType === "wallet") {
       if (!tagId) {
         return res.status(400).json({ message: "Card tagId is required for top-up" });
       }
@@ -87,18 +89,53 @@ router.post("/verify-razorpay-payment", async (req, res) => {
       card.balance += numericAmount;
       await card.save();
 
+      // Save Transaction Record to MongoDB Database
+      const txn = new Transaction({
+        transactionId: razorpay_payment_id || `TXN-MS-${Math.floor(100000 + Math.random() * 900000)}`,
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        user: userId || card.user || null,
+        cardNumber: card.cardNumber ? card.cardNumber.slice(-4) : "4910",
+        amount: numericAmount,
+        type: "Recharge",
+        isDebit: false,
+        status: "Success",
+        paymentMethod: "Razorpay",
+        description: `Nol Transit Card Top-Up via Razorpay`,
+      });
+      await txn.save();
+
       return res.json({
         success: true,
         message: `Successfully topped up ₹${numericAmount.toFixed(2)} via Razorpay! New balance: ₹${card.balance.toFixed(2)} ✅`,
         card,
         paymentId: razorpay_payment_id,
+        transaction: txn,
       });
     }
+
+    // Save generic Transaction Record for card application or other payments
+    const txn = new Transaction({
+      transactionId: razorpay_payment_id || `TXN-MS-${Math.floor(100000 + Math.random() * 900000)}`,
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature,
+      user: userId || null,
+      amount: numericAmount || 0,
+      type: paymentType === "card_application" ? "Card Application" : "Recharge",
+      isDebit: true,
+      status: "Success",
+      paymentMethod: "Razorpay",
+      description: `MoveSmart Payment (${paymentType || "Razorpay"})`,
+    });
+    await txn.save();
 
     res.json({
       success: true,
       message: "Payment verified successfully ✅",
       paymentId: razorpay_payment_id,
+      transaction: txn,
     });
   } catch (error) {
     console.error("Razorpay Verification Error:", error);
@@ -748,7 +785,21 @@ router.post("/apply", async (req, res) => {
 // 2. Get My Applications (User)
 router.get("/my-applications", async (req, res) => {
   try {
-    const apps = await CardApplication.find({}).sort({ createdAt: -1 });
+    const { userId, email, phone } = req.query;
+    const sessionUser = req.session?.user;
+    const targetUserId = userId || sessionUser?.id || sessionUser?._id;
+    const targetEmail = email || sessionUser?.email;
+
+    const filters = [];
+    if (targetUserId) filters.push({ user: targetUserId });
+    if (targetEmail) filters.push({ email: targetEmail });
+    if (phone) filters.push({ phone });
+
+    if (filters.length === 0) {
+      return res.json([]);
+    }
+
+    const apps = await CardApplication.find({ $or: filters }).sort({ createdAt: -1 });
     res.json(apps);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch user applications" });
@@ -780,12 +831,18 @@ router.post("/applications/:id/approve", async (req, res) => {
     const assignedCardNumber = (cardPrefix + randomNumber).substring(0, 10);
     const tagUid = rfidTag || `TAG-${Math.floor(100000 + Math.random() * 900000)}`;
 
+    // Map card type to safe backend value
+    let safeCardType = cardType || "Silver";
+    if (safeCardType === "Regular Pass") safeCardType = "Silver";
+    else if (safeCardType === "Student Pass") safeCardType = "Blue";
+    else if (safeCardType === "Foreigner Tourist Pass" || safeCardType === "Foreigner") safeCardType = "Gold";
+
     // Create & Activate RFID Card
     const newCard = new RfidCard({
       cardNumber: assignedCardNumber,
       rfidTag: tagUid.toUpperCase(),
       balance: app.initialRecharge || 20,
-      cardType: cardType || (app.cardCategory === "Student" ? "Blue" : "Silver"),
+      cardType: safeCardType,
       status: "Active",
     });
     await newCard.save();

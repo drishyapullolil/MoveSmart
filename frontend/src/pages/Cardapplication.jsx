@@ -99,7 +99,13 @@ export default function CardApplication() {
 
   const fetchApplications = useCallback(async () => {
     try {
+      const stored = getStoredUser();
+      const params = {};
+      if (stored?.id || stored?._id) params.userId = stored.id || stored._id;
+      if (stored?.email) params.email = stored.email;
+
       const res = await axios.get(`${API_BASE}/my-applications`, {
+        params,
         withCredentials: true,
       });
       setApplications(res.data || []);
@@ -172,9 +178,14 @@ export default function CardApplication() {
       if (!formData.pincode.trim()) return "PIN Code is required.";
     }
     if (step === 3) {
-      if (!formData.idNumber.trim()) return "ID Number is required.";
-      if (formData.cardCategory === "Student" && !formData.institutionName.trim()) {
-        return "Institution Name is required for Student passes.";
+      if (!formData.idNumber.trim()) return "ID Number / Passport Number is required.";
+      if (formData.cardCategory === "Student") {
+        if (!formData.institutionName.trim()) return "Institution Name is required for Student passes.";
+        if (!formData.studentIdName) return "⚠️ Please upload required document (Student ID Card).";
+      } else if (formData.cardCategory === "Foreigner") {
+        if (!formData.idProofName) return "⚠️ Please upload required document (International Passport Copy).";
+      } else {
+        if (!formData.idProofName) return "⚠️ Please upload required document (ID Proof).";
       }
     }
     if (step === 5) {
@@ -589,29 +600,40 @@ export default function CardApplication() {
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                     
-                    {/* Card Category Selection */}
+                    {/* Card Category Selection (3 Options) */}
                     <div>
                       <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
-                        Card Category
+                        Select Pass Type <span style={{ color: "#e11d48" }}>*</span>
                       </label>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
-                        {["Regular", "Student", "Senior Citizen"].map((cat) => (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                        {[
+                          { id: "Student", label: "🎓 Student Pass", desc: "For school/college students" },
+                          { id: "Regular", label: "👤 Regular Pass", desc: "For resident commuters" },
+                          { id: "Foreigner", label: "✈️ Foreigner / Tourist", desc: "For international travelers (Passport)" },
+                        ].map((cat) => (
                           <button
-                            key={cat}
+                            key={cat.id}
                             type="button"
-                            onClick={() => setFormData((prev) => ({ ...prev, cardCategory: cat }))}
+                            onClick={() => setFormData((prev) => ({
+                              ...prev,
+                              cardCategory: cat.id,
+                              idType: cat.id === "Student" ? "Student ID" : cat.id === "Foreigner" ? "Passport" : "Government ID"
+                            }))}
                             style={{
-                              padding: "14px 10px",
-                              borderRadius: "12px",
-                              border: `2px solid ${formData.cardCategory === cat ? "var(--primary)" : "var(--border-color)"}`,
-                              background: formData.cardCategory === cat ? "rgba(56, 161, 105, 0.08)" : "#f8fafc",
-                              fontWeight: "700",
-                              fontSize: "14px",
-                              color: formData.cardCategory === cat ? "var(--primary)" : "#334155",
+                              padding: "14px 12px",
+                              borderRadius: "14px",
+                              border: `2px solid ${formData.cardCategory === cat.id ? "#38a169" : "#e2e8f0"}`,
+                              background: formData.cardCategory === cat.id ? "rgba(56, 161, 105, 0.08)" : "#f8fafc",
+                              fontWeight: "800",
+                              fontSize: "13.5px",
+                              color: formData.cardCategory === cat.id ? "#276749" : "#334155",
                               cursor: "pointer",
+                              textAlign: "left",
+                              transition: "all 0.2s ease",
                             }}
                           >
-                            {cat === "Regular" ? "💳 Regular" : cat === "Student" ? "🎓 Student" : "👴 Senior Citizen"}
+                            <div style={{ fontSize: "14px", marginBottom: "4px" }}>{cat.label}</div>
+                            <div style={{ fontSize: "11px", fontWeight: "600", color: "#64748b" }}>{cat.desc}</div>
                           </button>
                         ))}
                       </div>
@@ -619,27 +641,44 @@ export default function CardApplication() {
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                       <div>
-                        <label htmlFor="idType" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          ID Type
+                        <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          Auto Required ID Type
                         </label>
-                        <select id="idType" name="idType" className="rta-input-field" value={formData.idType} onChange={handleChange}>
-                          <option value="Aadhaar">Aadhaar Card</option>
-                          <option value="Student ID">Student ID</option>
-                          <option value="Driving License">Driving License</option>
-                          <option value="Passport">Passport</option>
-                        </select>
+                        <div
+                          style={{
+                            padding: "12px 14px",
+                            borderRadius: "10px",
+                            background: "#f1f5f9",
+                            border: "1px solid #cbd5e1",
+                            fontWeight: "800",
+                            fontSize: "13.5px",
+                            color: "#334155",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span>🔒</span>
+                          <span>
+                            {formData.cardCategory === "Student"
+                              ? "Student ID Card"
+                              : formData.cardCategory === "Foreigner"
+                              ? "International Passport"
+                              : "Government ID Proof (Aadhaar/DL)"}
+                          </span>
+                        </div>
                       </div>
 
                       <div>
                         <label htmlFor="idNumber" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          ID Number <span style={{ color: "#e11d48" }}>*</span>
+                          {formData.cardCategory === "Foreigner" ? "Passport Number" : formData.cardCategory === "Student" ? "Student ID Number" : "Government ID Number"} <span style={{ color: "#e11d48" }}>*</span>
                         </label>
                         <input
                           id="idNumber"
                           name="idNumber"
                           type="text"
                           className="rta-input-field"
-                          placeholder="Enter document ID number"
+                          placeholder={formData.cardCategory === "Foreigner" ? "Enter Passport Number" : formData.cardCategory === "Student" ? "Enter Roll / Student ID No" : "Enter Aadhaar / DL Number"}
                           value={formData.idNumber}
                           onChange={handleChange}
                           required
@@ -647,29 +686,11 @@ export default function CardApplication() {
                       </div>
                     </div>
 
-                    {/* File Upload for ID Proof */}
-                    <div>
-                      <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Upload ID Proof Document
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={(e) => handleFileUpload(e, "idProofName")}
-                        style={{ fontSize: "13px", color: "#64748b" }}
-                      />
-                      {formData.idProofName && (
-                        <div style={{ marginTop: "6px", fontSize: "12px", color: "#16a34a", fontWeight: "700" }}>
-                          📄 Selected: {formData.idProofName}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* CONDITIONAL RENDERING FOR STUDENT CATEGORY */}
-                    {formData.cardCategory === "Student" && (
-                      <div style={{ background: "rgba(139, 92, 246, 0.06)", border: "1px solid rgba(139, 92, 246, 0.2)", borderRadius: "16px", padding: "18px", marginTop: "10px" }}>
+                    {/* CONDITIONAL DOCUMENT UPLOAD LOGIC */}
+                    {formData.cardCategory === "Student" ? (
+                      <div style={{ background: "rgba(139, 92, 246, 0.06)", border: "1px dashed rgba(139, 92, 246, 0.3)", borderRadius: "16px", padding: "20px" }}>
                         <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#6d28d9", marginBottom: "12px" }}>
-                          🎓 Student Discount Verification
+                          📘 Upload Student ID Card (Required *)
                         </h4>
                         
                         <div style={{ marginBottom: "14px" }}>
@@ -689,7 +710,7 @@ export default function CardApplication() {
 
                         <div>
                           <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                            Upload Student ID Card / Bonafide Certificate
+                            Upload Student ID Card Photo / Document <span style={{ color: "#e11d48" }}>*</span>
                           </label>
                           <input
                             type="file"
@@ -697,9 +718,68 @@ export default function CardApplication() {
                             onChange={(e) => handleFileUpload(e, "studentIdName")}
                             style={{ fontSize: "13px", color: "#64748b" }}
                           />
-                          {formData.studentIdName && (
-                            <div style={{ marginTop: "6px", fontSize: "12px", color: "#6d28d9", fontWeight: "700" }}>
-                              📄 Selected: {formData.studentIdName}
+                          {formData.studentIdName ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #c084fc", fontSize: "12px", color: "#6d28d9", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span>📄 Document Attached:</span>
+                              <strong style={{ color: "#4c1d95" }}>{formData.studentIdName}</strong>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: "#e11d48", fontWeight: "700" }}>
+                              ⚠️ Student ID document upload is required to submit application.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : formData.cardCategory === "Foreigner" ? (
+                      <div style={{ background: "rgba(37, 99, 235, 0.06)", border: "1px dashed rgba(37, 99, 235, 0.3)", borderRadius: "16px", padding: "20px" }}>
+                        <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#1d4ed8", marginBottom: "12px" }}>
+                          ✈️ Upload International Passport (Required *)
+                        </h4>
+                        <div>
+                          <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                            Upload Clear Copy of Passport Info Page <span style={{ color: "#e11d48" }}>*</span>
+                          </label>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={(e) => handleFileUpload(e, "idProofName")}
+                            style={{ fontSize: "13px", color: "#64748b" }}
+                          />
+                          {formData.idProofName ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #93c5fd", fontSize: "12px", color: "#1d4ed8", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span>✈️ Passport Attached:</span>
+                              <strong style={{ color: "#1e3a8a" }}>{formData.idProofName}</strong>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: "#e11d48", fontWeight: "700" }}>
+                              ⚠️ Passport document upload is required for International / Tourist Pass.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ background: "rgba(56, 161, 105, 0.06)", border: "1px dashed rgba(56, 161, 105, 0.3)", borderRadius: "16px", padding: "20px" }}>
+                        <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#15803d", marginBottom: "12px" }}>
+                          🪪 Upload ID Proof (Required *)
+                        </h4>
+                        <div>
+                          <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                            Upload Government ID Proof Photo / Document <span style={{ color: "#e11d48" }}>*</span>
+                          </label>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={(e) => handleFileUpload(e, "idProofName")}
+                            style={{ fontSize: "13px", color: "#64748b" }}
+                          />
+                          {formData.idProofName ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #86efac", fontSize: "12px", color: "#166534", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span>📄 Document Attached:</span>
+                              <strong style={{ color: "#14532d" }}>{formData.idProofName}</strong>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: "#e11d48", fontWeight: "700" }}>
+                              ⚠️ ID proof document upload is required to submit application.
                             </div>
                           )}
                         </div>

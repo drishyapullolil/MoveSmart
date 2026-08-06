@@ -1,27 +1,339 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { getStoredUser, setStoredUser, clearStoredSession } from "../utils/session";
+import { getStoredUser, setStoredUser, clearStoredSession, getStoredToken } from "../utils/session";
+
+// ----------------------------------------------------
+// TRANSLATIONS DICTIONARY (English & Malayalam)
+// ----------------------------------------------------
+const TRANSLATIONS = {
+  en: {
+    langToggle: "മലയാളം (ML)",
+    brandTitle: "MoveSmart",
+    driverBadge: "DRIVER PORTAL",
+    subTitle: "Kerala Private Transit Portal",
+    onDuty: "🟢 ON DUTY",
+    offDuty: "🔴 OFF DUTY",
+    signOut: "Sign Out",
+    welcome: "Hello, Driver 👋",
+    verifiedDriver: "Admin Verified Driver ✅",
+    pendingReview: "Pending Admin Review ⏳",
+    unverifiedDriver: "Unverified Driver ⚠️",
+    markAttendance: "✓ Mark Today's Attendance",
+    attendanceDone: "✓ Attendance Marked at",
+    reportIssue: "⚠️ Report Issue",
+    
+    // Nav Tabs
+    tabDashboard: "📊 Dashboard",
+    tabBuses: "🚌 Bus Database",
+    tabLeave: "🌴 Apply Leave",
+    tabProfile: "🪪 Profile & License",
+    tabTrips: "📅 Scheduled Trips",
+    tabPayments: "💳 Collections",
+
+    // Dashboard Overview
+    activeBusRoute: "Active Bus & Route",
+    tripLive: "● TRIP LIVE",
+    readyDeparture: "READY FOR DEPARTURE",
+    busNo: "Assigned Bus No",
+    depTime: "Departure Time",
+    capacity: "Bus Capacity",
+    passengers: "Passengers",
+    startTrip: "🚀 START TRIP NOW",
+    endTrip: "🏁 END CURRENT TRIP",
+    simulateRfid: "💳 Simulate RFID Pass Tap",
+    passengersTracker: "Passengers Onboard Tracker",
+    seats: "Seats",
+    gpsTelemetry: "📍 Live GPS Telemetry & Map Tracker",
+    gpsActive: "📡 GPS Active",
+    gpsOff: "❌ GPS Off",
+    speed: "Speed",
+    todayCollections: "Today's Total Collections",
+    fareMethod: "Fare Method",
+    rfidCash: "RFID Tap + Ticket Cash",
+    adminAlerts: "🔔 Admin Alerts & Notifications",
+    delayWarning: "Delay Warning! Traffic Ahead",
+    trafficNotice: "Heavy traffic reported near Vytilla Junction. Drive carefully.",
+    passengerAlert: "Passenger Waiting Alert",
+    rfidPassengersWaiting: "2 passengers waiting with prepaid Smart RFID Passes.",
+
+    // Uber-Style GPS Section
+    liveGpsTitle: "📍 Real-Time Bus GPS Tracker (Uber-Style)",
+    liveGpsSubtitle: "Live GPS coordinates broadcasted directly to MoveSmart Passenger App",
+    startGps: "📡 Start Live GPS Broadcast",
+    pauseGps: "⏸️ Pause GPS Broadcast",
+    centerMap: "🎯 Center Map on Bus",
+    simulationMode: "🎮 Demo Route Simulation",
+    realGpsMode: "📡 Real Device GPS",
+    gpsAccuracy: "Accuracy",
+    liveBroadcasting: "🔴 LIVE BROADCASTING TO PASSENGERS",
+    currentLocation: "Current Location",
+
+    // Bus Database
+    busDbTitle: "MoveSmart Fleet Bus Database",
+    busDbSubtitle: "Select a bus to request Admin assignment (min 2 hrs before departure).",
+    searchPlaceholder: "Search bus by name, number, or route...",
+    loadingBuses: "Loading Buses Database...",
+    noBusesFound: "No buses found in database.",
+    lockedBus: "🔒 Locked (< 2 hrs to departure)",
+    assignedDriver: "✅ Currently Assigned Driver",
+    pendingReq: "⏳ Request Pending Admin Approval",
+    requestToDrive: "Request Admin to Drive",
+    lockedNotice: "🔒 Locked (Must request > 2 hrs before)",
+    myBusRequests: "Your Bus Drive Requests & Status",
+    approvedByAdmin: "Approved by Admin ✅",
+    rejectedByAdmin: "Rejected by Admin ❌",
+
+    // Leave
+    applyLeaveTitle: "Apply for Driver Leave",
+    applyLeaveSubtitle: "Select Full Day or Half Day leave and submit for Admin approval.",
+    driverNameEmail: "Driver Name & Email",
+    leaveType: "Leave Type",
+    fullDay: "☀️ Full Day Leave",
+    halfDay: "🌗 Half Day Leave",
+    halfDaySlot: "Half-Day Slot",
+    forenoon: "Forenoon (AM)",
+    afternoon: "Afternoon (PM)",
+    leaveDate: "Leave Date",
+    leaveReason: "Reason for Leave",
+    reasonPlaceholder: "Enter reason for taking leave...",
+    submitLeaveBtn: "Submit Leave Application ✓",
+    submitting: "Submitting...",
+    leaveHistoryTitle: "Your Leave History & Status",
+    noLeaves: "No leave requests submitted yet.",
+
+    // Profile & Verification
+    profileTitle: "Driver Profile & Driving License",
+    profileSubtitle: "Provide your driving license details and profile picture for verification.",
+    licenseNo: "Driving License Number",
+    licensePlaceholder: "e.g. KL-07-2018-99210",
+    phone: "Contact Phone",
+    experience: "Experience (Years)",
+    profilePic: "Profile Picture (Photo)",
+    photoAttached: "Photo Attached ✓",
+    licenseDoc: "Driving License Photo Document",
+    docAttached: "License Document Attached ✓",
+    submitProfileBtn: "Submit Profile & License for Admin Approval ✓",
+    verificationStatusBadge: "Verification Status Badge",
+    verifiedNotice: "🔒 Once Admin verifies your driving license and photo, passengers will see your verified badge.",
+
+    // Trips & Payments
+    scheduledTripsTitle: "Today's Scheduled Trips",
+    selectTrip: "Select Trip",
+    collectionsTitle: "Trip Collections & Payments Log",
+
+    // Modal
+    reportIssueTitle: "🚨 Report Bus Issue / Breakdown",
+    selectIssueCategory: "Select Issue Category",
+    issueBreakdown: "Engine Problem / Breakdown",
+    issueTraffic: "Severe Route Traffic Delay",
+    issuePuncture: "Tyre Puncture / Suspension",
+    issueMedical: "Passenger Medical Emergency",
+    notesDetails: "Notes / Location Details",
+    notesPlaceholder: "Type location or notes...",
+    cancel: "Cancel",
+    submitAlert: "Submit Alert ✓",
+
+    // Auth Screens
+    loadingDashboard: "Loading Dashboard...",
+    accountPendingTitle: "Account Pending Approval",
+    accountPendingMsg: "Your account is waiting for admin approval. Please check back later.",
+    accountRejectedTitle: "Account Rejected",
+    accountRejectedMsg: "Your account has been rejected. Please contact admin.",
+    logout: "Logout"
+  },
+  ml: {
+    langToggle: "English (EN)",
+    brandTitle: "മൂവ്സ്മാർട്ട്",
+    driverBadge: "ഡ്രൈവർ പോർട്ടൽ",
+    subTitle: "കേരള പ്രൈവറ്റ് ബസ്സ് സിസ്റ്റം",
+    onDuty: "🟢 ഡ്യൂട്ടിയിൽ (ON)",
+    offDuty: "🔴 ഓഫ് ഡ്യൂട്ടി (OFF)",
+    signOut: "ലോഗ്ഔട്ട് (Sign Out)",
+    welcome: "നമസ്കാരം, ഡ്രൈവർ 👋",
+    verifiedDriver: "അഡ്മിൻ അംഗീകരിച്ച ഡ്രൈവർ ✅",
+    pendingReview: "അഡ്മിൻ പരിശോധനയിൽ ⏳",
+    unverifiedDriver: "സ്ഥിരീകരിക്കാത്ത ഡ്രൈവർ ⚠️",
+    markAttendance: "✓ അറ്റൻഡൻസ് രേഖപ്പെടുത്തുക",
+    attendanceDone: "✓ അറ്റൻഡൻസ് പൂർത്തിയായി സമയം:",
+    reportIssue: "⚠️ പരാതി/പ്രശ്നം അറിയിക്കുക",
+    
+    // Nav Tabs
+    tabDashboard: "📊 ഡാഷ്ബോർഡ്",
+    tabBuses: "🚌 ബസ് വിവരങ്ങൾ",
+    tabLeave: "🌴 ലീവ് അപേക്ഷ",
+    tabProfile: "🪪 പ്രൊഫൈൽ & ലൈസൻസ്",
+    tabTrips: "📅 യാത്ര ഷെഡ്യൂൾ",
+    tabPayments: "💳 കളക്ഷൻ വിവരങ്ങൾ",
+
+    // Dashboard Overview
+    activeBusRoute: "നിലവിലെ ബസ്സും റൂട്ടും",
+    tripLive: "● യാത്ര പുരോഗമിക്കുന്നു",
+    readyDeparture: "പുറപ്പെടാൻ തയ്യാറാണ്",
+    busNo: "ബസ്സ് നമ്പർ",
+    depTime: "പുറപ്പെടുന്ന സമയം",
+    capacity: "ആകെ സീറ്റുകൾ",
+    passengers: "യാത്രക്കാർ",
+    startTrip: "🚀 യാത്ര ആരംഭിക്കുക",
+    endTrip: "🏁 യാത്ര അവസാനിപ്പിക്കുക",
+    simulateRfid: "💳 RFID കാർഡ് ടാപ്പ് ചെയ്യുക",
+    passengersTracker: "ബസ്സിലെ യാത്രക്കാരുടെ എണ്ണം",
+    seats: "സീറ്റുകൾ",
+    gpsTelemetry: "📍 ലൈവ് ജി.പി.എസ് (GPS) മാപ്പ് ട്രാക്കർ",
+    gpsActive: "📡 ജി.പി.എസ് ഓൺ (ON)",
+    gpsOff: "❌ ജി.പി.എസ് ഓഫ് (OFF)",
+    speed: "വേഗത",
+    todayCollections: "ഇന്നത്തെ ആകെ കളക്ഷൻ",
+    fareMethod: "വരുമാന മാർഗ്ഗം",
+    rfidCash: "RFID കാർഡ് + ക്യാഷ് ടിക്കറ്റ്",
+    adminAlerts: "🔔 അറിയിപ്പുകളും മുന്നറിയിപ്പുകളും",
+    delayWarning: "ട്രാഫിക് ബ്ലോക്ക് മുന്നറിയിപ്പ്!",
+    trafficNotice: "വൈറ്റില ജംഗ്ഷനിൽ കനത്ത ട്രാഫിക്. ശ്രദ്ധിച്ച് ഡ്രൈവ് ചെയ്യുക.",
+    passengerAlert: "യാത്രക്കാർ കാത്തുനിൽക്കുന്നു",
+    rfidPassengersWaiting: "2 യാത്രക്കാർ സ്മാർട്ട് RFID പാസുമായി അടുത്ത സ്റ്റോപ്പിൽ ഉണ്ട്.",
+
+    // Uber-Style GPS Section
+    liveGpsTitle: "📍 ബസ്സിന്റെ തത്സമയ ജി.പി.എസ് (Real-Time GPS Tracker)",
+    liveGpsSubtitle: "യാത്രക്കാർക്ക് കാണാൻ തത്സമയ ലൊക്കേഷൻ സംപ്രേക്ഷണം ചെയ്യുന്നു",
+    startGps: "📡 ജി.പി.എസ് സംപ്രേക്ഷണം ആരംഭിക്കുക",
+    pauseGps: "⏸️ ജി.പി.എസ് നിർത്തുക",
+    centerMap: "🎯 ബസ്സ് ലൊക്കേഷനിലേക്ക് മാപ്പ് മാറ്റുക",
+    simulationMode: "🎮 ഡെമോ റൂട്ട് ട്രാക്കിംഗ്",
+    realGpsMode: "📡 ഉപകരണത്തിലെ യഥാർത്ഥ ജി.പി.എസ്",
+    gpsAccuracy: "കൃത്യത",
+    liveBroadcasting: "🔴 യാത്രക്കാർക്ക് തത്സമയം കാണാം (LIVE)",
+    currentLocation: "നിലവിലെ സ്ഥലം",
+
+    // Bus Database
+    busDbTitle: "മൂവ്സ്മാർട്ട് ബസ്സ് ശൃംഖല",
+    busDbSubtitle: "ഡ്രൈവ് ചെയ്യേണ്ട ബസ്സ് തിരഞ്ഞെടുക്കുക (പുറപ്പെടുന്നതിന് 2 മണിക്കൂർ മുൻപ് അപേക്ഷിക്കണം).",
+    searchPlaceholder: "ബസ്സ് പേര്, നമ്പർ, റൂട്ട് തിരയുക...",
+    loadingBuses: "ബസ്സ് വിവരങ്ങൾ ലോഡ് ചെയ്യുന്നു...",
+    noBusesFound: "ബസ്സുകൾ ഒന്നും കണ്ടെത്തിയില്ല.",
+    lockedBus: "🔒 സമയം കഴിഞ്ഞു (2 മണിക്കൂറിനുള്ളിൽ പുറപ്പെടും)",
+    assignedDriver: "✅ നിലവിലെ ഡ്രൈവർ",
+    pendingReq: "⏳ അഡ്മിൻ അനുമതിക്കായി കാത്തിരിക്കുന്നു",
+    requestToDrive: "ബസ്സ് ഡ്രൈവ് ചെയ്യാൻ അപേക്ഷിക്കുക",
+    lockedNotice: "🔒 പൂട്ടിയിരിക്കുന്നു (2 മണിക്കൂർ മുൻപ് അപേക്ഷിക്കണം)",
+    myBusRequests: "നിങ്ങളുടെ ബസ്സ് അപേക്ഷകളുടെ വിവരങ്ങൾ",
+    approvedByAdmin: "അഡ്മിൻ അംഗീകരിച്ചു ✅",
+    rejectedByAdmin: "അഡ്മിൻ നിരസിച്ചു ❌",
+
+    // Leave
+    applyLeaveTitle: "ഡ്രൈവർ ലീവ് അപേക്ഷ",
+    applyLeaveSubtitle: "മുഴുവൻ ദിവസത്തെ അല്ലെങ്കിൽ പകുതി ദിവസത്തെ ലീവിനായി അപേക്ഷിക്കുക.",
+    driverNameEmail: "ഡ്രൈവറുടെ പേരും ഇമെയിലും",
+    leaveType: "ലീവ് തരം",
+    fullDay: "☀️ മുഴുവൻ ദിവസം (Full Day)",
+    halfDay: "🌗 പകുതി ദിവസം (Half Day)",
+    halfDaySlot: "പകുതി ദിവസ സമയം",
+    forenoon: "രാവിലെ (AM)",
+    afternoon: "ഉച്ചയ്ക്ക് ശേഷം (PM)",
+    leaveDate: "ലീവ് തീയതി",
+    leaveReason: "ലീവ് എടുക്കാനുള്ള കാരണം",
+    reasonPlaceholder: "കാരണം ഇവിടെ എഴുതുക...",
+    submitLeaveBtn: "ലീവ് അപേക്ഷ സമർപ്പിക്കുക ✓",
+    submitting: "സമർപ്പിക്കുന്നു...",
+    leaveHistoryTitle: "നിങ്ങളുടെ ലീവ് ചരിത്രം",
+    noLeaves: "ലീവ് അപേക്ഷകൾ ഒന്നും ഇല്ല.",
+
+    // Profile & Verification
+    profileTitle: "ഡ്രൈവർ പ്രൊഫൈലും ലൈസൻസും",
+    profileSubtitle: "നിങ്ങളുടെ ഡ്രൈവിംഗ് ലൈസൻസ് നമ്പറും ഫോട്ടോയും നൽകുക.",
+    licenseNo: "ഡ്രൈവിംഗ് ലൈസൻസ് നമ്പർ",
+    licensePlaceholder: "ഉദാഹരണത്തിന്: KL-07-2018-99210",
+    phone: "ഫോൺ നമ്പർ",
+    experience: "പരിചയം (വർഷം)",
+    profilePic: "ഡ്രൈവറുടെ ഫോട്ടോ (Photo)",
+    photoAttached: "ഫോട്ടോ ചേർത്തുവച്ചു ✓",
+    licenseDoc: "ലൈസൻസ് കാർഡിന്റെ ഫോട്ടോ",
+    docAttached: "ലൈസൻസ് രേഖ ചേർത്തുവച്ചു ✓",
+    submitProfileBtn: "പ്രൊഫൈൽ അഡ്മിന് സമർപ്പിക്കുക ✓",
+    verificationStatusBadge: "അംഗീകാര അവസ്ഥ (Verification Status)",
+    verifiedNotice: "🔒 ലൈസൻസും ഫോട്ടോയും അഡ്മിൻ പരിശോധിച്ചു അംഗീകരിച്ചാൽ യാത്രക്കാർക്ക് അത് കാണാൻ സാധിക്കും.",
+
+    // Trips & Payments
+    scheduledTripsTitle: "ഇന്നത്തെ ട്രിപ്പുകൾ",
+    selectTrip: "ട്രിപ്പ് തിരഞ്ഞെടുക്കുക",
+    collectionsTitle: "വരുമാന കണക്കുകൾ (Collections)",
+
+    // Modal
+    reportIssueTitle: "🚨 വാഹനം/റൂട്ട് തകരാറുകൾ അറിയിക്കുക",
+    selectIssueCategory: "തകരാറിന്റെ തരം തിരഞ്ഞെടുക്കുക",
+    issueBreakdown: "എഞ്ചിൻ തകരാർ / ബസ്സ് കേടായി",
+    issueTraffic: "വലിയ ട്രാഫിക് തടസ്സം",
+    issuePuncture: "ടയർ പങ്ചർ / സസ്പെൻഷൻ",
+    issueMedical: "യാത്രക്കാരന് ആരോഗ്യ പ്രശ്നം",
+    notesDetails: "കൂടുതൽ വിവരങ്ങൾ / സ്ഥലം",
+    notesPlaceholder: "സ്ഥലവും വിവരങ്ങളും എഴുതുക...",
+    cancel: "റദ്ദാക്കുക (Cancel)",
+    submitAlert: "അറിയിപ്പ് സമർപ്പിക്കുക ✓",
+
+    // Auth Screens
+    loadingDashboard: "ഡാഷ്ബോർഡ് ലോഡ് ചെയ്യുന്നു...",
+    accountPendingTitle: "അക്കൗണ്ട് അനുമതിക്കായി കാത്തിരിക്കുന്നു",
+    accountPendingMsg: "നിങ്ങളുടെ അക്കൗണ്ട് അഡ്മിൻ പരിശോധിച്ചു വരികയാണ്. ദയവായി പിന്നീട് ശ്രമിക്കുക.",
+    accountRejectedTitle: "അക്കൗണ്ട് നിരസിച്ചു",
+    accountRejectedMsg: "നിങ്ങളുടെ അക്കൗണ്ട് നിരസിക്കപ്പെട്ടു. ദയവായി അഡ്മിനുമായി ബന്ധപ്പെടുക.",
+    logout: "ലോഗ്ഔട്ട് (Logout)"
+  }
+};
+
+// Route Waypoints across Kerala (Kochi Fort -> M.G. Road -> Kaloor -> Kakkanad -> Aluva)
+const KERALA_ROUTE_WAYPOINTS = [
+  { lat: 9.9658, lng: 76.2427, name: "Kochi Fort Terminal", x: 12, y: 75 },
+  { lat: 9.9723, lng: 76.2801, name: "M.G. Road North", x: 30, y: 55 },
+  { lat: 9.9984, lng: 76.2999, name: "Kaloor Junction", x: 50, y: 40 },
+  { lat: 10.0159, lng: 76.3419, name: "Kakkanad Civil Station", x: 72, y: 30 },
+  { lat: 10.1076, lng: 76.3516, name: "Aluva Bus Stand Terminal", x: 90, y: 15 },
+];
 
 function Driver() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Language Toggle State ('en' or 'ml')
+  const [lang, setLang] = useState("en");
+
+  const t = (key) => {
+    if (TRANSLATIONS[lang] && TRANSLATIONS[lang][key]) {
+      return TRANSLATIONS[lang][key];
+    }
+    return TRANSLATIONS.en[key] || key;
+  };
+
   // 1. User / Driver Authentication check
-  const [user, setUser] = useState(() => {
-    const savedUser = getStoredUser();
-    if (savedUser) return savedUser;
-    return {
-      name: "Rajesh Kumar",
-      email: "rajesh.driver@movesmart.in",
-      phone: "+91 98470 12345",
-      role: "Driver",
-      driverId: "DRV-88219",
-      licenseNumber: "KL-07-2018-99210",
-      busNumber: "KL-07-MS-1008",
-      avatarUrl: "",
+  const [user, setUser] = useState(null);
+  const [authStatus, setAuthStatus] = useState("loading");
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = getStoredToken();
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+      try {
+        const res = await axios.get("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const fetchedUser = res.data.user;
+        if (fetchedUser.role !== "driver" && fetchedUser.role !== "Driver") {
+          clearStoredSession();
+          navigate("/login");
+          return;
+        }
+        setUser(fetchedUser);
+        setAuthStatus(fetchedUser.verificationStatus || "Unverified");
+        axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+      } catch (err) {
+        console.error("Auth error:", err);
+        clearStoredSession();
+        navigate("/login");
+      }
     };
-  });
+    checkAuth();
+  }, [navigate]);
 
   // 2. Driver Duty & State
   const [isOnline, setIsOnline] = useState(true);
@@ -34,9 +346,207 @@ function Driver() {
   // 4. Assigned Bus & Current Trip State
   const [tripStatus, setTripStatus] = useState("idle");
   const [activeTripIndex, setActiveTripIndex] = useState(0);
-  const [gpsActive, setGpsActive] = useState(true);
   const [passengersOnboard, setPassengersOnboard] = useState(32);
   const totalCapacity = 45;
+
+  // ----------------------------------------------------
+  // 📍 UBER-STYLE REAL-TIME GPS TRACKER STATE & REFS
+  // ----------------------------------------------------
+  const [gpsActive, setGpsActive] = useState(true);
+  const [useRealDeviceGps, setUseRealDeviceGps] = useState(false);
+  const [currentGps, setCurrentGps] = useState({
+    lat: 9.9984,
+    lng: 76.2999,
+    speed: 42,
+    heading: 45,
+    accuracy: 4,
+    address: "Kaloor Junction, Ernakulam",
+    stepIndex: 2,
+  });
+  
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const busMarkerRef = useRef(null);
+  const watchPositionIdRef = useRef(null);
+  const simIntervalRef = useRef(null);
+
+  // Initialize Leaflet Map safely when activeTab is 'dashboard'
+  const initLeafletMap = () => {
+    if (!mapContainerRef.current || !window.L) return;
+
+    try {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+
+      const L = window.L;
+      const map = L.map(mapContainerRef.current, {
+        center: [currentGps.lat, currentGps.lng],
+        zoom: 13,
+        zoomControl: true,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      // Route Polyline
+      const routeCoords = KERALA_ROUTE_WAYPOINTS.map((w) => [w.lat, w.lng]);
+      L.polyline(routeCoords, {
+        color: "#8b5cf6",
+        weight: 6,
+        opacity: 0.85,
+        dashArray: "8, 8",
+      }).addTo(map);
+
+      // Stop Markers
+      KERALA_ROUTE_WAYPOINTS.forEach((wp, i) => {
+        const isTerminal = i === 0 || i === KERALA_ROUTE_WAYPOINTS.length - 1;
+        const stopIcon = L.divIcon({
+          className: "custom-stop-marker",
+          html: `<div style="background: ${isTerminal ? '#6d28d9' : '#38a169'}; color: #fff; padding: 4px 8px; border-radius: 10px; font-weight: 900; font-size: 11px; border: 2px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.2); white-space: nowrap;">📍 ${wp.name}</div>`,
+          iconSize: [120, 28],
+          iconAnchor: [60, 14],
+        });
+        L.marker([wp.lat, wp.lng], { icon: stopIcon }).addTo(map);
+      });
+
+      // Animated Bus Marker
+      const busHtml = `
+        <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+          <div style="position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(56, 161, 105, 0.35); animation: pulseRadar 2s infinite ease-out;"></div>
+          <div style="background: linear-gradient(135deg, #16a34a, #15803d); color: #ffffff; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; border: 3px solid #ffffff; box-shadow: 0 6px 18px rgba(0,0,0,0.3); z-index: 10;">
+            🚌
+          </div>
+        </div>
+      `;
+      const busIcon = L.divIcon({
+        className: "custom-bus-marker",
+        html: busHtml,
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+      });
+
+      const marker = L.marker([currentGps.lat, currentGps.lng], { icon: busIcon }).addTo(map);
+      busMarkerRef.current = marker;
+      mapInstanceRef.current = map;
+
+      setTimeout(() => {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+        }
+      }, 200);
+    } catch (e) {
+      console.error("Leaflet map initialization error:", e);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "dashboard" && authStatus !== "Unverified") {
+      const timer = setTimeout(() => {
+        initLeafletMap();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, authStatus]);
+
+  // Real GPS & Simulation Tracker Effect
+  useEffect(() => {
+    if (!gpsActive) {
+      if (watchPositionIdRef.current && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchPositionIdRef.current);
+        watchPositionIdRef.current = null;
+      }
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (useRealDeviceGps && navigator.geolocation) {
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+
+      watchPositionIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude, longitude, speed, accuracy } = pos.coords;
+          const speedKmh = speed ? Math.round(speed * 3.6) : 38;
+          const updatedGps = {
+            lat: latitude,
+            lng: longitude,
+            speed: speedKmh,
+            heading: 90,
+            accuracy: Math.round(accuracy) || 5,
+            address: `Lat: ${latitude.toFixed(4)}, Lng: ${longitude.toFixed(4)}`,
+            stepIndex: 2,
+          };
+          setCurrentGps(updatedGps);
+          updateMapMarker(updatedGps.lat, updatedGps.lng);
+        },
+        (err) => {
+          console.warn("Real GPS access error/denied:", err.message);
+          setUseRealDeviceGps(false);
+          showToast("⚠️ Device GPS offline/denied. Switched to Route Demo Tracking.");
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 }
+      );
+    } else {
+      if (watchPositionIdRef.current && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchPositionIdRef.current);
+        watchPositionIdRef.current = null;
+      }
+
+      simIntervalRef.current = setInterval(() => {
+        setCurrentGps((prev) => {
+          const nextIndex = (prev.stepIndex + 1) % KERALA_ROUTE_WAYPOINTS.length;
+          const targetWp = KERALA_ROUTE_WAYPOINTS[nextIndex];
+          const nextSpeed = Math.floor(Math.random() * 15) + 35; // 35 to 50 km/h
+
+          const updated = {
+            lat: targetWp.lat,
+            lng: targetWp.lng,
+            speed: nextSpeed,
+            heading: 90,
+            accuracy: 3,
+            address: targetWp.name,
+            stepIndex: nextIndex,
+          };
+          updateMapMarker(updated.lat, updated.lng);
+          return updated;
+        });
+      }, 4000);
+    }
+
+    return () => {
+      if (watchPositionIdRef.current && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchPositionIdRef.current);
+      }
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+      }
+    };
+  }, [gpsActive, useRealDeviceGps]);
+
+  const updateMapMarker = (lat, lng) => {
+    if (busMarkerRef.current) {
+      busMarkerRef.current.setLatLng([lat, lng]);
+    }
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.panTo([lat, lng]);
+    }
+  };
+
+  const handleCenterMap = () => {
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([currentGps.lat, currentGps.lng], 15);
+      showToast("🎯 Map centered on active bus position.");
+    }
+  };
 
   // 5. Database Buses State
   const [dbBuses, setDbBuses] = useState([]);
@@ -56,10 +566,10 @@ function Driver() {
 
   // 7. Profile & License Verification State
   const [verificationData, setVerificationData] = useState({
-    licenseNumber: user.licenseNumber || "KL-07-2018-99210",
+    licenseNumber: user?.licenseNumber || "KL-07-2018-99210",
     licenseImage: "",
     profilePic: "",
-    phone: user.phone || "+91 98470 12345",
+    phone: user?.phone || "+91 98470 12345",
     experienceYears: 5,
     verificationStatus: "Unverified",
     verificationNote: "",
@@ -110,8 +620,8 @@ function Driver() {
 
   // Notifications
   const [alerts, setAlerts] = useState([
-    { id: 1, type: "warning", text: "Heavy rain reported near Vytilla Junction. Drive safely.", time: "10 mins ago" },
-    { id: 2, type: "info", text: "Maintenance check scheduled at Ernakulam Depot at 5:00 PM.", time: "1 hour ago" },
+    { id: 1, type: "warning", keyTitle: "delayWarning", keyText: "trafficNotice", time: "10 mins ago" },
+    { id: 2, type: "info", keyTitle: "passengerAlert", keyText: "rfidPassengersWaiting", time: "1 hour ago" },
   ]);
 
   // Issue Reporting Modal State
@@ -222,11 +732,13 @@ function Driver() {
   };
 
   useEffect(() => {
-    fetchDbBuses();
-    fetchDriverLeaves();
-    fetchProfileStatus();
-    fetchMyBusRequests();
-  }, [user]);
+    if (user && authStatus === "Approved") {
+      fetchDbBuses();
+      fetchDriverLeaves();
+      fetchProfileStatus();
+      fetchMyBusRequests();
+    }
+  }, [user, authStatus]);
 
   // ----------------------------------------------------
   // HANDLERS FOR DRIVER ACTIONS
@@ -401,7 +913,8 @@ function Driver() {
   const handleToggleTrip = () => {
     if (tripStatus === "idle" || tripStatus === "completed") {
       setTripStatus("in_progress");
-      showToast("🚀 Trip Started! Live GPS telemetry broadcasted to passengers.");
+      setGpsActive(true);
+      showToast("🚀 Trip Started! Real GPS telemetry broadcasted to passengers.");
     } else {
       setTripStatus("completed");
       showToast("🏁 Trip Completed! Earnings logged.");
@@ -458,95 +971,254 @@ function Driver() {
       b.toLocation?.toLowerCase().includes(busSearchQuery.toLowerCase())
   );
 
+  if (authStatus === "loading") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
+        <div style={{ fontSize: "1.35rem", fontWeight: "800", color: "#38a169", display: "flex", alignItems: "center", gap: "10px" }}>
+          <span>⏳</span> {t("loadingDashboard")}
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "Pending") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#f8fafc", padding: "24px", textAlign: "center" }}>
+        <div style={{ width: "80px", height: "80px", borderRadius: "20px", background: "#ffffff", padding: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.08)", marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </div>
+        <h2 style={{ fontSize: "1.75rem", fontWeight: "800", color: "#1e293b", marginBottom: "12px" }}>{t("accountPendingTitle")}</h2>
+        <p style={{ color: "#64748b", marginBottom: "24px", maxWidth: "420px", fontSize: "15px", fontWeight: "600" }}>{t("accountPendingMsg")}</p>
+        <button onClick={handleLogout} style={{ padding: "14px 32px", background: "linear-gradient(135deg, #38a169, #2f855a)", color: "#fff", borderRadius: "14px", border: "none", cursor: "pointer", fontWeight: "800", fontSize: "16px", boxShadow: "0 6px 18px rgba(56, 161, 105, 0.3)" }}>{t("logout")}</button>
+      </div>
+    );
+  }
+
+  if (authStatus === "Rejected") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#f8fafc", padding: "24px", textAlign: "center" }}>
+        <div style={{ width: "80px", height: "80px", borderRadius: "20px", background: "#ffffff", padding: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.08)", marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </div>
+        <h2 style={{ fontSize: "1.75rem", fontWeight: "800", color: "#dc2626", marginBottom: "12px" }}>{t("accountRejectedTitle")}</h2>
+        <p style={{ color: "#64748b", marginBottom: "24px", maxWidth: "420px", fontSize: "15px", fontWeight: "600" }}>{t("accountRejectedMsg")}</p>
+        <button onClick={handleLogout} style={{ padding: "14px 32px", background: "#dc2626", color: "#fff", borderRadius: "14px", border: "none", cursor: "pointer", fontWeight: "800", fontSize: "16px", boxShadow: "0 6px 18px rgba(220, 38, 38, 0.3)" }}>{t("logout")}</button>
+      </div>
+    );
+  }
+
+  // Force Unverified drivers to the verification tab
+  const currentTab = authStatus === "Unverified" ? "verification" : activeTab;
+  const currentWp = KERALA_ROUTE_WAYPOINTS[currentGps.stepIndex || 0];
+
   return (
     <div style={styles.pageWrapper}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Manjari:wght@400;700&display=swap');
         
         * { box-sizing: border-box; }
-        body { font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; }
+        body { font-family: 'Plus Jakarta Sans', 'Manjari', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; }
 
-        .driver-nav-tab {
+        @keyframes pulseRadar {
+          0% { transform: scale(0.6); opacity: 0.9; }
+          100% { transform: scale(1.8); opacity: 0; }
+        }
+
+        .header-logo-badge {
+          width: 52px;
+          height: 52px;
+          border-radius: 16px;
+          background: #ffffff;
           display: flex;
           align-items: center;
+          justify-content: center;
+          padding: 5px;
+          box-shadow: 0 4px 16px rgba(109, 40, 217, 0.15);
+          border: 1.5px solid #e9d5ff;
+          transition: transform 0.2s ease;
+        }
+        .header-logo-badge:hover {
+          transform: scale(1.05);
+        }
+
+        .lang-toggle-btn {
+          background: linear-gradient(135deg, #6d28d9 0%, #2e1065 100%);
+          color: #ffffff;
+          border: 2px solid #a78bfa;
+          padding: 8px 18px;
+          border-radius: 999px;
+          font-weight: 900;
+          font-size: 14.5px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
           gap: 8px;
-          padding: 10px 18px;
-          border-radius: 12px;
-          border: 1px solid transparent;
-          background: transparent;
-          color: #64748b;
-          font-weight: 700;
-          font-size: 13.5px;
+          box-shadow: 0 4px 14px rgba(109, 40, 217, 0.35);
+          transition: all 0.2s ease;
+        }
+        .lang-toggle-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(109, 40, 217, 0.5);
+          border-color: #4ade80;
+        }
+
+        .driver-nav-tab {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 12px 20px;
+          border-radius: 16px;
+          border: 2px solid #e2e8f0;
+          background: #ffffff;
+          color: #475569;
+          font-weight: 800;
+          font-size: 15px;
           cursor: pointer;
           transition: all 0.2s ease;
           white-space: nowrap;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.02);
         }
 
-        .driver-nav-tab:hover { color: #38a169; background: rgba(56, 161, 105, 0.08); }
+        .driver-nav-tab:hover { color: #38a169; background: #f0fdf4; border-color: #86efac; }
         .driver-nav-tab.active {
-          background: linear-gradient(135deg, #38a169, #8b5cf6);
+          background: linear-gradient(135deg, #38a169 0%, #8b5cf6 100%);
           color: #ffffff;
-          box-shadow: 0 4px 14px rgba(56, 161, 105, 0.25);
+          border-color: transparent;
+          box-shadow: 0 6px 18px rgba(56, 161, 105, 0.35);
         }
 
         .card-shadow {
           background: #ffffff;
-          border-radius: 18px;
+          border-radius: 24px;
           padding: 24px;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+          border: 1.5px solid #cbd5e1;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.04);
         }
 
         .btn-green-gradient {
-          background: linear-gradient(135deg, #38a169, #2f855a);
-          color: #ffffff; border: none; padding: 12px 22px; border-radius: 12px;
-          font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
-          box-shadow: 0 4px 14px rgba(56, 161, 105, 0.3); transition: all 0.2s ease;
+          background: linear-gradient(135deg, #38a169 0%, #15803d 100%);
+          color: #ffffff;
+          border: none;
+          padding: 16px 24px;
+          border-radius: 16px;
+          font-weight: 900;
+          font-size: 16px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          box-shadow: 0 6px 18px rgba(56, 161, 105, 0.35);
+          transition: all 0.2s ease;
         }
-        .btn-green-gradient:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(56, 161, 105, 0.4); }
+        .btn-green-gradient:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(56, 161, 105, 0.45); }
 
         .btn-purple-gradient {
-          background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-          color: #ffffff; border: none; padding: 12px 22px; border-radius: 12px;
-          font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
-          box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3); transition: all 0.2s ease;
+          background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+          color: #ffffff;
+          border: none;
+          padding: 16px 24px;
+          border-radius: 16px;
+          font-weight: 900;
+          font-size: 16px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          box-shadow: 0 6px 18px rgba(139, 92, 246, 0.35);
+          transition: all 0.2s ease;
         }
-        .btn-purple-gradient:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(139, 92, 246, 0.4); }
+        .btn-purple-gradient:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(139, 92, 246, 0.45); }
 
         .btn-red-outline {
-          background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5;
-          padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer;
+          background: #fef2f2;
+          color: #dc2626;
+          border: 2px solid #fca5a5;
+          padding: 12px 20px;
+          border-radius: 14px;
+          font-weight: 900;
+          font-size: 15px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          transition: all 0.2s ease;
         }
+        .btn-red-outline:hover { background: #fee2e2; border-color: #f87171; }
 
-        .status-badge-pending { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 12px; }
-        .status-badge-approved { background: #dcfce7; color: #15803d; border: 1px solid #86efac; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 12px; }
-        .status-badge-rejected { background: #ffe4e6; color: #be123c; border: 1px solid #fecdd3; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 12px; }
+        .status-badge-pending { background: #fef3c7; color: #92400e; border: 2px solid #fcd34d; padding: 6px 14px; border-radius: 20px; font-weight: 900; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+        .status-badge-approved { background: #dcfce7; color: #15803d; border: 2px solid #86efac; padding: 6px 14px; border-radius: 20px; font-weight: 900; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+        .status-badge-rejected { background: #ffe4e6; color: #be123c; border: 2px solid #fecdd3; padding: 6px 14px; border-radius: 20px; font-weight: 900; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
       `}</style>
 
-      {/* 🧭 Top Navigation Header */}
+      {/* 🧭 PREMIUM USER-FRIENDLY HEADER WITH MOVESMART LOGO */}
       <header style={styles.topNavbar}>
         <div style={styles.navContainer}>
-          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <Link to="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px" }}>
-              <div style={{ width: "38px", height: "38px", borderRadius: "12px", background: "linear-gradient(135deg, #38a169, #8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", color: "#ffffff", fontWeight: "900", fontSize: "18px" }}>
-                MS
+          {/* Left: MoveSmart Logo & Brand Title */}
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <Link to="/driver" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "14px" }}>
+              <div className="header-logo-badge">
+                <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               </div>
-              <span style={{ fontSize: "20px", fontWeight: "800", background: "linear-gradient(135deg, #1e293b, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                MoveSmart <span style={{ fontSize: "12px", background: "#8b5cf6", color: "#fff", padding: "2px 8px", borderRadius: "8px", verticalAlign: "middle" }}>DRIVER</span>
-              </span>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "24px", fontWeight: "900", background: "linear-gradient(135deg, #1e1b4b 0%, #6d28d9 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "-0.5px" }}>
+                    {t("brandTitle")}
+                  </span>
+                  <span style={{ fontSize: "11px", background: "linear-gradient(135deg, #6d28d9, #38a169)", color: "#ffffff", padding: "3px 10px", borderRadius: "10px", fontWeight: "900", letterSpacing: "0.5px" }}>
+                    {t("driverBadge")}
+                  </span>
+                </div>
+                <div style={{ fontSize: "12px", color: "#64748b", fontWeight: "700", marginTop: "1px" }}>
+                  {t("subTitle")}
+                </div>
+              </div>
             </Link>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", background: isOnline ? "#e6fffa" : "#fef2f2", padding: "6px 14px", borderRadius: "20px", border: `1px solid ${isOnline ? "#b2f5ea" : "#fecdd3"}` }}>
-              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: isOnline ? "#38a169" : "#e53e3e" }}></span>
-              <span style={{ fontSize: "13px", fontWeight: "700", color: isOnline ? "#2f855a" : "#c53030" }}>
-                {isOnline ? "ON DUTY" : "OFF DUTY"}
-              </span>
-            </div>
+          {/* Right: Language Toggle, Duty Status Badge, & Logout */}
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+            {/* 🌐 Malayalam / English Language Switcher */}
+            <button
+              type="button"
+              className="lang-toggle-btn"
+              onClick={() => setLang(lang === "en" ? "ml" : "en")}
+              title="Switch Language / ഭാഷ മാറ്റുക"
+            >
+              <span>🌐</span> {t("langToggle")}
+            </button>
 
-            <button onClick={handleLogout} style={{ background: "transparent", border: "1px solid #cbd5e1", borderRadius: "10px", padding: "6px 14px", fontSize: "13px", fontWeight: "700", color: "#64748b", cursor: "pointer" }}>
-              Sign Out
+            {/* Duty Status Badge Toggle */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextState = !isOnline;
+                setIsOnline(nextState);
+                showToast(nextState ? t("onDuty") : t("offDuty"));
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: isOnline ? "#dcfce7" : "#fee2e2",
+                padding: "10px 18px",
+                borderRadius: "999px",
+                border: `2px solid ${isOnline ? "#86efac" : "#fca5a5"}`,
+                fontWeight: "900",
+                fontSize: "14.5px",
+                color: isOnline ? "#15803d" : "#dc2626",
+                cursor: "pointer",
+                boxShadow: isOnline ? "0 4px 12px rgba(22, 163, 74, 0.2)" : "0 4px 12px rgba(220, 38, 38, 0.2)",
+              }}
+            >
+              <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: isOnline ? "#16a34a" : "#dc2626" }}></span>
+              {isOnline ? t("onDuty") : t("offDuty")}
+            </button>
+
+            <button onClick={handleLogout} style={{ background: "#f1f5f9", border: "1.5px solid #cbd5e1", borderRadius: "14px", padding: "10px 18px", fontSize: "14px", fontWeight: "900", color: "#475569", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              🚪 {t("signOut")}
             </button>
           </div>
         </div>
@@ -555,12 +1227,12 @@ function Driver() {
       {/* Main Content Area */}
       <main style={styles.mainContainer}>
         {/* Toast Notification Banner */}
-        {toastMessage && <div style={styles.toastBanner}>{toastMessage}</div>}
+        {toastMessage && <div style={styles.toastBanner}>✨ {toastMessage}</div>}
 
         {/* 🪪 Driver Profile & Assigned Bus Header Card */}
         <section style={styles.heroDriverCard}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "20px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
               <div style={styles.avatarWrapper}>
                 {verificationData.profilePic ? (
                   <img src={verificationData.profilePic} alt={user.name} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
@@ -570,150 +1242,300 @@ function Driver() {
               </div>
 
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  <h1 style={{ fontSize: "24px", fontWeight: "800", color: "#0f172a", margin: 0 }}>{user.name}</h1>
-                  <span style={styles.driverIdBadge}>{user.driverId || "DRV-88219"}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                  <h1 style={{ fontSize: "26px", fontWeight: "900", color: "#0f172a", margin: 0 }}>{user.name}</h1>
+                  <span style={styles.driverIdBadge}>🪪 {user.driverId || "DRV-88219"}</span>
 
                   {verificationData.verificationStatus === "Approved" ? (
-                    <span className="status-badge-approved">Admin Verified Driver ✅</span>
+                    <span className="status-badge-approved">{t("verifiedDriver")}</span>
                   ) : verificationData.verificationStatus === "Pending" ? (
-                    <span className="status-badge-pending">Pending Admin Review ⏳</span>
+                    <span className="status-badge-pending">{t("pendingReview")}</span>
                   ) : (
-                    <span className="status-badge-rejected">Unverified Driver ⚠️</span>
+                    <span className="status-badge-rejected">{t("unverifiedDriver")}</span>
                   )}
                 </div>
 
-                <div style={{ fontSize: "13.5px", color: "#64748b", marginTop: "4px", display: "flex", gap: "16px" }}>
+                <div style={{ fontSize: "14px", color: "#64748b", marginTop: "6px", display: "flex", gap: "18px", flexWrap: "wrap", fontWeight: "700" }}>
                   <span>📧 {user.email}</span>
                   <span>📞 {verificationData.phone || user.phone}</span>
-                  <span>🪪 License: <strong>{verificationData.licenseNumber || "KL-07-2018-99210"}</strong></span>
+                  <span>🪪 {t("licenseNo")}: <strong style={{ color: "#2e1065" }}>{verificationData.licenseNumber || "KL-07-2018-99210"}</strong></span>
                 </div>
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
               {!attendanceMarked ? (
                 <button className="btn-green-gradient" onClick={handleMarkAttendance}>
-                  ✓ Mark Today's Attendance
+                  {t("markAttendance")}
                 </button>
               ) : (
-                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "8px 16px", borderRadius: "12px", color: "#166534", fontSize: "13px", fontWeight: "700" }}>
-                  ✓ Attendance Checked at {attendanceTime}
+                <div style={{ background: "#f0fdf4", border: "2px solid #bbf7d0", padding: "12px 20px", borderRadius: "16px", color: "#166534", fontSize: "14px", fontWeight: "900", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>{t("attendanceDone")}</span> <strong>{attendanceTime}</strong>
                 </div>
               )}
 
               <button className="btn-red-outline" onClick={() => setShowIssueModal(true)}>
-                ⚠️ Report Issue
+                {t("reportIssue")}
               </button>
             </div>
           </div>
         </section>
 
-        {/* 🗂 Sub-Navigation Tabs */}
+        {/* 🗂 Icon-First Sub-Navigation Tabs */}
         <div style={styles.tabsContainer}>
-          <button className={`driver-nav-tab ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
-            📊 Dashboard Overview
+          {authStatus !== "Unverified" && (
+            <>
+              <button className={`driver-nav-tab ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
+                {t("tabDashboard")}
+              </button>
+              <button className={`driver-nav-tab ${activeTab === "buses" ? "active" : ""}`} onClick={() => setActiveTab("buses")}>
+                {t("tabBuses")} ({dbBuses.length})
+              </button>
+              <button className={`driver-nav-tab ${activeTab === "leave" ? "active" : ""}`} onClick={() => setActiveTab("leave")}>
+                {t("tabLeave")} ({driverLeaves.length})
+              </button>
+            </>
+          )}
+          <button className={`driver-nav-tab ${currentTab === "verification" ? "active" : ""}`} onClick={() => setActiveTab("verification")}>
+            {t("tabProfile")}
           </button>
-          <button className={`driver-nav-tab ${activeTab === "buses" ? "active" : ""}`} onClick={() => setActiveTab("buses")}>
-            🚌 Bus Database ({dbBuses.length})
-          </button>
-          <button className={`driver-nav-tab ${activeTab === "leave" ? "active" : ""}`} onClick={() => setActiveTab("leave")}>
-            🌴 Apply Leave ({driverLeaves.length})
-          </button>
-          <button className={`driver-nav-tab ${activeTab === "verification" ? "active" : ""}`} onClick={() => setActiveTab("verification")}>
-            🪪 Profile &amp; License
-          </button>
-          <button className={`driver-nav-tab ${activeTab === "trips" ? "active" : ""}`} onClick={() => setActiveTab("trips")}>
-            📅 Scheduled Trips
-          </button>
-          <button className={`driver-nav-tab ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
-            💳 Collections
-          </button>
+          {authStatus !== "Unverified" && (
+            <>
+              <button className={`driver-nav-tab ${activeTab === "trips" ? "active" : ""}`} onClick={() => setActiveTab("trips")}>
+                {t("tabTrips")}
+              </button>
+              <button className={`driver-nav-tab ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
+                {t("tabPayments")}
+              </button>
+            </>
+          )}
         </div>
 
         {/* ==================================================== */}
         {/* 📊 TAB 1: DASHBOARD OVERVIEW */}
         {/* ==================================================== */}
-        {activeTab === "dashboard" && (
+        {currentTab === "dashboard" && (
           <div className="driver-grid-layout" style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr", gap: "24px" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
               <div className="card-shadow" style={{ background: "linear-gradient(135deg, #ffffff 70%, #f3e8ff 100%)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px", flexWrap: "wrap", gap: "12px" }}>
                   <div>
-                    <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px", color: "#8b5cf6" }}>
-                      Active Assigned Bus &amp; Route
+                    <span style={{ fontSize: "12px", fontWeight: "900", textTransform: "uppercase", letterSpacing: "1px", color: "#6d28d9" }}>
+                      🚌 {t("activeBusRoute")}
                     </span>
-                    <h2 style={{ fontSize: "22px", fontWeight: "800", color: "#0f172a", margin: "4px 0 0" }}>
+                    <h2 style={{ fontSize: "24px", fontWeight: "900", color: "#0f172a", margin: "4px 0 0" }}>
                       {currentTripData.routeName}
                     </h2>
                   </div>
 
-                  <span style={{ padding: "6px 14px", borderRadius: "16px", fontSize: "12px", fontWeight: "800", background: tripStatus === "in_progress" ? "#dcfce7" : "#f1f5f9", color: tripStatus === "in_progress" ? "#16a34a" : "#64748b" }}>
-                    {tripStatus === "in_progress" ? "● TRIP LIVE" : "READY FOR DEPARTURE"}
+                  <span style={{ padding: "8px 18px", borderRadius: "20px", fontSize: "13px", fontWeight: "900", background: tripStatus === "in_progress" ? "#dcfce7" : "#f1f5f9", color: tripStatus === "in_progress" ? "#16a34a" : "#64748b", border: `1.5px solid ${tripStatus === "in_progress" ? "#86efac" : "#cbd5e1"}` }}>
+                    {tripStatus === "in_progress" ? t("tripLive") : t("readyDeparture")}
                   </span>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", background: "#f8fafc", padding: "16px", borderRadius: "12px", border: "1px solid #f1f5f9", marginBottom: "20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", background: "#f8fafc", padding: "18px", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "22px" }}>
                   <div>
-                    <div style={styles.metricLabel}>Assigned Bus No</div>
+                    <div style={styles.metricLabel}>🚌 {t("busNo")}</div>
                     <div style={styles.metricVal}>{user.busNumber || "KL-07-MS-1008"}</div>
                   </div>
                   <div>
-                    <div style={styles.metricLabel}>Departure Time</div>
+                    <div style={styles.metricLabel}>⏰ {t("depTime")}</div>
                     <div style={styles.metricVal}>{currentTripData.departure}</div>
                   </div>
                   <div>
-                    <div style={styles.metricLabel}>Bus Capacity</div>
-                    <div style={styles.metricVal}>{totalCapacity} Passengers</div>
+                    <div style={styles.metricLabel}>👥 {t("capacity")}</div>
+                    <div style={styles.metricVal}>{totalCapacity} {t("passengers")}</div>
                   </div>
                 </div>
 
-                <div style={{ display: "flex", gap: "14px" }}>
+                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
                   {tripStatus !== "in_progress" ? (
-                    <button className="btn-green-gradient" onClick={handleToggleTrip} style={{ flex: 1, justifyContent: "center", padding: "14px" }}>
-                      🚀 START TRIP NOW
+                    <button className="btn-green-gradient" onClick={handleToggleTrip} style={{ flex: 1, justifyContent: "center", padding: "18px" }}>
+                      {t("startTrip")}
                     </button>
                   ) : (
-                    <button className="btn-purple-gradient" onClick={handleToggleTrip} style={{ flex: 1, justifyContent: "center", padding: "14px" }}>
-                      🏁 END CURRENT TRIP
+                    <button className="btn-purple-gradient" onClick={handleToggleTrip} style={{ flex: 1, justifyContent: "center", padding: "18px" }}>
+                      {t("endTrip")}
                     </button>
                   )}
 
-                  <button onClick={handleSimulateTap} style={{ padding: "12px 18px", borderRadius: "12px", border: "1px solid #cbd5e1", background: "#ffffff", fontWeight: "700", fontSize: "13px", color: "#334155", cursor: "pointer" }}>
-                    💳 Simulate RFID Pass Tap
+                  <button onClick={handleSimulateTap} style={{ padding: "16px 20px", borderRadius: "16px", border: "2px solid #cbd5e1", background: "#ffffff", fontWeight: "900", fontSize: "15px", color: "#334155", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                    {t("simulateRfid")}
                   </button>
                 </div>
               </div>
 
               {/* Onboard Capacity */}
               <div className="card-shadow">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                  <h3 style={styles.cardTitle}>Passengers Onboard Tracker</h3>
-                  <span style={{ fontSize: "16px", fontWeight: "800", color: occupancyPercent > 90 ? "#dc2626" : "#16a34a" }}>
-                    {passengersOnboard} / {totalCapacity} Seats ({occupancyPercent}%)
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                  <h3 style={styles.cardTitle}>👥 {t("passengersTracker")}</h3>
+                  <span style={{ fontSize: "18px", fontWeight: "900", color: occupancyPercent > 90 ? "#dc2626" : "#16a34a" }}>
+                    {passengersOnboard} / {totalCapacity} {t("seats")} ({occupancyPercent}%)
                   </span>
                 </div>
 
-                <div style={{ width: "100%", height: "12px", borderRadius: "6px", background: "#e2e8f0", overflow: "hidden", marginBottom: "14px" }}>
-                  <div style={{ width: `${occupancyPercent}%`, height: "100%", background: occupancyPercent > 90 ? "linear-gradient(90deg, #f59e0b, #ef4444)" : "linear-gradient(90deg, #38a169, #8b5cf6)", borderRadius: "6px", transition: "width 0.4s ease" }} />
+                <div style={{ width: "100%", height: "16px", borderRadius: "8px", background: "#e2e8f0", overflow: "hidden", marginBottom: "14px" }}>
+                  <div style={{ width: `${occupancyPercent}%`, height: "100%", background: occupancyPercent > 90 ? "linear-gradient(90deg, #f59e0b, #ef4444)" : "linear-gradient(90deg, #38a169, #8b5cf6)", borderRadius: "8px", transition: "width 0.4s ease" }} />
                 </div>
               </div>
 
-              {/* Live GPS Map */}
-              <div className="card-shadow">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+              {/* 📍 REAL-TIME UBER-STYLE GPS TRACKER CARD */}
+              <div className="card-shadow" style={{ position: "relative", overflow: "hidden" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
                   <div>
-                    <h3 style={styles.cardTitle}>📍 Live Telemetry &amp; GPS Dispatch</h3>
-                    <p style={{ margin: "2px 0 0", fontSize: "12.5px", color: "#64748b" }}>Live bus coordinates synced with passenger portal</p>
+                    <h3 style={styles.cardTitle}>{t("liveGpsTitle")}</h3>
+                    <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b", fontWeight: "600" }}>{t("liveGpsSubtitle")}</p>
                   </div>
-                  <button onClick={() => setGpsActive(!gpsActive)} style={{ padding: "6px 14px", borderRadius: "12px", border: "none", fontSize: "12px", fontWeight: "800", cursor: "pointer", background: gpsActive ? "#e6fffa" : "#fef2f2", color: gpsActive ? "#2f855a" : "#dc2626" }}>
-                    {gpsActive ? "📡 GPS Active" : "❌ GPS Off"}
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    {/* GPS Source Selector (Device GPS vs Demo Route) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextState = !useRealDeviceGps;
+                        setUseRealDeviceGps(nextState);
+                        showToast(nextState ? "📡 Activated Real Device HTML5 GPS" : "🎮 Activated Demo Route Simulation");
+                      }}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: "12px",
+                        border: "1.5px solid #cbd5e1",
+                        background: useRealDeviceGps ? "#f0fdf4" : "#f8fafc",
+                        color: useRealDeviceGps ? "#166534" : "#475569",
+                        fontWeight: "800",
+                        fontSize: "13px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {useRealDeviceGps ? t("realGpsMode") : t("simulationMode")}
+                    </button>
+
+                    {/* GPS Broadcast Power Button */}
+                    <button
+                      type="button"
+                      onClick={() => setGpsActive(!gpsActive)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: "14px",
+                        border: "none",
+                        fontSize: "13px",
+                        fontWeight: "900",
+                        cursor: "pointer",
+                        background: gpsActive ? "#dcfce7" : "#fee2e2",
+                        color: gpsActive ? "#15803d" : "#dc2626",
+                        boxShadow: gpsActive ? "0 4px 12px rgba(22, 163, 74, 0.2)" : "0 4px 12px rgba(220, 38, 38, 0.2)",
+                      }}
+                    >
+                      {gpsActive ? t("gpsActive") : t("gpsOff")}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 🗺️ INTERACTIVE MAP CONTAINER WITH DUAL LAYER (LEAFLET + SVG VECTOR MAP FALLBACK) */}
+                <div style={{ position: "relative", width: "100%", height: "360px", borderRadius: "20px", overflow: "hidden", border: "2px solid #cbd5e1", background: "#0f172a", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.1)" }}>
+                  {/* Leaflet Dynamic OpenStreetMap Container */}
+                  <div ref={mapContainerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, zIndex: 1 }}></div>
+
+                  {/* High-Class Vector GPS Map Layer (Always visible fallback & overlay) */}
+                  <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0, opacity: 0.95 }} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="mapBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#0f172a" />
+                        <stop offset="100%" stopColor="#1e293b" />
+                      </linearGradient>
+                      <linearGradient id="routePathGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#38a169" />
+                        <stop offset="50%" stopColor="#8b5cf6" />
+                        <stop offset="100%" stopColor="#4ade80" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Dark Map Background Grid */}
+                    <rect width="100" height="100" fill="url(#mapBgGrad)" />
+                    <pattern id="gridPattern" width="10" height="10" patternUnits="userSpaceOnUse">
+                      <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#334155" strokeWidth="0.3" strokeDasharray="1,1" />
+                    </pattern>
+                    <rect width="100" height="100" fill="url(#gridPattern)" />
+
+                    {/* Kerala Route Path Line */}
+                    <path d="M 12 75 L 30 55 L 50 40 L 72 30 L 90 15" fill="none" stroke="url(#routePathGrad)" strokeWidth="2.5" strokeDasharray="2,1" strokeLinecap="round" />
+
+                    {/* Route Stops */}
+                    {KERALA_ROUTE_WAYPOINTS.map((wp, i) => (
+                      <g key={wp.name}>
+                        <circle cx={wp.x} cy={wp.y} r="2" fill={i === 0 || i === KERALA_ROUTE_WAYPOINTS.length - 1 ? "#8b5cf6" : "#38a169"} stroke="#ffffff" strokeWidth="0.8" />
+                        <text x={wp.x} y={wp.y + 4} fill="#cbd5e1" fontSize="2.8" fontWeight="800" textAnchor="middle">{wp.name.split(" ")[0]}</text>
+                      </g>
+                    ))}
+
+                    {/* Active Bus Marker on Vector Map */}
+                    {currentWp && (
+                      <g transform={`translate(${currentWp.x}, ${currentWp.y})`}>
+                        <circle r="4" fill="rgba(56, 161, 105, 0.4)" stroke="#4ade80" strokeWidth="0.5">
+                          <animate attributeName="r" values="3;7;3" dur="2s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" repeatCount="indefinite" />
+                        </circle>
+                        <circle r="2.5" fill="#16a34a" stroke="#ffffff" strokeWidth="0.6" />
+                        <text y="-4" fill="#4ade80" fontSize="3.2" fontWeight="900" textAnchor="middle">🚌 Bus {user?.busNumber || "KL-07"}</text>
+                      </g>
+                    )}
+                  </svg>
+
+                  {/* Uber-Style Live Telemetry HUD Overlay */}
+                  <div style={{ position: "absolute", top: "14px", left: "14px", zIndex: 1000, background: "rgba(15, 23, 42, 0.88)", backdropFilter: "blur(6px)", color: "#ffffff", padding: "12px 18px", borderRadius: "16px", display: "flex", alignItems: "center", gap: "16px", border: "1px solid rgba(255,255,255,0.2)", boxShadow: "0 8px 24px rgba(0,0,0,0.3)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 12px #4ade80" }}></span>
+                      <span style={{ fontSize: "13px", fontWeight: "900", color: "#4ade80", letterSpacing: "0.5px" }}>{t("liveBroadcasting")}</span>
+                    </div>
+
+                    <div style={{ borderLeft: "1px solid rgba(255,255,255,0.2)", paddingLeft: "14px" }}>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "800", textTransform: "uppercase" }}>{t("speed")}</div>
+                      <div style={{ fontSize: "20px", fontWeight: "900", color: "#ffffff" }}>⚡ {currentGps.speed} km/h</div>
+                    </div>
+
+                    <div style={{ borderLeft: "1px solid rgba(255,255,255,0.2)", paddingLeft: "14px" }}>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "800", textTransform: "uppercase" }}>{t("gpsAccuracy")}</div>
+                      <div style={{ fontSize: "14px", fontWeight: "900", color: "#a78bfa" }}>🎯 ± {currentGps.accuracy} m</div>
+                    </div>
+                  </div>
+
+                  {/* Center Map Quick Button */}
+                  <button
+                    type="button"
+                    onClick={handleCenterMap}
+                    style={{
+                      position: "absolute",
+                      bottom: "16px",
+                      right: "16px",
+                      zIndex: 1000,
+                      background: "#ffffff",
+                      color: "#6d28d9",
+                      border: "2px solid #a78bfa",
+                      padding: "10px 16px",
+                      borderRadius: "14px",
+                      fontWeight: "900",
+                      fontSize: "14px",
+                      cursor: "pointer",
+                      boxShadow: "0 6px 20px rgba(0,0,0,0.2)",
+                    }}
+                  >
+                    {t("centerMap")}
                   </button>
                 </div>
 
-                <div style={{ height: "140px", borderRadius: "12px", background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", color: "#ffffff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                  <div style={{ fontSize: "28px", fontWeight: "800", color: "#38a169" }}>42 km/h</div>
-                  <div style={{ fontSize: "13px", color: "#cbd5e1", marginTop: "4px" }}>Location: Near Kaloor Junction, Ernakulam</div>
+                {/* Current Location Address Strip */}
+                <div style={{ marginTop: "14px", background: "#f8fafc", padding: "14px 18px", borderRadius: "14px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ fontSize: "22px" }}>📍</span>
+                    <div>
+                      <div style={{ fontSize: "12px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>{t("currentLocation")}</div>
+                      <div style={{ fontSize: "16px", fontWeight: "900", color: "#0f172a", marginTop: "1px" }}>{currentGps.address}</div>
+                    </div>
+                  </div>
+
+                  <span style={{ fontSize: "12.5px", fontWeight: "800", color: "#6d28d9", background: "rgba(109, 40, 217, 0.1)", padding: "6px 14px", borderRadius: "12px" }}>
+                    🛰️ Lat: {currentGps.lat.toFixed(4)}, Lng: {currentGps.lng.toFixed(4)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -721,21 +1543,22 @@ function Driver() {
             {/* Right Column */}
             <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
               <div style={styles.earningsCard}>
-                <span style={{ fontSize: "11.5px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.9 }}>Today's Total Collections</span>
-                <div style={{ fontSize: "32px", fontWeight: "800", margin: "8px 0 14px" }}>₹ {dailyEarnings.toFixed(2)}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", opacity: 0.9, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: "10px" }}>
-                  <span>Fare Method:</span>
-                  <strong>RFID Tap + Ticket Cash</strong>
+                <span style={{ fontSize: "12px", fontWeight: "900", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.95 }}>💰 {t("todayCollections")}</span>
+                <div style={{ fontSize: "36px", fontWeight: "900", margin: "10px 0 16px" }}>₹ {dailyEarnings.toFixed(2)}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", opacity: 0.95, borderTop: "1px solid rgba(255,255,255,0.25)", paddingTop: "12px", fontWeight: "700" }}>
+                  <span>{t("fareMethod")}:</span>
+                  <strong>{t("rfidCash")}</strong>
                 </div>
               </div>
 
               <div className="card-shadow">
-                <h3 style={{ ...styles.cardTitle, marginBottom: "14px" }}>🔔 Admin Alerts &amp; Notifications</h3>
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>{t("adminAlerts")}</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                   {alerts.map((alt) => (
-                    <div key={alt.id} style={{ padding: "12px", borderRadius: "10px", background: alt.type === "warning" ? "#fffbeb" : "#f0f9ff", border: `1px solid ${alt.type === "warning" ? "#fef3c7" : "#e0f2fe"}`, fontSize: "13px" }}>
-                      <div style={{ fontWeight: "700", color: alt.type === "warning" ? "#b45309" : "#0369a1" }}>{alt.text}</div>
-                      <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>{alt.time}</div>
+                    <div key={alt.id} style={{ padding: "14px 18px", borderRadius: "16px", background: alt.type === "warning" ? "#fffbeb" : "#f0f9ff", border: `2px solid ${alt.type === "warning" ? "#fcd34d" : "#bae6fd"}`, fontSize: "14px" }}>
+                      <div style={{ fontWeight: "900", color: alt.type === "warning" ? "#b45309" : "#0369a1" }}>{t(alt.keyTitle)}</div>
+                      <div style={{ fontSize: "13px", color: alt.type === "warning" ? "#78350f" : "#0c4a6e", marginTop: "4px", fontWeight: "700" }}>{t(alt.keyText)}</div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "6px", fontWeight: "600" }}>⏰ {alt.time}</div>
                     </div>
                   ))}
                 </div>
@@ -747,84 +1570,84 @@ function Driver() {
         {/* ==================================================== */}
         {/* 🚌 TAB 2: BUS DATABASE VIEW */}
         {/* ==================================================== */}
-        {activeTab === "buses" && (
+        {currentTab === "buses" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
             <div className="card-shadow">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
                 <div>
-                  <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: 0 }}>MoveSmart Fleet Bus Database</h2>
-                  <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0" }}>
-                    Select a bus to request Admin assignment. <strong>Note:</strong> Bus selection requests must be submitted at least <strong>2 hours before departure</strong>.
+                  <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: 0 }}>🚌 {t("busDbTitle")}</h2>
+                  <p style={{ fontSize: "14px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
+                    {t("busDbSubtitle")}
                   </p>
                 </div>
 
                 <input
                   type="text"
-                  placeholder="Search bus by name, number, or route..."
+                  placeholder={t("searchPlaceholder")}
                   value={busSearchQuery}
                   onChange={(e) => setBusSearchQuery(e.target.value)}
-                  style={{ padding: "10px 16px", borderRadius: "12px", border: "1px solid #cbd5e1", fontSize: "14px", minWidth: "280px", outline: "none" }}
+                  style={{ padding: "12px 18px", borderRadius: "14px", border: "2px solid #cbd5e1", fontSize: "15px", minWidth: "300px", outline: "none", fontWeight: "700" }}
                 />
               </div>
 
               {loadingBuses ? (
-                <div style={{ textAlign: "center", padding: "40px" }}>Loading Buses Database...</div>
+                <div style={{ textAlign: "center", padding: "40px", fontSize: "16px", fontWeight: "800", color: "#64748b" }}>⏳ {t("loadingBuses")}</div>
               ) : filteredBuses.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>No buses found in database matching your query.</div>
+                <div style={{ textAlign: "center", padding: "40px", color: "#64748b", fontSize: "15px", fontWeight: "700" }}>🔍 {t("noBusesFound")}</div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "18px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "20px" }}>
                   {filteredBuses.map((bus) => {
                     const isLocked = checkIsWithin2Hours(bus.departureTime);
                     const pendingReq = myBusRequests.find((r) => r.busId === bus._id && r.status === "Pending");
                     const isMyBus = bus.driverName === user.name;
 
                     return (
-                      <div key={bus._id} style={{ background: "#f8fafc", borderRadius: "16px", padding: "18px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                      <div key={bus._id} style={{ background: "#f8fafc", borderRadius: "20px", padding: "20px", border: "1.5px solid #e2e8f0", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
                         <div>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: "12px", fontFamily: "monospace", fontWeight: "800", background: "#ffffff", padding: "2px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", color: "#6d28d9" }}>
-                              {bus.busNumber}
+                            <span style={{ fontSize: "13px", fontFamily: "monospace", fontWeight: "900", background: "#ffffff", padding: "4px 10px", borderRadius: "8px", border: "1.5px solid #cbd5e1", color: "#6d28d9" }}>
+                              🚌 {bus.busNumber}
                             </span>
 
                             {isLocked ? (
-                              <span style={{ fontSize: "11px", fontWeight: "800", color: "#dc2626", background: "#fee2e2", padding: "2px 8px", borderRadius: "10px" }}>
-                                🔒 Locked (&lt; 2 hrs to departure)
+                              <span style={{ fontSize: "12px", fontWeight: "900", color: "#dc2626", background: "#fee2e2", padding: "4px 10px", borderRadius: "12px", border: "1px solid #fca5a5" }}>
+                                {t("lockedBus")}
                               </span>
                             ) : (
-                              <span style={{ fontSize: "12px", fontWeight: "800", color: "#16a34a", background: "#dcfce7", padding: "2px 10px", borderRadius: "12px" }}>
+                              <span style={{ fontSize: "13px", fontWeight: "900", color: "#16a34a", background: "#dcfce7", padding: "4px 12px", borderRadius: "14px", border: "1px solid #86efac" }}>
                                 ₹{bus.price}
                               </span>
                             )}
                           </div>
 
-                          <h3 style={{ fontSize: "17px", fontWeight: "800", color: "#0f172a", margin: "10px 0 4px" }}>{bus.busName}</h3>
-                          <div style={{ fontSize: "13px", fontWeight: "700", color: "#2563eb", marginBottom: "10px" }}>
-                            📍 {bus.fromLocation} ➔ {bus.toLocation} (<strong>{bus.departureTime}</strong> - {bus.arrivalTime})
+                          <h3 style={{ fontSize: "19px", fontWeight: "900", color: "#0f172a", margin: "12px 0 6px" }}>{bus.busName}</h3>
+                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#2563eb", marginBottom: "12px" }}>
+                            📍 {bus.fromLocation} ➔ {bus.toLocation} (<strong>⏰ {bus.departureTime}</strong> - {bus.arrivalTime})
                           </div>
 
-                          <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "10px", border: "1px solid #f1f5f9", fontSize: "12px", color: "#475569" }}>
+                          <div style={{ background: "#ffffff", padding: "12px 14px", borderRadius: "14px", border: "1px solid #e2e8f0", fontSize: "13px", color: "#475569", fontWeight: "700", display: "flex", flexDirection: "column", gap: "4px" }}>
                             <div>🚍 Type: <strong>{bus.busType}</strong></div>
-                            <div>🪑 Available Seats: <strong>{bus.availableSeats} / {bus.totalSeats}</strong></div>
-                            <div>👨‍✈️ Current Driver: <strong>{bus.driverName || "Not Assigned"}</strong></div>
+                            <div>🪑 Seats: <strong>{bus.availableSeats} / {bus.totalSeats}</strong></div>
+                            <div>👨‍✈️ Driver: <strong>{bus.driverName || "Not Assigned"}</strong></div>
                           </div>
                         </div>
 
                         {isMyBus ? (
-                          <div style={{ marginTop: "14px", background: "#dcfce7", color: "#15803d", padding: "10px", borderRadius: "12px", textAlign: "center", fontWeight: "800", fontSize: "13px" }}>
-                            ✅ Currently Assigned Driver
+                          <div style={{ marginTop: "16px", background: "#dcfce7", color: "#15803d", border: "2px solid #86efac", padding: "12px", borderRadius: "14px", textAlign: "center", fontWeight: "900", fontSize: "14px" }}>
+                            {t("assignedDriver")}
                           </div>
                         ) : pendingReq ? (
-                          <div style={{ marginTop: "14px", background: "#fef3c7", color: "#92400e", padding: "10px", borderRadius: "12px", textAlign: "center", fontWeight: "800", fontSize: "13px" }}>
-                            ⏳ Request Pending Admin Approval
+                          <div style={{ marginTop: "16px", background: "#fef3c7", color: "#92400e", border: "2px solid #fcd34d", padding: "12px", borderRadius: "14px", textAlign: "center", fontWeight: "900", fontSize: "14px" }}>
+                            {t("pendingReq")}
                           </div>
                         ) : (
                           <button
                             className="btn-purple-gradient"
                             onClick={() => handleRequestBus(bus)}
                             disabled={isLocked || submittingBusReq}
-                            style={{ marginTop: "14px", width: "100%", justifyContent: "center", padding: "10px", opacity: isLocked ? 0.6 : 1, cursor: isLocked ? "not-allowed" : "pointer" }}
+                            style={{ marginTop: "16px", width: "100%", justifyContent: "center", padding: "12px", opacity: isLocked ? 0.6 : 1, cursor: isLocked ? "not-allowed" : "pointer" }}
                           >
-                            {isLocked ? "🔒 Locked (Must request > 2 hrs before)" : `Request Admin to Drive ${bus.busNumber} 🚌`}
+                            {isLocked ? t("lockedNotice") : `${t("requestToDrive")} ${bus.busNumber} 🚌`}
                           </button>
                         )}
                       </div>
@@ -837,21 +1660,21 @@ function Driver() {
             {/* My Submitted Bus Requests */}
             {myBusRequests.length > 0 && (
               <div className="card-shadow">
-                <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: "0 0 14px" }}>Your Bus Drive Requests &amp; Status</h3>
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <h3 style={{ fontSize: "19px", fontWeight: "900", color: "#0f172a", margin: "0 0 16px" }}>📋 {t("myBusRequests")}</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                   {myBusRequests.map((req) => (
-                    <div key={req._id} style={{ background: "#f8fafc", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div key={req._id} style={{ background: "#f8fafc", padding: "16px 20px", borderRadius: "16px", border: "1.5px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
                       <div>
-                        <div style={{ fontWeight: "800", fontSize: "14px", color: "#0f172a" }}>
+                        <div style={{ fontWeight: "900", fontSize: "15px", color: "#0f172a" }}>
                           🚌 Bus {req.busNumber} ({req.busName}) - Route: {req.routeName}
                         </div>
-                        <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
-                          Scheduled Departure: <strong>{req.departureTime}</strong> | Requested: {new Date(req.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px", fontWeight: "700" }}>
+                          ⏰ Departure: <strong>{req.departureTime}</strong> | Requested: {new Date(req.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </div>
                       </div>
 
                       <span className={req.status === "Approved" ? "status-badge-approved" : req.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
-                        {req.status === "Approved" ? "Approved by Admin ✅" : req.status === "Rejected" ? "Rejected by Admin ❌" : "Pending Admin Review ⏳"}
+                        {req.status === "Approved" ? t("approvedByAdmin") : req.status === "Rejected" ? t("rejectedByAdmin") : t("pendingReq")}
                       </span>
                     </div>
                   ))}
@@ -864,22 +1687,22 @@ function Driver() {
         {/* ==================================================== */}
         {/* 🌴 TAB 3: APPLY FOR LEAVE (FULL DAY / HALF DAY) */}
         {/* ==================================================== */}
-        {activeTab === "leave" && (
+        {currentTab === "leave" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
             {/* Leave Application Form */}
             <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 4px" }}>Apply for Driver Leave</h2>
-              <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "20px" }}>Select Full Day or Half Day leave and submit for Admin approval.</p>
+              <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: "0 0 6px" }}>🌴 {t("applyLeaveTitle")}</h2>
+              <p style={{ fontSize: "14px", color: "#64748b", marginBottom: "22px", fontWeight: "600" }}>{t("applyLeaveSubtitle")}</p>
 
-              <form onSubmit={handleApplyLeaveSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <form onSubmit={handleApplyLeaveSubmit} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                 <div>
-                  <label style={styles.formLabel}>Driver Name &amp; Email</label>
-                  <input type="text" value={`${user.name} (${user.email})`} readOnly style={{ ...styles.formInput, background: "#f1f5f9", color: "#64748b" }} />
+                  <label style={styles.formLabel}>👨‍✈️ {t("driverNameEmail")}</label>
+                  <input type="text" value={`${user.name} (${user.email})`} readOnly style={{ ...styles.formInput, background: "#f1f5f9", color: "#64748b", fontWeight: "800" }} />
                 </div>
 
                 <div>
-                  <label style={styles.formLabel}>Leave Type <span style={{ color: "#e11d48" }}>*</span></label>
-                  <div style={{ display: "flex", gap: "12px" }}>
+                  <label style={styles.formLabel}>📅 {t("leaveType")} <span style={{ color: "#e11d48" }}>*</span></label>
+                  <div style={{ display: "flex", gap: "14px" }}>
                     {["Full Day", "Half Day"].map((type) => (
                       <button
                         key={type}
@@ -887,17 +1710,17 @@ function Driver() {
                         onClick={() => setLeaveForm({ ...leaveForm, leaveType: type })}
                         style={{
                           flex: 1,
-                          padding: "12px",
-                          borderRadius: "12px",
-                          border: `2px solid ${leaveForm.leaveType === type ? "#38a169" : "#cbd5e1"}`,
+                          padding: "14px",
+                          borderRadius: "14px",
+                          border: `2.5px solid ${leaveForm.leaveType === type ? "#38a169" : "#cbd5e1"}`,
                           background: leaveForm.leaveType === type ? "#f0fdf4" : "#ffffff",
                           color: leaveForm.leaveType === type ? "#166534" : "#475569",
-                          fontWeight: "800",
-                          fontSize: "14px",
+                          fontWeight: "900",
+                          fontSize: "15px",
                           cursor: "pointer",
                         }}
                       >
-                        {type === "Full Day" ? "☀️ Full Day Leave" : "🌗 Half Day Leave"}
+                        {type === "Full Day" ? t("fullDay") : t("halfDay")}
                       </button>
                     ))}
                   </div>
@@ -905,18 +1728,18 @@ function Driver() {
 
                 {/* Conditional Half Day Slot */}
                 {leaveForm.leaveType === "Half Day" && (
-                  <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
-                    <label style={styles.formLabel}>Half-Day Slot <span style={{ color: "#e11d48" }}>*</span></label>
-                    <div style={{ display: "flex", gap: "10px" }}>
+                  <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "16px", border: "1.5px solid #cbd5e1" }}>
+                    <label style={styles.formLabel}>⏰ {t("halfDaySlot")} <span style={{ color: "#e11d48" }}>*</span></label>
+                    <div style={{ display: "flex", gap: "12px" }}>
                       {["Forenoon (AM)", "Afternoon (PM)"].map((slot) => (
-                        <label key={slot} style={{ flex: 1, display: "flex", alignItems: "center", gap: "8px", background: "#fff", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", cursor: "pointer", fontSize: "13px", fontWeight: "700" }}>
+                        <label key={slot} style={{ flex: 1, display: "flex", alignItems: "center", gap: "10px", background: "#fff", padding: "12px", borderRadius: "12px", border: "1.5px solid #cbd5e1", cursor: "pointer", fontSize: "14px", fontWeight: "800" }}>
                           <input
                             type="radio"
                             name="halfDaySlot"
                             checked={leaveForm.halfDaySlot === slot}
                             onChange={() => setLeaveForm({ ...leaveForm, halfDaySlot: slot })}
                           />
-                          {slot}
+                          {slot === "Forenoon (AM)" ? t("forenoon") : t("afternoon")}
                         </label>
                       ))}
                     </div>
@@ -924,7 +1747,7 @@ function Driver() {
                 )}
 
                 <div>
-                  <label style={styles.formLabel}>Leave Date <span style={{ color: "#e11d48" }}>*</span></label>
+                  <label style={styles.formLabel}>🗓️ {t("leaveDate")} <span style={{ color: "#e11d48" }}>*</span></label>
                   <input
                     type="date"
                     value={leaveForm.leaveDate}
@@ -935,55 +1758,55 @@ function Driver() {
                 </div>
 
                 <div>
-                  <label style={styles.formLabel}>Reason for Leave <span style={{ color: "#e11d48" }}>*</span></label>
+                  <label style={styles.formLabel}>✍️ {t("leaveReason")} <span style={{ color: "#e11d48" }}>*</span></label>
                   <textarea
                     rows="3"
                     value={leaveForm.reason}
                     onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
-                    placeholder="Enter reason for taking leave..."
+                    placeholder={t("reasonPlaceholder")}
                     style={{ ...styles.formInput, resize: "none" }}
                     required
                   />
                 </div>
 
-                <button type="submit" className="btn-green-gradient" disabled={submittingLeave} style={{ justifyContent: "center", padding: "14px" }}>
-                  {submittingLeave ? "Submitting..." : "Submit Leave Application ✓"}
+                <button type="submit" className="btn-green-gradient" disabled={submittingLeave} style={{ justifyContent: "center", padding: "16px" }}>
+                  {submittingLeave ? t("submitting") : t("submitLeaveBtn")}
                 </button>
               </form>
             </div>
 
             {/* Leave Applications History */}
             <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Your Leave History &amp; Status</h2>
+              <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: "0 0 18px" }}>📜 {t("leaveHistoryTitle")}</h2>
 
               {loadingLeaves ? (
-                <div>Loading leave history...</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "#64748b" }}>⏳ Loading leave history...</div>
               ) : driverLeaves.length === 0 ? (
-                <div style={{ color: "#64748b", padding: "20px 0" }}>No leave requests submitted yet.</div>
+                <div style={{ color: "#64748b", padding: "20px 0", fontSize: "15px", fontWeight: "700" }}>🌴 {t("noLeaves")}</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                   {driverLeaves.map((l) => (
-                    <div key={l._id} style={{ background: "#f8fafc", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                        <span style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a" }}>
+                    <div key={l._id} style={{ background: "#f8fafc", padding: "18px", borderRadius: "16px", border: "1.5px solid #e2e8f0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "10px" }}>
+                        <span style={{ fontSize: "15px", fontWeight: "900", color: "#0f172a" }}>
                           📅 {l.leaveDate} ({l.leaveType})
                         </span>
 
                         <span className={l.status === "Approved" ? "status-badge-approved" : l.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
-                          {l.status === "Approved" ? "Accepted by Admin ✅" : l.status === "Rejected" ? "Rejected ❌" : "Pending Admin Review ⏳"}
+                          {l.status === "Approved" ? t("approvedByAdmin") : l.status === "Rejected" ? t("rejectedByAdmin") : t("pendingReq")}
                         </span>
                       </div>
 
                       {l.leaveType === "Half Day" && (
-                        <div style={{ fontSize: "12px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
-                          Slot: {l.halfDaySlot}
+                        <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "800", marginBottom: "6px" }}>
+                          ⏰ {t("halfDaySlot")}: {l.halfDaySlot}
                         </div>
                       )}
 
-                      <div style={{ fontSize: "13px", color: "#475569" }}>Reason: {l.reason}</div>
+                      <div style={{ fontSize: "14px", color: "#475569", fontWeight: "700" }}>📝 {t("leaveReason")}: {l.reason}</div>
 
                       {l.adminComment && (
-                        <div style={{ marginTop: "8px", background: "#f1f5f9", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", color: "#334155", fontStyle: "italic" }}>
+                        <div style={{ marginTop: "10px", background: "#f1f5f9", padding: "10px 14px", borderRadius: "10px", fontSize: "13px", color: "#334155", fontStyle: "italic", fontWeight: "700" }}>
                           💬 Admin Note: {l.adminComment}
                         </div>
                       )}
@@ -998,29 +1821,29 @@ function Driver() {
         {/* ==================================================== */}
         {/* 🪪 TAB 4: PROFILE & DRIVING LICENSE VERIFICATION */}
         {/* ==================================================== */}
-        {activeTab === "verification" && (
+        {currentTab === "verification" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
             {/* Driver Profile & License Submission Form */}
             <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 4px" }}>Driver Profile &amp; Driving License</h2>
-              <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "20px" }}>Provide your driving license details and profile picture so Admin and Passengers can verify you.</p>
+              <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: "0 0 6px" }}>🪪 {t("profileTitle")}</h2>
+              <p style={{ fontSize: "14px", color: "#64748b", marginBottom: "22px", fontWeight: "600" }}>{t("profileSubtitle")}</p>
 
-              <form onSubmit={handleSubmitProfileVerification} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <form onSubmit={handleSubmitProfileVerification} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                 <div>
-                  <label style={styles.formLabel}>Driving License Number <span style={{ color: "#e11d48" }}>*</span></label>
+                  <label style={styles.formLabel}>🪪 {t("licenseNo")} <span style={{ color: "#e11d48" }}>*</span></label>
                   <input
                     type="text"
                     value={verificationData.licenseNumber}
                     onChange={(e) => setVerificationData({ ...verificationData, licenseNumber: e.target.value })}
-                    placeholder="e.g. KL-07-2018-99210"
+                    placeholder={t("licensePlaceholder")}
                     style={styles.formInput}
                     required
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                   <div>
-                    <label style={styles.formLabel}>Contact Phone</label>
+                    <label style={styles.formLabel}>📞 {t("phone")}</label>
                     <input
                       type="text"
                       value={verificationData.phone}
@@ -1030,7 +1853,7 @@ function Driver() {
                   </div>
 
                   <div>
-                    <label style={styles.formLabel}>Experience (Years)</label>
+                    <label style={styles.formLabel}>⭐ {t("experience")}</label>
                     <input
                       type="number"
                       value={verificationData.experienceYears}
@@ -1042,30 +1865,30 @@ function Driver() {
 
                 {/* Profile Picture Upload */}
                 <div>
-                  <label style={styles.formLabel}>Profile Picture (Photo)</label>
-                  <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ fontSize: "13px" }} />
+                  <label style={styles.formLabel}>📷 {t("profilePic")}</label>
+                  <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ fontSize: "14px", fontWeight: "700" }} />
                   {verificationData.profilePic && (
-                    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
-                      <img src={verificationData.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover" }} />
-                      <span style={{ fontSize: "12px", color: "#16a34a", fontWeight: "700" }}>Photo Attached ✓</span>
+                    <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "12px" }}>
+                      <img src={verificationData.profilePic} alt="Profile Preview" style={{ width: "54px", height: "54px", borderRadius: "50%", objectFit: "cover", border: "2px solid #38a169" }} />
+                      <span style={{ fontSize: "13px", color: "#16a34a", fontWeight: "900" }}>{t("photoAttached")}</span>
                     </div>
                   )}
                 </div>
 
                 {/* Driving License Document Photo Upload */}
                 <div>
-                  <label style={styles.formLabel}>Driving License Photo Document</label>
-                  <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ fontSize: "13px" }} />
+                  <label style={styles.formLabel}>📄 {t("licenseDoc")}</label>
+                  <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ fontSize: "14px", fontWeight: "700" }} />
                   {verificationData.licenseImage && (
-                    <div style={{ marginTop: "8px" }}>
-                      <img src={verificationData.licenseImage} alt="License Preview" style={{ height: "60px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                      <span style={{ fontSize: "12px", color: "#16a34a", fontWeight: "700", marginLeft: "10px" }}>License Document Attached ✓</span>
+                    <div style={{ marginTop: "10px" }}>
+                      <img src={verificationData.licenseImage} alt="License Preview" style={{ height: "70px", borderRadius: "10px", border: "2px solid #cbd5e1" }} />
+                      <span style={{ fontSize: "13px", color: "#16a34a", fontWeight: "900", marginLeft: "12px" }}>{t("docAttached")}</span>
                     </div>
                   )}
                 </div>
 
-                <button type="submit" className="btn-purple-gradient" disabled={submittingVerification} style={{ justifyContent: "center", padding: "14px", marginTop: "10px" }}>
-                  {submittingVerification ? "Submitting Details..." : "Submit Profile & License for Admin Approval ✓"}
+                <button type="submit" className="btn-purple-gradient" disabled={submittingVerification} style={{ justifyContent: "center", padding: "16px", marginTop: "8px" }}>
+                  {submittingVerification ? t("submitting") : t("submitProfileBtn")}
                 </button>
               </form>
             </div>
@@ -1073,46 +1896,46 @@ function Driver() {
             {/* Live Verification Status Card */}
             <div className="card-shadow" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
               <div>
-                <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Verification Status Badge</h2>
+                <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: "0 0 18px" }}>🎖️ {t("verificationStatusBadge")}</h2>
 
-                <div style={{ background: "#f8fafc", padding: "20px", borderRadius: "16px", border: "1px solid #e2e8f0", textAlign: "center", marginBottom: "20px" }}>
-                  <div style={{ width: "80px", height: "80px", borderRadius: "50%", margin: "0 auto 12px", overflow: "hidden", background: "#e2e8f0", border: "3px solid #38a169" }}>
+                <div style={{ background: "#f8fafc", padding: "24px", borderRadius: "20px", border: "1.5px solid #e2e8f0", textAlign: "center", marginBottom: "22px" }}>
+                  <div style={{ width: "90px", height: "90px", borderRadius: "50%", margin: "0 auto 14px", overflow: "hidden", background: "#e2e8f0", border: "4px solid #38a169" }}>
                     {verificationData.profilePic ? (
                       <img src={verificationData.profilePic} alt="Driver Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
-                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: "800", color: "#38a169" }}>
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "32px", fontWeight: "900", color: "#38a169" }}>
                         {user.name ? user.name[0] : "D"}
                       </div>
                     )}
                   </div>
 
-                  <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>{user.name}</h3>
-                  <div style={{ fontSize: "13px", color: "#64748b", margin: "2px 0 12px" }}>{user.email}</div>
+                  <h3 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: 0 }}>{user.name}</h3>
+                  <div style={{ fontSize: "14px", color: "#64748b", margin: "4px 0 16px", fontWeight: "700" }}>{user.email}</div>
 
                   {verificationData.verificationStatus === "Approved" ? (
-                    <div style={{ background: "#dcfce7", color: "#15803d", border: "1px solid #86efac", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      ✅ VERIFIED DRIVER (ADMIN APPROVED)
+                    <div style={{ background: "#dcfce7", color: "#15803d", border: "2px solid #86efac", padding: "12px", borderRadius: "16px", fontWeight: "900", fontSize: "15px" }}>
+                      {t("verifiedDriver")}
                     </div>
                   ) : verificationData.verificationStatus === "Pending" ? (
-                    <div style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      ⏳ PENDING ADMIN REVIEW &amp; ACCEPTANCE
+                    <div style={{ background: "#fef3c7", color: "#92400e", border: "2px solid #fcd34d", padding: "12px", borderRadius: "16px", fontWeight: "900", fontSize: "15px" }}>
+                      {t("pendingReview")}
                     </div>
                   ) : (
-                    <div style={{ background: "#ffe4e6", color: "#be123c", border: "1px solid #fecdd3", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      ⚠️ UNVERIFIED DRIVER
+                    <div style={{ background: "#ffe4e6", color: "#be123c", border: "2px solid #fecdd3", padding: "12px", borderRadius: "16px", fontWeight: "900", fontSize: "15px" }}>
+                      {t("unverifiedDriver")}
                     </div>
                   )}
                 </div>
 
-                <div style={{ fontSize: "13px", color: "#475569", lineHeight: "1.6" }}>
-                  <div><strong>Driving License No:</strong> {verificationData.licenseNumber || "Not Provided"}</div>
-                  <div><strong>Experience:</strong> {verificationData.experienceYears} Years</div>
-                  <div><strong>Admin Verification Note:</strong> {verificationData.verificationNote || "No notes from admin yet."}</div>
+                <div style={{ fontSize: "14px", color: "#475569", lineHeight: "1.8", fontWeight: "700" }}>
+                  <div><strong>🪪 {t("licenseNo")}:</strong> {verificationData.licenseNumber || "Not Provided"}</div>
+                  <div><strong>⭐ {t("experience")}:</strong> {verificationData.experienceYears} Years</div>
+                  <div><strong>💬 Admin Note:</strong> {verificationData.verificationNote || "No notes from admin yet."}</div>
                 </div>
               </div>
 
-              <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#166534", fontSize: "12.5px" }}>
-                🔒 Once Admin verifies your driving license and photo, passengers will see your verified driver badge when booking seats.
+              <div style={{ background: "#f0fdf4", padding: "16px", borderRadius: "16px", border: "1.5px solid #bbf7d0", color: "#166534", fontSize: "13.5px", fontWeight: "700", marginTop: "20px" }}>
+                {t("verifiedNotice")}
               </div>
             </div>
           </div>
@@ -1123,16 +1946,16 @@ function Driver() {
         {/* ==================================================== */}
         {activeTab === "trips" && (
           <div className="card-shadow">
-            <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Today's Scheduled Trips</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <h3 style={{ ...styles.cardTitle, marginBottom: "18px" }}>📅 {t("scheduledTripsTitle")}</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               {todaySchedule.map((tr, idx) => (
-                <div key={tr.id} style={{ padding: "16px 20px", borderRadius: "12px", background: idx === activeTripIndex ? "#f3e8ff" : "#f8fafc", border: `1px solid ${idx === activeTripIndex ? "#c4b5fd" : "#e2e8f0"}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div key={tr.id} style={{ padding: "18px 22px", borderRadius: "16px", background: idx === activeTripIndex ? "#f3e8ff" : "#f8fafc", border: `2px solid ${idx === activeTripIndex ? "#a78bfa" : "#e2e8f0"}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
                   <div>
-                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a" }}>{tr.routeName}</div>
-                    <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px" }}>Departure: <strong>{tr.departure}</strong> | Arrival: <strong>{tr.arrival}</strong></div>
+                    <div style={{ fontSize: "18px", fontWeight: "900", color: "#0f172a" }}>🚌 {tr.routeName}</div>
+                    <div style={{ fontSize: "14px", color: "#64748b", marginTop: "6px", fontWeight: "700" }}>⏰ {t("depTime")}: <strong>{tr.departure}</strong> | Arrival: <strong>{tr.arrival}</strong></div>
                   </div>
-                  <button className="btn-purple-gradient" onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }} style={{ padding: "6px 14px", fontSize: "12px" }}>
-                    Select Trip
+                  <button className="btn-purple-gradient" onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }} style={{ padding: "10px 20px", fontSize: "14px" }}>
+                    {t("selectTrip")}
                   </button>
                 </div>
               ))}
@@ -1145,15 +1968,15 @@ function Driver() {
         {/* ==================================================== */}
         {activeTab === "payments" && (
           <div className="card-shadow">
-            <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Trip Collections &amp; Payments Log</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <h3 style={{ ...styles.cardTitle, marginBottom: "18px" }}>💳 {t("collectionsTitle")}</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               {paymentsLog.map((p) => (
-                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #f1f5f9" }}>
+                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderRadius: "16px", background: "#f8fafc", border: "1.5px solid #f1f5f9", flexWrap: "wrap", gap: "10px" }}>
                   <div>
-                    <div style={{ fontSize: "14px", fontWeight: "700", color: "#0f172a" }}>{p.trip}</div>
-                    <div style={{ fontSize: "12px", color: "#64748b" }}>{p.time} • Method: {p.method}</div>
+                    <div style={{ fontSize: "16px", fontWeight: "900", color: "#0f172a" }}>🚌 {p.trip}</div>
+                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "700", marginTop: "2px" }}>⏰ {p.time} • {t("fareMethod")}: {p.method}</div>
                   </div>
-                  <div style={{ fontSize: "16px", fontWeight: "800", color: "#16a34a" }}>{p.amount}</div>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#16a34a" }}>{p.amount}</div>
                 </div>
               ))}
             </div>
@@ -1165,24 +1988,24 @@ function Driver() {
       {showIssueModal && (
         <div style={styles.modalOverlay} onClick={() => setShowIssueModal(false)}>
           <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px 0" }}>Report Bus Issue / Breakdown</h3>
-            <form onSubmit={handleSubmitIssue} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <h3 style={{ fontSize: "22px", fontWeight: "900", color: "#ea580c", margin: "0 0 18px 0" }}>{t("reportIssueTitle")}</h3>
+            <form onSubmit={handleSubmitIssue} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               <div>
-                <label style={styles.formLabel}>Issue Category</label>
+                <label style={styles.formLabel}>🚨 {t("selectIssueCategory")}</label>
                 <select style={styles.formInput} value={issueType} onChange={(e) => setIssueType(e.target.value)}>
-                  <option value="Engine Problem / Breakdown">Engine Problem / Breakdown</option>
-                  <option value="Severe Traffic Delay">Severe Route Traffic Delay</option>
-                  <option value="Tyre Puncture">Tyre Puncture / Suspension</option>
-                  <option value="Medical Emergency">Passenger Medical Emergency</option>
+                  <option value="Engine Problem / Breakdown">{t("issueBreakdown")}</option>
+                  <option value="Severe Traffic Delay">{t("issueTraffic")}</option>
+                  <option value="Tyre Puncture">{t("issuePuncture")}</option>
+                  <option value="Medical Emergency">{t("issueMedical")}</option>
                 </select>
               </div>
               <div>
-                <label style={styles.formLabel}>Additional Notes / Location</label>
-                <textarea rows="3" style={{ ...styles.formInput, resize: "none" }} value={issueNotes} onChange={(e) => setIssueNotes(e.target.value)} placeholder="Enter details..." required />
+                <label style={styles.formLabel}>📍 {t("notesDetails")}</label>
+                <textarea rows="3" style={{ ...styles.formInput, resize: "none" }} value={issueNotes} onChange={(e) => setIssueNotes(e.target.value)} placeholder={t("notesPlaceholder")} required />
               </div>
-              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                <button type="button" className="btn-red-outline" onClick={() => setShowIssueModal(false)}>Cancel</button>
-                <button type="submit" className="btn-purple-gradient">Submit Alert ✓</button>
+              <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                <button type="button" className="btn-red-outline" onClick={() => setShowIssueModal(false)}>{t("cancel")}</button>
+                <button type="submit" className="btn-purple-gradient">{t("submitAlert")}</button>
               </div>
             </form>
           </div>
@@ -1190,7 +2013,7 @@ function Driver() {
       )}
 
       <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "30px 5%", borderTop: "3px solid var(--primary)", marginTop: "auto" }}>
-        <div style={{ maxWidth: "1200px", margin: "0 auto", textAlign: "center", fontSize: "12px", color: "#717B87" }}>
+        <div style={{ maxWidth: "1200px", margin: "0 auto", textAlign: "center", fontSize: "13px", color: "#717B87", fontWeight: "700" }}>
           © {new Date().getFullYear()} MoveSmart Fleet Operations. Authorized Driver Console.
         </div>
       </footer>
@@ -1200,23 +2023,23 @@ function Driver() {
 
 const styles = {
   pageWrapper: { minHeight: "100vh", background: "#f8fafc", display: "flex", flexDirection: "column" },
-  topNavbar: { background: "#ffffff", borderBottom: "1px solid #e2e8f0", padding: "14px 24px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px rgba(0,0,0,0.03)" },
+  topNavbar: { background: "#ffffff", borderBottom: "2px solid #e2e8f0", padding: "16px 24px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 4px 12px rgba(0,0,0,0.03)" },
   navContainer: { maxWidth: "1200px", margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" },
   mainContainer: { maxWidth: "1150px", width: "100%", margin: "24px auto 40px auto", padding: "0 20px", flex: 1 },
-  toastBanner: { background: "linear-gradient(135deg, #38a169, #8b5cf6)", color: "#ffffff", padding: "12px 20px", borderRadius: "12px", fontWeight: "700", fontSize: "14px", marginBottom: "20px", textAlign: "center" },
-  heroDriverCard: { background: "linear-gradient(135deg, #ffffff 60%, #f3e8ff 100%)", borderRadius: "20px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "24px" },
-  avatarWrapper: { width: "64px", height: "64px", borderRadius: "50%", background: "linear-gradient(135deg, #38a169, #8b5cf6)", padding: "2px" },
-  avatarInitials: { width: "100%", height: "100%", borderRadius: "50%", background: "#ffffff", color: "#38a169", fontWeight: "800", fontSize: "22px", display: "flex", alignItems: "center", justifyContent: "center" },
-  driverIdBadge: { padding: "4px 10px", borderRadius: "16px", fontSize: "11px", fontWeight: "800", background: "rgba(139, 92, 246, 0.12)", color: "#7c3aed", border: "1px solid #c4b5fd" },
-  tabsContainer: { display: "flex", gap: "8px", marginBottom: "24px", overflowX: "auto", paddingBottom: "8px" },
-  cardTitle: { fontSize: "17px", fontWeight: "800", color: "#0f172a", margin: 0 },
-  metricLabel: { fontSize: "11px", fontWeight: "700", color: "#64748b", textTransform: "uppercase" },
-  metricVal: { fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" },
-  earningsCard: { background: "linear-gradient(135deg, #38a169, #2f855a)", color: "#ffffff", borderRadius: "18px", padding: "22px" },
-  modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "20px" },
-  modalCard: { background: "#ffffff", borderRadius: "20px", padding: "28px", maxWidth: "480px", width: "100%" },
-  formLabel: { fontSize: "12px", fontWeight: "700", color: "#475569", marginBottom: "6px", display: "block" },
-  formInput: { width: "100%", padding: "10px 14px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "14px", outline: "none" },
+  toastBanner: { background: "linear-gradient(135deg, #38a169, #8b5cf6)", color: "#ffffff", padding: "14px 22px", borderRadius: "16px", fontWeight: "900", fontSize: "15px", marginBottom: "22px", textAlign: "center", boxShadow: "0 6px 18px rgba(56, 161, 105, 0.3)" },
+  heroDriverCard: { background: "linear-gradient(135deg, #ffffff 60%, #f3e8ff 100%)", borderRadius: "24px", padding: "28px", border: "1.5px solid #cbd5e1", marginBottom: "24px", boxShadow: "0 8px 24px rgba(0,0,0,0.04)" },
+  avatarWrapper: { width: "72px", height: "72px", borderRadius: "50%", background: "linear-gradient(135deg, #38a169, #8b5cf6)", padding: "3px", boxShadow: "0 4px 14px rgba(56, 161, 105, 0.3)" },
+  avatarInitials: { width: "100%", height: "100%", borderRadius: "50%", background: "#ffffff", color: "#38a169", fontWeight: "900", fontSize: "24px", display: "flex", alignItems: "center", justifyContent: "center" },
+  driverIdBadge: { padding: "6px 14px", borderRadius: "18px", fontSize: "12px", fontWeight: "900", background: "rgba(139, 92, 246, 0.12)", color: "#7c3aed", border: "1.5px solid #c4b5fd" },
+  tabsContainer: { display: "flex", gap: "12px", marginBottom: "24px", overflowX: "auto", paddingBottom: "8px" },
+  cardTitle: { fontSize: "19px", fontWeight: "900", color: "#0f172a", margin: 0 },
+  metricLabel: { fontSize: "12px", fontWeight: "800", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" },
+  metricVal: { fontSize: "16px", fontWeight: "900", color: "#0f172a", marginTop: "4px" },
+  earningsCard: { background: "linear-gradient(135deg, #38a169, #2f855a)", color: "#ffffff", borderRadius: "22px", padding: "24px", boxShadow: "0 8px 24px rgba(56, 161, 105, 0.3)" },
+  modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "20px" },
+  modalCard: { background: "#ffffff", borderRadius: "24px", padding: "32px", maxWidth: "500px", width: "100%", boxShadow: "0 20px 40px rgba(0,0,0,0.15)" },
+  formLabel: { fontSize: "13px", fontWeight: "800", color: "#475569", marginBottom: "8px", display: "block" },
+  formInput: { width: "100%", padding: "12px 16px", borderRadius: "14px", border: "1.5px solid #cbd5e1", fontSize: "15px", outline: "none", fontWeight: "700" },
 };
 
 export default Driver;

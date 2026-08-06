@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import axios from "axios";
 import { processRazorpayPayment } from "../utils/razorpay";
 import { getStoredUser, setStoredUser, clearStoredSession } from "../utils/session";
 import Header from "../components/Header";
@@ -53,12 +54,38 @@ function Profile() {
   const [walletBalance, setWalletBalance] = useState(250.0);
   const [rechargeAmount, setRechargeAmount] = useState(100);
   const [paymentMethod, setPaymentMethod] = useState("UPI");
-  const [transactions, setTransactions] = useState([
-    { id: "TXN-9021", title: "Bus 102 — Kochi Fort ➔ Aluva Terminal", date: "Today, 09:30 AM", amount: "- ₹ 35.00", isDebit: true },
-    { id: "TXN-8812", title: "Wallet Recharge via Google Pay", date: "Yesterday, 06:15 PM", amount: "+ ₹ 200.00", isDebit: false },
-    { id: "TXN-7629", title: "Express Line 4 — Thiruvananthapuram ➔ Ernakulam", date: "24 Jul 2026, 08:00 AM", amount: "- ₹ 120.00", isDebit: true },
-    { id: "TXN-6510", title: "Metro Connect Feed Bus", date: "22 Jul 2026, 05:45 PM", amount: "- ₹ 15.00", isDebit: true },
-  ]);
+  const [transactions, setTransactions] = useState([]);
+
+  // Fetch Live Wallet Balance & Transactions from Database
+  const fetchProfileWalletData = useCallback(async () => {
+    try {
+      const u = getStoredUser();
+      const params = {};
+      if (u?.id || u?._id) params.userId = u.id || u._id;
+      if (u?.email) params.email = u.email;
+
+      const [balRes, txnRes] = await Promise.all([
+        axios.get("/api/wallet/balance", { params, withCredentials: true }),
+        axios.get("/api/wallet/transactions", { params, withCredentials: true }),
+      ]);
+
+      if (balRes.data && balRes.data.balance !== undefined) {
+        setWalletBalance(balRes.data.balance);
+      }
+      if (txnRes.data && Array.isArray(txnRes.data) && txnRes.data.length > 0) {
+        const formattedTxns = txnRes.data.map((t) => ({
+          id: t.transactionId || t._id,
+          title: t.description || (t.isDebit ? "Transit Deduction" : "Wallet Top-Up"),
+          date: t.createdAt ? new Date(t.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Recent",
+          amount: t.isDebit ? `- ₹ ${t.amount}` : `+ ₹ ${t.amount}`,
+          isDebit: t.isDebit || t.type === "Travel" || t.type === "Card Application",
+        }));
+        setTransactions(formattedTxns);
+      }
+    } catch (err) {
+      console.error("Failed to fetch profile wallet data:", err);
+    }
+  }, []);
 
   // 7. Travel History & Activity State
   const [activityFilter, setActivityFilter] = useState("all");
@@ -111,12 +138,13 @@ function Profile() {
 
   // Protected Route Sync
   useEffect(() => {
-    const savedUser = getStoredUser();
-    if (!savedUser) {
-      // Save default user for demo if empty
+    const saved = getStoredUser();
+    if (saved) {
+      setUser(saved);
+    } else {
       const demoUser = {
-        name: "Drishya Jose",
-        email: "drishyajose03@gmail.com",
+        name: "Ananya Ramesh",
+        email: "ananya.ramesh@movesmart.in",
         phone: "+91 98765 43210",
         role: "User",
         dob: "2000-08-15",
@@ -128,7 +156,8 @@ function Profile() {
       setStoredUser(demoUser, true);
       setUser(demoUser);
     }
-  }, []);
+    fetchProfileWalletData();
+  }, [fetchProfileWalletData]);
 
   // Sync edit form inputs when modal opens
   const handleOpenEditModal = () => {

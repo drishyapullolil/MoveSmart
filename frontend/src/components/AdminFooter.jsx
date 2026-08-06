@@ -5,9 +5,10 @@ export default function AdminFooter() {
   return (
     <footer
       style={{
-        background: "#0f172a",
-        color: "#94a3b8",
-        borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+        background: "rgba(46, 16, 101, 0.95)",
+        backdropFilter: "blur(10px)",
+        color: "#c4b5fd",
+        borderTop: "1px solid rgba(255, 255, 255, 0.08)",
         padding: "32px 24px 24px 24px",
         marginTop: "auto",
         fontSize: "13px",
@@ -15,71 +16,74 @@ export default function AdminFooter() {
     >
       <div style={{ maxWidth: "1380px", margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "20px", marginBottom: "20px" }}>
-          
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div
               style={{
-                padding: "6px 12px",
+                padding: "8px 16px",
                 borderRadius: "20px",
-                background: "rgba(16, 185, 129, 0.15)",
-                color: "#34d399",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
-                fontSize: "12px",
-                fontWeight: "700",
+                background: "rgba(74, 222, 128, 0.15)",
+                color: "#4ade80",
+                border: "1px solid rgba(74, 222, 128, 0.3)",
+                fontSize: "12.5px",
+                fontWeight: "800",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
+                gap: "8px",
+                boxShadow: "0 2px 10px rgba(74, 222, 128, 0.2)",
               }}
             >
-              <Server size={14} />
-              <span>System Status: Operations API Online</span>
+              <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 8px #4ade80" }}></div>
+              <span>🟢 System Running</span>
             </div>
 
             <div
               style={{
-                padding: "6px 12px",
+                padding: "8px 16px",
                 borderRadius: "20px",
                 background: "rgba(56, 189, 248, 0.15)",
                 color: "#38bdf8",
                 border: "1px solid rgba(56, 189, 248, 0.3)",
-                fontSize: "12px",
-                fontWeight: "700",
+                fontSize: "12.5px",
+                fontWeight: "800",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
+                gap: "8px",
+                boxShadow: "0 2px 10px rgba(56, 189, 248, 0.2)",
               }}
             >
-              <Cpu size={14} />
-              <span>MongoDB Atlas Connected</span>
+              <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8", boxShadow: "0 0 8px #38bdf8" }}></div>
+              <span>🔵 Database Connected</span>
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#64748b", fontSize: "12px" }}>
-            <Lock size={14} />
-            <span>Authenticated Administrator Workspace · SSL Encrypted</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#c4b5fd", fontSize: "12px" }}>
+            <Lock size={14} style={{ color: "#4ade80" }} />
+            <span>Authenticated Administrator Workspace · <span style={{ color: "#a855f7" }}>SSL Encrypted</span></span>
           </div>
 
         </div>
 
         <div
           style={{
-            borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-            paddingTop: "16px",
+            borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+            paddingTop: "20px",
             display: "flex",
-            justify: "space-between",
+            justifyContent: "space-between",
             alignItems: "center",
             flexWrap: "wrap",
             gap: "12px",
-            fontSize: "12px",
-            color: "#64748b",
+            fontSize: "13px",
+            color: "#c4b5fd",
           }}
         >
-          <div>
-            © {new Date().getFullYear()} MoveSmart Transit Operations Inc. All rights reserved.
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <img src="/logo.png" alt="Logo" style={{ width: "20px", height: "20px", opacity: 0.5 }} />
+            <span>© {new Date().getFullYear()} MoveSmart Transit Operations Inc. All rights reserved.</span>
           </div>
 
-          <div style={{ display: "flex", gap: "16px" }}>
-            <span style={{ color: "#94a3b8" }}>MoveSmart Admin Console v2.4</span>
+          <div style={{ display: "flex", gap: "16px", fontWeight: "600" }}>
+            <span style={{ color: "#c4b5fd" }}>MoveSmart Admin Console v2.4</span>
           </div>
         </div>
       </div>

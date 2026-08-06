@@ -30,7 +30,7 @@ const cardApplicationSchema = new mongoose.Schema({
   idType: { type: String, default: "Aadhaar" },
   idNumber: { type: String, required: true },
   idProofUrl: { type: String },
-  cardCategory: { type: String, enum: ["Regular", "Student", "Senior Citizen"], default: "Regular" },
+  cardCategory: { type: String, default: "Regular" },
   institutionName: { type: String },
   studentIdUrl: { type: String },
 

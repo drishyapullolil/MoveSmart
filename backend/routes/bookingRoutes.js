@@ -167,6 +167,52 @@ const defaultBuses = [
     driverExperience: 11,
     driverVerified: true,
     stops: ["Kottayam", "Manarcadu", "Malam", "Anichuvadu", "Vengotta", "Kidangoor", "Pala", "Bharananganam", "Plassanal", "Erattupetta"],
+  },
+  {
+    busNumber: "KL-09-MS-6100",
+    busName: "Palghat Rider Super Fast",
+    busType: "AC Seater (2+2)",
+    operator: "MoveSmart Transit Lines",
+    fromLocation: "Kochi",
+    toLocation: "Palakkad",
+    departureTime: "09:00 AM",
+    arrivalTime: "01:30 PM",
+    duration: "4h 30m",
+    totalSeats: 36,
+    availableSeats: 30,
+    price: 380,
+    rating: 4.8,
+    amenities: ["AC", "Charging Port", "Live Tracking", "Wi-Fi"],
+    bookedSeats: ["3A", "4B"],
+    driverName: "Unnikrishnan P",
+    driverPhone: "+91 98478 44556",
+    driverLicense: "KL-09-2019-12345",
+    driverExperience: 10,
+    driverVerified: true,
+    stops: ["Kochi", "Aluva", "Angamaly", "Chalakkudy", "Thrissur", "Vadakkencherry", "Alathur", "Palakkad"],
+  },
+  {
+    busNumber: "KL-13-MS-9011",
+    busName: "North Malabar Volvo Line",
+    busType: "AC Multi-Axle Sleeper (2+1)",
+    operator: "MoveSmart Premium Transit",
+    fromLocation: "Kochi",
+    toLocation: "Kannur",
+    departureTime: "10:15 PM",
+    arrivalTime: "05:00 AM",
+    duration: "6h 45m",
+    totalSeats: 30,
+    availableSeats: 26,
+    price: 750,
+    rating: 4.9,
+    amenities: ["Blanket & Pillow", "Wi-Fi", "Charging Port", "Live Tracking", "AC"],
+    bookedSeats: ["1B", "2C", "5A"],
+    driverName: "Santhosh Kumar",
+    driverPhone: "+91 98479 77889",
+    driverLicense: "KL-13-2017-67890",
+    driverExperience: 14,
+    driverVerified: true,
+    stops: ["Kochi", "Aluva", "Thrissur", "Kuttippuram", "Calicut", "Koyilandy", "Vadakara", "Thalassery", "Kannur"],
   }
 ];
 
@@ -457,50 +503,85 @@ router.get("/routes", async (req, res) => {
   }
 });
 
-// Two-way location matching helper
-const matchLocationStr = (locationInDB, searchQuery) => {
-  if (!searchQuery) return true;
-  const dbStr = String(locationInDB || "").toLowerCase().trim();
-  const qStr = String(searchQuery).toLowerCase().trim();
-  if (!dbStr || !qStr) return false;
-
-  const qBase = qStr.split("(")[0].trim();
-  const dbBase = dbStr.split("(")[0].trim();
-
-  return (
-    dbStr.includes(qStr) ||
-    qStr.includes(dbStr) ||
-    dbBase.includes(qBase) ||
-    qBase.includes(dbBase)
-  );
+// Helper to normalize location strings for accurate comparison
+const normalizeLocation = (loc) => {
+  if (!loc) return "";
+  return String(loc)
+    .toLowerCase()
+    .replace(/\(.*?\)/g, "") // strip parenthetical annotations e.g. (Vyttila)
+    .replace(/[^a-z0-9\s]/gi, " ") // replace special chars with spaces
+    .trim()
+    .replace(/\s+/g, " ");
 };
 
-// Find matching station index in a bus's stops array
-const getStationMatchIndex = (bus, searchQuery) => {
-  if (!searchQuery) return -1;
-  const stops = bus.stops || [];
+// Accurate location string matching (exact, normalized, or whole-word match)
+const matchLocationStr = (locationInDB, searchQuery) => {
+  if (!searchQuery) return true;
+  const rawDb = String(locationInDB || "").trim().toLowerCase();
+  const rawQ = String(searchQuery || "").trim().toLowerCase();
+  if (!rawDb || !rawQ) return false;
 
-  if (matchLocationStr(bus.fromLocation, searchQuery)) {
-    return 0;
+  // Exact raw match
+  if (rawDb === rawQ) return true;
+
+  const dbNorm = normalizeLocation(locationInDB);
+  const qNorm = normalizeLocation(searchQuery);
+  if (!dbNorm || !qNorm) return false;
+
+  // Exact normalized match
+  if (dbNorm === qNorm) return true;
+
+  // Whole-word regex match to prevent false partial matches e.g. "Pala" matching "Palakkad"
+  const regexDb = new RegExp(`\\b${dbNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
+  const regexQ = new RegExp(`\\b${qNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
+
+  return regexDb.test(qNorm) || regexQ.test(dbNorm);
+};
+
+// Build a complete ordered sequence of all stops from origin to destination for a bus
+const buildCompleteStopsList = (bus) => {
+  const rawStops = Array.isArray(bus.stops) ? bus.stops.map((s) => String(s).trim()) : [];
+  const list = [];
+
+  if (bus.fromLocation) {
+    list.push(String(bus.fromLocation).trim());
   }
 
-  for (let i = 0; i < stops.length; i++) {
-    if (matchLocationStr(stops[i], searchQuery)) {
-      return i;
+  rawStops.forEach((s) => {
+    if (s) {
+      const trimmed = String(s).trim();
+      if (!list.length || !matchLocationStr(list[list.length - 1], trimmed)) {
+        list.push(trimmed);
+      }
+    }
+  });
+
+  if (bus.toLocation) {
+    const trimmedTo = String(bus.toLocation).trim();
+    if (!list.length || !matchLocationStr(list[list.length - 1], trimmedTo)) {
+      list.push(trimmedTo);
     }
   }
 
-  if (matchLocationStr(bus.toLocation, searchQuery)) {
-    return stops.length > 0 ? stops.length - 1 : 99;
-  }
+  return list;
+};
 
+// Find matching station index in a bus's full ordered stop sequence
+const getStationMatchIndex = (bus, searchQuery) => {
+  if (!searchQuery) return -1;
+  const stopsList = buildCompleteStopsList(bus);
+  for (let i = 0; i < stopsList.length; i++) {
+    if (matchLocationStr(stopsList[i], searchQuery)) {
+      return i;
+    }
+  }
   return -1;
 };
 
 // 1. GET /buses?from=...&to=...&date=... (Search Buses)
 router.get("/buses", async (req, res) => {
   try {
-    const { from, to, busType, minPrice, maxPrice } = req.query;
+    const { from, to, busType, minPrice, maxPrice, date } = req.query;
     const allBuses = await fetchAllNormalizedBuses();
 
     let filtered = allBuses;
@@ -536,7 +617,7 @@ router.get("/buses", async (req, res) => {
           if (toIdx === -1) return false;
         }
 
-        if (fromQuery && toQuery && fromIdx !== -1 && toIdx !== -1 && (b.stops || []).length > 1) {
+        if (fromQuery && toQuery && fromIdx !== -1 && toIdx !== -1) {
           if (fromIdx >= toIdx) return false;
         }
 
@@ -556,10 +637,16 @@ router.get("/buses", async (req, res) => {
       });
     }
 
+    // Attach travel date context if provided
+    const busesWithDate = filtered.map((b) => ({
+      ...b,
+      travelDate: date || new Date().toISOString().split("T")[0],
+    }));
+
     res.json({
       success: true,
-      count: filtered.length,
-      buses: filtered,
+      count: busesWithDate.length,
+      buses: busesWithDate,
     });
   } catch (error) {
     console.error("Error fetching buses:", error);
@@ -625,10 +712,13 @@ router.get("/seats/:busId", async (req, res) => {
 // 4. POST /bookings (Book Seats)
 router.post("/bookings", async (req, res) => {
   try {
-    const { userId, busId, passengerName, passengerEmail, passengerPhone, travelDate, selectedSeats, totalPrice } = req.body;
+    const { userId, busId, passengerName, passengerEmail, passengerPhone, travelDate, selectedSeats, totalPrice, fromLocation, toLocation } = req.body;
 
     if (!busId || !selectedSeats || selectedSeats.length === 0) {
       return res.status(400).json({ success: false, message: "Bus ID and at least 1 selected seat are required." });
+    }
+    if (selectedSeats.length > 6) {
+      return res.status(400).json({ success: false, message: "You can book a maximum of 6 seats per transaction." });
     }
 
     let bus = null;
@@ -685,8 +775,8 @@ router.post("/bookings", async (req, res) => {
       passengerPhone: passengerPhone || "",
       busId: bus._id,
       busName: bus.busName,
-      fromLocation: bus.fromLocation,
-      toLocation: bus.toLocation,
+      fromLocation: fromLocation || bus.fromLocation,
+      toLocation: toLocation || bus.toLocation,
       travelDate: travelDate || new Date().toISOString().split("T")[0],
       departureTime: bus.departureTime,
       selectedSeats,
@@ -759,6 +849,11 @@ router.post("/admin/buses", async (req, res) => {
       driverName,
       driverPhone,
       driverLicense,
+      driverId,
+      driverPhoto,
+      driverVerified,
+      driverExperience,
+      stops,
     } = req.body;
 
     if (!busName || !fromLocation || !toLocation || !departureTime || !arrivalTime || price === undefined || price === null || price === "") {
@@ -791,6 +886,10 @@ router.post("/admin/buses", async (req, res) => {
       });
     }
 
+    const parsedStops = Array.isArray(stops)
+      ? stops
+      : (typeof stops === "string" && stops.trim() ? stops.split(",").map((s) => s.trim()).filter(Boolean) : []);
+
     const newBus = new Bus({
       busNumber: finalBusNumber,
       busName: busName.trim(),
@@ -808,6 +907,11 @@ router.post("/admin/buses", async (req, res) => {
       driverName: driverName || "Assigned Fleet Driver",
       driverPhone: driverPhone || "+91 98470 12345",
       driverLicense: driverLicense || "KL-07-2022-99011",
+      driverId: driverId && driverId.match(/^[0-9a-fA-F]{24}$/) ? driverId : null,
+      driverPhoto: driverPhoto || "",
+      driverVerified: driverVerified !== undefined ? Boolean(driverVerified) : true,
+      driverExperience: driverExperience ? Number(driverExperience) : 8,
+      stops: parsedStops,
       bookedSeats: [],
     });
 
@@ -854,6 +958,11 @@ router.put("/admin/buses/:id", async (req, res) => {
       driverName,
       driverPhone,
       driverLicense,
+      driverId,
+      driverPhoto,
+      driverVerified,
+      driverExperience,
+      stops,
     } = req.body;
 
     if (busNumber) bus.busNumber = busNumber.trim().toUpperCase();
@@ -875,6 +984,18 @@ router.put("/admin/buses/:id", async (req, res) => {
     if (driverName !== undefined) bus.driverName = driverName;
     if (driverPhone !== undefined) bus.driverPhone = driverPhone;
     if (driverLicense !== undefined) bus.driverLicense = driverLicense;
+    if (driverId !== undefined) bus.driverId = driverId && String(driverId).match(/^[0-9a-fA-F]{24}$/) ? driverId : null;
+    if (driverPhoto !== undefined) bus.driverPhoto = driverPhoto;
+    if (driverVerified !== undefined) bus.driverVerified = Boolean(driverVerified);
+    if (driverExperience !== undefined) bus.driverExperience = Number(driverExperience);
+
+    if (stops !== undefined) {
+      bus.stops = Array.isArray(stops)
+        ? stops
+        : (typeof stops === "string" && stops.trim() ? stops.split(",").map((s) => s.trim()).filter(Boolean) : []);
+    }
+
+    await bus.save();
 
     await bus.save();
 

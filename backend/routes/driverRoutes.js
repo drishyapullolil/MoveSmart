@@ -54,6 +54,15 @@ function isWithin2Hours(departureTimeStr, targetDateStr) {
 }
 
 // ----------------------------------------------------
+// MIDDLEWARE INJECTION
+// ----------------------------------------------------
+const { protect, approvedDriverOnly, adminOnly } = require("../middleware/authMiddleware");
+
+// Apply middleware to all /driver and /admin routes in this file
+router.use("/driver", protect, approvedDriverOnly);
+router.use("/admin", protect, adminOnly);
+
+// ----------------------------------------------------
 // 1. DRIVER - VIEW BUSES & REQUEST TO DRIVE BUS (2-HOUR RULE)
 // ----------------------------------------------------
 router.get("/driver/buses", async (req, res) => {
@@ -488,7 +497,12 @@ router.get("/driver/profile-status", async (req, res) => {
 // ----------------------------------------------------
 router.get("/admin/drivers", async (req, res) => {
   try {
-    const drivers = await User.find({ role: "driver" }).select("-password").sort({ createdAt: -1 });
+    const drivers = await User.find({ 
+      $or: [
+        { role: "driver" }, 
+        { verificationStatus: "Pending" }
+      ] 
+    }).select("-password").sort({ createdAt: -1 });
     res.json({ success: true, count: drivers.length, drivers });
   } catch (error) {
     console.error("Error fetching drivers for admin verification:", error);
@@ -512,6 +526,10 @@ router.put("/admin/driver/:id/verification", async (req, res) => {
 
     driver.verificationStatus = status;
     driver.verificationNote = note || (status === "Approved" ? "Driving license and profile picture verified & approved by Admin." : "Verification rejected by Admin.");
+    
+    if (status === "Approved") {
+      driver.role = "driver";
+    }
 
     await driver.save();
 

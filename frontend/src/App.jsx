@@ -9,7 +9,9 @@ import Admin from "./pages/Admin";
 import AdminAddBusRoute from "./pages/AdminAddBusRoute";
 import CardApplication from "./pages/Cardapplication";
 import Driver from "./pages/Driver";
+import DriverApply from "./pages/DriverApply";
 import BusBooking from "./pages/BusBooking";
+import Wallet from "./pages/Wallet";
 
 function App(){
   return(
@@ -22,7 +24,9 @@ function App(){
         <Route path="/dashboard/card-application" element={<CardApplication />} />
         <Route path="/dashboard/driver" element={<Driver />} />
         <Route path="/driver" element={<Driver />} />
+        <Route path="/apply-driver" element={<DriverApply />} />
         <Route path="/book-bus" element={<BusBooking />} />
+        <Route path="/wallet" element={<Wallet />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/bus-routes" element={<AdminAddBusRoute />} />

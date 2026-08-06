@@ -27,7 +27,6 @@ const rfidCardSchema = new mongoose.Schema({
   },
   cardType: {
     type: String,
-    enum: ["Silver", "Gold", "Blue"],
     default: "Silver"
   },
   status: {

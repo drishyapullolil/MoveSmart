@@ -141,12 +141,10 @@ function Login() {
       setStoredUser(loggedInUser, rememberMe);
       setStoredToken(authToken, rememberMe);
 
-      // Navigate to the correct dashboard after short delay for animation
-      setTimeout(() => {
-        const role = loggedInUser?.role?.toLowerCase();
-        const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
-        navigate(targetPath);
-      }, 1000);
+      // Navigate to the correct dashboard immediately
+      const role = loggedInUser?.role?.toLowerCase();
+      const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
+      navigate(targetPath);
     } catch (error) {
       console.error(error);
       const errMsg =

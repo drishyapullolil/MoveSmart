@@ -16,7 +16,7 @@ import {
   ArrowRight
 } from "lucide-react";
 
-export default function BusCard({ bus, isSelected, onToggleSeats }) {
+export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelected, onToggleSeats }) {
   const [showDetails, setShowDetails] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [selectedStationIndex, setSelectedStationIndex] = useState(null);
@@ -122,6 +122,21 @@ export default function BusCard({ bus, isSelected, onToggleSeats }) {
   const startStation = stationList.length > 0 ? stationList[0] : { name: fromLocation, departureTime };
   const endStation = stationList.length > 0 ? stationList[stationList.length - 1] : { name: toLocation, arrivalTime };
 
+  const findStationByQuery = (query, defaultStation) => {
+    if (!query) return defaultStation;
+    const q = String(query).trim().toLowerCase();
+    if (q.includes("all") || q.includes("any") || q === "") return defaultStation;
+    const found = stationList.find((st) => st.name.toLowerCase().includes(q) || q.includes(st.name.toLowerCase()));
+    return found || defaultStation;
+  };
+
+  const displayStartStation = findStationByQuery(searchFrom, startStation);
+  const displayEndStation = findStationByQuery(searchTo, endStation);
+
+  const isSubStationSegment =
+    (searchFrom && !searchFrom.toLowerCase().includes("all") && displayStartStation.name !== startStation.name) ||
+    (searchTo && !searchTo.toLowerCase().includes("all") && displayEndStation.name !== endStation.name);
+
   const handleStationClick = (idx) => {
     if (selectedStationIndex === idx) {
       setSelectedStationIndex(null);
@@ -158,20 +173,27 @@ export default function BusCard({ bus, isSelected, onToggleSeats }) {
                 {rating}
               </span>
             </div>
+
+            {isSubStationSegment && (
+              <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", padding: "2px 8px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                <span>📍 Sub-Station Stop: <strong>{displayStartStation.name} ➔ {displayEndStation.name}</strong></span>
+                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(Route: {startStation.name} ➔ {endStation.name})</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Route Timing Block - Shows Starting and Ending by default */}
+        {/* Route Timing Block - Shows Display Station (Sub-station or Terminal) */}
         <div className="bus-route-timing">
           <div
             className="timing-block"
-            onClick={() => handleStationClick(0)}
+            onClick={() => handleStationClick(displayStartStation.id ?? 0)}
             style={{ cursor: "pointer" }}
-            title="Click to view Starting Station details"
+            title={`Click to view ${displayStartStation.name} station details`}
           >
-            <span className="time">{startStation.departureTime || departureTime}</span>
+            <span className="time">{displayStartStation.departureTime || displayStartStation.arrivalTime || departureTime}</span>
             <span className="location" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              🟢 {startStation.name || fromLocation}
+              🟢 {displayStartStation.name || fromLocation}
             </span>
           </div>
 
@@ -188,13 +210,13 @@ export default function BusCard({ bus, isSelected, onToggleSeats }) {
 
           <div
             className="timing-block"
-            onClick={() => handleStationClick(stationList.length - 1)}
+            onClick={() => handleStationClick(displayEndStation.id ?? (stationList.length - 1))}
             style={{ cursor: "pointer" }}
-            title="Click to view Ending Station details"
+            title={`Click to view ${displayEndStation.name} station details`}
           >
-            <span className="time">{endStation.arrivalTime || arrivalTime}</span>
+            <span className="time">{displayEndStation.arrivalTime || displayEndStation.departureTime || arrivalTime}</span>
             <span className="location" style={{ color: "var(--accent-purple)", display: "flex", alignItems: "center", gap: 4 }}>
-              🔴 {endStation.name || toLocation}
+              🔴 {displayEndStation.name || toLocation}
             </span>
           </div>
         </div>
@@ -218,9 +240,42 @@ export default function BusCard({ bus, isSelected, onToggleSeats }) {
       </div>
 
       {/* Driver Badge Row */}
-      <div style={{ background: "linear-gradient(135deg, #f8fafc, #f1f5f9)", borderRadius: 12, padding: "8px 14px", marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #e2e8f0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#38a169", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, overflow: "hidden" }}>
+      <div
+        onClick={() => setShowDriverModal(true)}
+        style={{
+          background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)",
+          borderRadius: 12,
+          padding: "10px 14px",
+          marginTop: 12,
+          display: "flex",
+          justify: "space-between",
+          alignItems: "center",
+          border: "1px solid #cbd5e1",
+          cursor: "pointer",
+          transition: "all 0.2s ease",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.02)",
+        }}
+        title="Click to view complete driver credentials, photo & admin verification"
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: "50%",
+              background: "#16a34a",
+              color: "#ffffff",
+              display: "flex",
+              alignItems: "center",
+              justify: "center",
+              fontWeight: 900,
+              fontSize: 16,
+              overflow: "hidden",
+              border: driverVerified ? "2px solid #22c55e" : "2px solid #f59e0b",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
+              flexShrink: 0,
+            }}
+          >
             {driverPhoto ? (
               <img src={driverPhoto} alt={driverName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             ) : (
@@ -229,30 +284,47 @@ export default function BusCard({ bus, isSelected, onToggleSeats }) {
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#1e293b", display: "flex", alignItems: "center", gap: 6 }}>
-              <span>Driver: {driverName}</span>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span>Assigned Driver: <strong>{driverName}</strong></span>
               {driverVerified ? (
-                <span style={{ fontSize: 10, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 8, fontWeight: 900, display: "inline-flex", alignItems: "center", gap: 2 }}>
+                <span style={{ fontSize: 10, background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: 10, fontWeight: 900, display: "inline-flex", alignItems: "center", gap: 3, border: "1px solid #86efac" }}>
                   <ShieldCheck size={12} /> Admin Verified ✅
                 </span>
               ) : (
-                <span style={{ fontSize: 10, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
+                <span style={{ fontSize: 10, background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 10, fontWeight: 900, border: "1px solid #fcd34d" }}>
                   Verification Pending ⏳
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>
-              License: <strong style={{ fontFamily: "monospace" }}>{driverLicense}</strong> · {driverExperience} yrs exp
+            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+              License: <strong style={{ fontFamily: "monospace", color: "#475569" }}>{driverLicense}</strong> · {driverExperience || 8} yrs exp
             </div>
           </div>
         </div>
 
         <button
           type="button"
-          onClick={() => setShowDriverModal(true)}
-          style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 800, color: "#475569", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowDriverModal(true);
+          }}
+          style={{
+            background: "#ffffff",
+            border: "1px solid #94a3b8",
+            borderRadius: 8,
+            padding: "5px 12px",
+            fontSize: 11,
+            fontWeight: 800,
+            color: "#0f172a",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          }}
         >
-          <UserCheck size={13} style={{ color: "#38a169" }} /> Verify Driver
+          <UserCheck size={14} style={{ color: "#16a34a" }} />
+          <span>View Driver &amp; License</span>
         </button>
       </div>
 

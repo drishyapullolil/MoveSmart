@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Ticket,
   User,
@@ -8,18 +8,63 @@ import {
   CreditCard,
   Zap,
   ArrowRight,
-  ShieldCheck
+  ShieldCheck,
+  MapPin
 } from "lucide-react";
 
 export default function BookingSummary({
   bus,
   selectedSeats = [],
+  searchFrom = "",
+  searchTo = "",
   travelDate,
   currentUser,
   onConfirmBooking,
   isSubmitting = false,
 }) {
   const { busName, busNumber, fromLocation, toLocation, departureTime, arrivalTime, price } = bus || {};
+
+  // Extract available stops for sub-station selection dropdowns
+  const getAvailableStops = () => {
+    if (Array.isArray(bus?.stops) && bus.stops.length > 0) {
+      return bus.stops.map((s) => String(s).trim());
+    }
+    const scheduleTrips = Array.isArray(bus?.schedule) ? bus.schedule : [];
+    if (scheduleTrips.length > 0 && Array.isArray(scheduleTrips[0].stations)) {
+      const stNames = scheduleTrips[0].stations.map((s) => String(s.station || s.name || s.stationName).trim()).filter(Boolean);
+      if (stNames.length > 0) return Array.from(new Set(stNames));
+    }
+    const list = [];
+    if (bus?.fromLocation) list.push(String(bus.fromLocation).trim());
+    if (bus?.toLocation && !list.includes(String(bus.toLocation).trim())) list.push(String(bus.toLocation).trim());
+    return list;
+  };
+
+  const availableStops = getAvailableStops();
+
+  const findMatchInStops = (query, defaultVal) => {
+    if (!query) return defaultVal;
+    const q = String(query).trim().toLowerCase();
+    if (q.includes("all") || q.includes("any") || q === "") return defaultVal;
+    const found = availableStops.find((st) => st.toLowerCase().includes(q) || q.includes(st.toLowerCase()));
+    return found || defaultVal;
+  };
+
+  const [pickupStation, setPickupStation] = useState(() => findMatchInStops(searchFrom, fromLocation || "Kochi"));
+  const [dropoffStation, setDropoffStation] = useState(() => findMatchInStops(searchTo, toLocation || "Trivandrum"));
+
+  useEffect(() => {
+    const stops = getAvailableStops();
+    const match = (query, defaultVal) => {
+      if (!query) return defaultVal;
+      const q = String(query).trim().toLowerCase();
+      if (q.includes("all") || q.includes("any") || q === "") return defaultVal;
+      const found = stops.find((st) => st.toLowerCase().includes(q) || q.includes(st.toLowerCase()));
+      return found || defaultVal;
+    };
+    setPickupStation(match(searchFrom, fromLocation || "Kochi"));
+    setDropoffStation(match(searchTo, toLocation || "Trivandrum"));
+  }, [bus, searchFrom, searchTo, fromLocation, toLocation]);
 
   const [passengerName, setPassengerName] = useState(currentUser?.name || "");
   const [passengerEmail, setPassengerEmail] = useState(currentUser?.email || "");
@@ -63,6 +108,8 @@ export default function BookingSummary({
       passengerName: passengerName.trim(),
       passengerEmail: passengerEmail.trim(),
       passengerPhone: passengerPhone.trim(),
+      fromLocation: pickupStation,
+      toLocation: dropoffStation,
       selectedSeats,
       totalPrice,
       paymentMethod,
@@ -88,16 +135,65 @@ export default function BookingSummary({
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
           <div>
-            <strong style={{ fontSize: 15, display: "block" }}>{fromLocation}</strong>
+            <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Boarding From</span>
+            <strong style={{ fontSize: 15, display: "block", color: "var(--primary)" }}>{pickupStation}</strong>
             <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 700 }}>{departureTime}</span>
           </div>
           <ArrowRight size={18} style={{ color: "var(--accent-purple)" }} />
           <div style={{ textAlign: "right" }}>
-            <strong style={{ fontSize: 15, display: "block" }}>{toLocation}</strong>
+            <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Drop-off At</span>
+            <strong style={{ fontSize: 15, display: "block", color: "var(--accent-purple)" }}>{dropoffStation}</strong>
             <span style={{ fontSize: 11, color: "var(--accent-purple)", fontWeight: 700 }}>{arrivalTime}</span>
           </div>
         </div>
+
+        {fromLocation !== pickupStation || toLocation !== dropoffStation ? (
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px dashed var(--border-color)", fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
+            Route: <strong style={{ color: "var(--text-main)" }}>{fromLocation} ➔ {toLocation}</strong>
+          </div>
+        ) : null}
       </div>
+
+      {/* Sub-Station Selection Form Controls */}
+      {availableStops.length > 1 && (
+        <div style={{ background: "#f8fafc", padding: 12, borderRadius: 14, border: "1px solid #e2e8f0", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "var(--accent-purple)", textTransform: "uppercase", marginBottom: 8 }}>
+            <MapPin size={14} />
+            <span>Select Boarding & Drop-off Stations</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Boarding Station:</label>
+              <select
+                value={pickupStation}
+                onChange={(e) => setPickupStation(e.target.value)}
+                style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#ffffff", fontWeight: 700, color: "var(--primary)" }}
+              >
+                {availableStops.map((stop, idx) => (
+                  <option key={idx} value={stop}>
+                    {stop} {stop === fromLocation ? "(Origin)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Drop-off Station:</label>
+              <select
+                value={dropoffStation}
+                onChange={(e) => setDropoffStation(e.target.value)}
+                style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#ffffff", fontWeight: 700, color: "var(--accent-purple)" }}
+              >
+                {availableStops.map((stop, idx) => (
+                  <option key={idx} value={stop}>
+                    {stop} {stop === toLocation ? "(Terminus)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Selected Seats Badges */}
       <div style={{ marginBottom: 16 }}>
