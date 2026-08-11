@@ -415,7 +415,7 @@ export default function Wallet() {
 
             <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px dashed rgba(255, 255, 255, 0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#cbd5e1" }}>
               <span>Auto Tap-In Ready</span>
-              <span style={{ color: "#4ade80", fontWeight: "800" }}>✓ Instant KSRTC Fare Deduction</span>
+              <span style={{ color: "#4ade80", fontWeight: "800" }}>✓ Instant Bus Fare Deduction</span>
             </div>
           </div>
 

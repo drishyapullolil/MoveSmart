@@ -5,6 +5,19 @@ import { processRazorpayPayment } from "../utils/razorpay";
 import { getStoredUser } from "../utils/session";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import { COUNTRY_CODES, getCountryByCode } from "../utils/countryPhoneData";
+import { validatePhoneNumber } from "../utils/phoneValidator";
+import { validateName } from "../utils/nameValidator";
+import {
+  validateEmail,
+  validateDob,
+  validatePincode,
+  validateLocationName,
+  validateInstitutionName,
+  validateIdNumber,
+  validateStreet,
+} from "../utils/formValidators";
+import { INDIA_LOCATION_DATA, STATES_LIST } from "../utils/indiaLocationData";
 
 const API_BASE = "/api/rfid";
 
@@ -35,14 +48,15 @@ const INITIAL_FORM = {
   fullName: "",
   dob: "",
   gender: "Male",
+  countryCode: "+91",
   phone: "",
   email: "",
   phoneVerified: false,
 
   // 2. Address Details
   street: "",
-  city: "",
-  district: "",
+  city: "Kochi",
+  district: "Ernakulam",
   state: "Kerala",
   pincode: "",
 
@@ -54,12 +68,13 @@ const INITIAL_FORM = {
   institutionName: "",
   studentIdName: "",
 
-  // 4. Travel Preferences & Emergency
-  frequentSource: "",
-  frequentDestination: "",
+  // 4. Emergency Contact
+  frequentSource: "N/A",
+  frequentDestination: "N/A",
   preferredTime: "Morning",
   emergencyName: "",
   emergencyRelation: "",
+  emergencyCountryCode: "+91",
   emergencyPhone: "",
 
   // 5. Wallet & Safety
@@ -138,14 +153,86 @@ export default function CardApplication() {
     }
   };
 
+  // Dynamic Location Cascading Logic (State -> District -> City Dropdowns)
+  const availableDistricts = INDIA_LOCATION_DATA[formData.state]
+    ? Object.keys(INDIA_LOCATION_DATA[formData.state])
+    : [];
+
+  const availableCities =
+    INDIA_LOCATION_DATA[formData.state] && INDIA_LOCATION_DATA[formData.state][formData.district]
+      ? INDIA_LOCATION_DATA[formData.state][formData.district]
+      : [];
+
+  const handleStateChange = (e) => {
+    const selectedState = e.target.value;
+    const districts = INDIA_LOCATION_DATA[selectedState]
+      ? Object.keys(INDIA_LOCATION_DATA[selectedState])
+      : [];
+    const firstDistrict = districts[0] || "";
+    const cities =
+      INDIA_LOCATION_DATA[selectedState] && INDIA_LOCATION_DATA[selectedState][firstDistrict]
+        ? INDIA_LOCATION_DATA[selectedState][firstDistrict]
+        : [];
+    const firstCity = cities[0] || "";
+
+    setFormData((prev) => ({
+      ...prev,
+      state: selectedState,
+      district: firstDistrict,
+      city: firstCity,
+    }));
+  };
+
+  const handleDistrictChange = (e) => {
+    const selectedDistrict = e.target.value;
+    const cities =
+      INDIA_LOCATION_DATA[formData.state] && INDIA_LOCATION_DATA[formData.state][selectedDistrict]
+        ? INDIA_LOCATION_DATA[formData.state][selectedDistrict]
+        : [];
+    const firstCity = cities[0] || "";
+
+    setFormData((prev) => ({
+      ...prev,
+      district: selectedDistrict,
+      city: firstCity,
+    }));
+  };
+
+  const handleCityChange = (e) => {
+    const selectedCity = e.target.value;
+    setFormData((prev) => ({
+      ...prev,
+      city: selectedCity,
+    }));
+  };
+
+  // Real-time field validations for all form fields
+  const nameValidation = validateName(formData.fullName);
+  const dobValidation = validateDob(formData.dob);
+  const emailValidation = validateEmail(formData.email);
+  const phoneValidation = validatePhoneNumber(formData.countryCode || "+91", formData.phone);
+
+  const streetValidation = validateStreet(formData.street);
+  const cityValidation = validateLocationName(formData.city, "City");
+  const districtValidation = validateLocationName(formData.district, "District");
+  const pincodeValidation = validatePincode(formData.pincode);
+
+  const idNumberValidation = validateIdNumber(formData.idNumber, formData.cardCategory);
+  const institutionNameValidation = validateInstitutionName(formData.institutionName);
+
+  const frequentSourceValidation = validateLocationName(formData.frequentSource, "Frequent Starting Station");
+  const frequentDestinationValidation = validateLocationName(formData.frequentDestination, "Frequent Destination");
+  const emergencyNameValidation = validateName(formData.emergencyName);
+  const emergencyPhoneValidation = validatePhoneNumber(formData.emergencyCountryCode || "+91", formData.emergencyPhone);
+
   // OTP Verification Handlers
   const handleSendOtp = () => {
-    if (!formData.phone || formData.phone.length < 10) {
-      setOtpMessage("⚠️ Please enter a valid 10-digit phone number first.");
+    if (!phoneValidation.valid) {
+      setOtpMessage(phoneValidation.message || "Please enter a valid phone number");
       return;
     }
     setOtpSent(true);
-    setOtpMessage("📲 OTP code sent! Use simulation code: 4829");
+    setOtpMessage(`📲 OTP code sent to ${phoneValidation.formatted}! Use simulation code: 4829`);
   };
 
   const handleVerifyOtp = () => {
@@ -167,35 +254,70 @@ export default function CardApplication() {
     setSubmittedAppInfo(null);
   };
 
-  const validateStep = () => {
+  const validateStep = (targetStep = step) => {
     setFormError("");
-    if (step === 1) {
-      if (!formData.fullName.trim()) return "Full Name is required.";
+    if (targetStep === 1) {
+      if (!nameValidation.valid) return nameValidation.message;
+      if (!dobValidation.valid) return dobValidation.message;
+      if (!formData.gender) return "Gender selection is required.";
       if (!formData.phone.trim()) return "Phone Number is required.";
+      if (!phoneValidation.valid) return phoneValidation.message;
+      if (!formData.phoneVerified) return "⚠️ Please verify your phone number via OTP before proceeding to Step 2.";
+      if (!emailValidation.valid) return emailValidation.message;
     }
-    if (step === 2) {
-      if (!formData.city.trim() || !formData.district.trim()) return "City and District are required.";
-      if (!formData.pincode.trim()) return "PIN Code is required.";
+    if (targetStep === 2) {
+      if (!streetValidation.valid) return streetValidation.message;
+      if (!cityValidation.valid) return cityValidation.message;
+      if (!districtValidation.valid) return districtValidation.message;
+      if (!formData.state || !formData.state.trim() || formData.state.trim().length < 2) return "State is required.";
+      if (!pincodeValidation.valid) return pincodeValidation.message;
     }
-    if (step === 3) {
-      if (!formData.idNumber.trim()) return "ID Number / Passport Number is required.";
+    if (targetStep === 3) {
+      if (!formData.cardCategory) return "Pass Type selection is required.";
+
       if (formData.cardCategory === "Student") {
-        if (!formData.institutionName.trim()) return "Institution Name is required for Student passes.";
+        if (!institutionNameValidation.valid) return institutionNameValidation.message;
         if (!formData.studentIdName) return "⚠️ Please upload required document (Student ID Card).";
       } else if (formData.cardCategory === "Foreigner") {
+        if (!idNumberValidation.valid) return idNumberValidation.message;
         if (!formData.idProofName) return "⚠️ Please upload required document (International Passport Copy).";
       } else {
-        if (!formData.idProofName) return "⚠️ Please upload required document (ID Proof).";
+        if (!idNumberValidation.valid) return idNumberValidation.message;
+        if (!formData.idProofName) return "⚠️ Please upload required document (Government ID Proof).";
       }
     }
-    if (step === 5) {
-      if (!formData.termsAccepted) return "You must accept the Terms & Conditions to submit.";
+    if (targetStep === 4) {
+      if (!formData.emergencyName.trim()) return "Emergency Contact Name is required.";
+      if (!emergencyNameValidation.valid) return `Emergency Contact Name error: ${emergencyNameValidation.message}`;
+      if (!formData.emergencyRelation || !formData.emergencyRelation.trim() || formData.emergencyRelation.trim().length < 2) {
+        return "Emergency Contact Relation is required (e.g. Parent, Spouse).";
+      }
+      if (!formData.emergencyPhone || !formData.emergencyPhone.trim()) return "Emergency Contact Phone Number is required.";
+      if (!emergencyPhoneValidation.valid) return `Emergency Phone error: ${emergencyPhoneValidation.message}`;
+      if (phoneValidation.formatted && emergencyPhoneValidation.formatted && phoneValidation.formatted === emergencyPhoneValidation.formatted) {
+        return "Emergency phone number cannot be identical to applicant's primary phone number.";
+      }
+    }
+    if (targetStep === 5) {
+      if (!formData.initialRecharge) return "Initial Wallet Recharge amount selection is required.";
+      if (!formData.termsAccepted) return "You must accept the Terms & Conditions to submit application.";
+    }
+    return null;
+  };
+
+  const validateAllSteps = () => {
+    for (let s = 1; s <= 5; s++) {
+      const err = validateStep(s);
+      if (err) {
+        setStep(s);
+        return err;
+      }
     }
     return null;
   };
 
   const handleNextStep = () => {
-    const err = validateStep();
+    const err = validateStep(step);
     if (err) {
       setFormError(err);
       return;
@@ -211,7 +333,7 @@ export default function CardApplication() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const err = validateStep();
+    const err = validateAllSteps();
     if (err) {
       setFormError(err);
       return;
@@ -226,6 +348,8 @@ export default function CardApplication() {
       try {
         const payload = {
           ...formData,
+          phone: phoneValidation.formatted || `${formData.countryCode} ${formData.phone}`,
+          emergencyPhone: formData.emergencyPhone ? emergencyPhoneValidation.formatted || `${formData.emergencyCountryCode} ${formData.emergencyPhone}` : "",
           paymentId: paymentId || undefined,
           paymentMethod: "Razorpay",
           userId: user?.id || user?._id || null,
@@ -284,7 +408,7 @@ export default function CardApplication() {
 
       {/* Main Form Container */}
       <main style={{ maxWidth: "950px", margin: "-50px auto 60px", width: "92%", position: "relative", zIndex: 10 }}>
-        
+
         {/* Step Progress Bar */}
         <div style={{ background: "#ffffff", borderRadius: "20px", padding: "20px 24px", marginBottom: "24px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", overflowX: "auto" }}>
           {[
@@ -326,7 +450,7 @@ export default function CardApplication() {
 
         {/* Main Application Form Box */}
         <div style={{ background: "#ffffff", borderRadius: "24px", padding: "36px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)" }}>
-          
+
           {submittedAppInfo ? (
             /* Submission Success Screen */
             <div style={{ textAlign: "center", padding: "20px 10px" }}>
@@ -373,7 +497,7 @@ export default function CardApplication() {
             </div>
           ) : (
             <form onSubmit={handleSubmit}>
-              
+
               {/* STEP 1: Personal Information */}
               {step === 1 && (
                 <div>
@@ -398,13 +522,43 @@ export default function CardApplication() {
                         value={formData.fullName}
                         onChange={handleChange}
                         required
+                        style={{
+                          borderColor: formData.fullName.trim()
+                            ? nameValidation.valid
+                              ? "rgba(34, 197, 94, 0.5)"
+                              : "rgba(225, 29, 72, 0.5)"
+                            : undefined,
+                        }}
                       />
+                      {formData.fullName.trim() && (
+                        <div
+                          style={{
+                            marginTop: "6px",
+                            padding: "6px 12px",
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                            fontWeight: "600",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            background: nameValidation.valid
+                              ? "rgba(34, 197, 94, 0.1)"
+                              : "rgba(225, 29, 72, 0.1)",
+                            color: nameValidation.valid ? "#15803d" : "#be123c",
+                            border: nameValidation.valid
+                              ? "1px solid rgba(34, 197, 94, 0.3)"
+                              : "1px solid rgba(225, 29, 72, 0.3)",
+                          }}
+                        >
+                          <span>{nameValidation.valid ? "✓ Valid Name" : `⚠️ ${nameValidation.message}`}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                       <div>
                         <label htmlFor="dob" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Date of Birth
+                          Date of Birth <span style={{ color: "#e11d48" }}>*</span>
                         </label>
                         <input
                           id="dob"
@@ -413,13 +567,26 @@ export default function CardApplication() {
                           className="rta-input-field"
                           value={formData.dob}
                           onChange={handleChange}
+                          required
+                          style={{
+                            borderColor: formData.dob
+                              ? dobValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
+                          }}
                         />
+                        {formData.dob && !dobValidation.valid && (
+                          <div style={{ marginTop: "6px", fontSize: "11px", color: "#be123c", fontWeight: "700" }}>
+                            ⚠️ {dobValidation.message}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label htmlFor="gender" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Gender
+                          Gender <span style={{ color: "#e11d48" }}>*</span>
                         </label>
-                        <select id="gender" name="gender" className="rta-input-field" value={formData.gender} onChange={handleChange}>
+                        <select id="gender" name="gender" className="rta-input-field" value={formData.gender} onChange={handleChange} required>
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
                           <option value="Other">Other</option>
@@ -431,17 +598,33 @@ export default function CardApplication() {
                       <label htmlFor="phone" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                         Phone Number (OTP Verification) <span style={{ color: "#e11d48" }}>*</span>
                       </label>
-                      <div style={{ display: "flex", gap: "10px" }}>
-                        <input
-                          id="phone"
-                          name="phone"
-                          type="tel"
+                      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                        <select
+                          id="countryCode"
+                          name="countryCode"
                           className="rta-input-field"
-                          placeholder="e.g. 9876543210"
-                          value={formData.phone}
+                          value={formData.countryCode || "+91"}
                           onChange={handleChange}
-                          required
-                        />
+                          style={{ maxWidth: "165px", fontWeight: "700", cursor: "pointer", background: "#f8fafc" }}
+                        >
+                          {COUNTRY_CODES.map((c) => (
+                            <option key={`${c.code}-${c.dialCode}`} value={c.dialCode}>
+                              {c.flag} {c.code} ({c.dialCode})
+                            </option>
+                          ))}
+                        </select>
+                        <div style={{ flex: 1, minWidth: "180px" }}>
+                          <input
+                            id="phone"
+                            name="phone"
+                            type="tel"
+                            className="rta-input-field"
+                            placeholder={getCountryByCode(formData.countryCode).placeholder || "Enter phone number"}
+                            value={formData.phone}
+                            onChange={handleChange}
+                            required
+                          />
+                        </div>
                         <button
                           type="button"
                           onClick={handleSendOtp}
@@ -452,6 +635,42 @@ export default function CardApplication() {
                           {formData.phoneVerified ? "✓ Verified" : otpSent ? "Resend OTP" : "Send OTP"}
                         </button>
                       </div>
+
+                      {/* Real-time ("ontime") Validation Badge Indicator */}
+                      {formData.phone && (
+                        <div
+                          style={{
+                            marginTop: "8px",
+                            padding: "8px 12px",
+                            borderRadius: "10px",
+                            fontSize: "12px",
+                            fontWeight: "700",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            background:
+                              phoneValidation.badgeType === "success"
+                                ? "rgba(34, 197, 94, 0.1)"
+                                : phoneValidation.badgeType === "error"
+                                  ? "rgba(225, 29, 72, 0.1)"
+                                  : "rgba(245, 158, 11, 0.12)",
+                            color:
+                              phoneValidation.badgeType === "success"
+                                ? "#15803d"
+                                : phoneValidation.badgeType === "error"
+                                  ? "#be123c"
+                                  : "#b45309",
+                            border:
+                              phoneValidation.badgeType === "success"
+                                ? "1px solid rgba(34, 197, 94, 0.3)"
+                                : phoneValidation.badgeType === "error"
+                                  ? "1px solid rgba(225, 29, 72, 0.3)"
+                                  : "1px solid rgba(245, 158, 11, 0.3)",
+                          }}
+                        >
+                          <span>{phoneValidation.message}</span>
+                        </div>
+                      )}
 
                       {/* OTP Input Box Simulation */}
                       {otpSent && !formData.phoneVerified && (
@@ -479,7 +698,7 @@ export default function CardApplication() {
 
                     <div>
                       <label htmlFor="email" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Email Address
+                        Email Address <span style={{ color: "#e11d48" }}>*</span>
                       </label>
                       <input
                         id="email"
@@ -489,7 +708,20 @@ export default function CardApplication() {
                         placeholder="yourname@example.com"
                         value={formData.email}
                         onChange={handleChange}
+                        required
+                        style={{
+                          borderColor: formData.email.trim()
+                            ? emailValidation.valid
+                              ? "rgba(34, 197, 94, 0.5)"
+                              : "rgba(225, 29, 72, 0.5)"
+                            : undefined,
+                        }}
                       />
+                      {formData.email.trim() && (
+                        <div style={{ marginTop: "6px", fontSize: "11px", color: emailValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                          {emailValidation.valid ? "✓ Valid Email" : `⚠️ ${emailValidation.message}`}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -508,7 +740,7 @@ export default function CardApplication() {
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                     <div>
                       <label htmlFor="street" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Street / House Name
+                        Street / House Name <span style={{ color: "#e11d48" }}>*</span>
                       </label>
                       <input
                         id="street"
@@ -518,56 +750,134 @@ export default function CardApplication() {
                         placeholder="e.g. Green Valley Villa, MG Road"
                         value={formData.street}
                         onChange={handleChange}
+                        required
+                        style={{
+                          borderColor: formData.street.trim()
+                            ? streetValidation.valid
+                              ? "rgba(34, 197, 94, 0.5)"
+                              : "rgba(225, 29, 72, 0.5)"
+                            : undefined,
+                        }}
                       />
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-                      <div>
-                        <label htmlFor="city" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          City <span style={{ color: "#e11d48" }}>*</span>
-                        </label>
-                        <input
-                          id="city"
-                          name="city"
-                          type="text"
-                          className="rta-input-field"
-                          placeholder="e.g. Kochi"
-                          value={formData.city}
-                          onChange={handleChange}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor="district" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          District <span style={{ color: "#e11d48" }}>*</span>
-                        </label>
-                        <input
-                          id="district"
-                          name="district"
-                          type="text"
-                          className="rta-input-field"
-                          placeholder="e.g. Ernakulam"
-                          value={formData.district}
-                          onChange={handleChange}
-                          required
-                        />
-                      </div>
+                      {formData.street.trim() && (
+                        <div style={{ marginTop: "6px", fontSize: "11px", color: streetValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                          {streetValidation.valid ? "✓ Valid Address" : `⚠️ ${streetValidation.message}`}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                       <div>
                         <label htmlFor="state" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          State
+                          State <span style={{ color: "#e11d48" }}>*</span>
                         </label>
-                        <input
+                        <select
                           id="state"
                           name="state"
-                          type="text"
                           className="rta-input-field"
                           value={formData.state}
-                          onChange={handleChange}
-                        />
+                          onChange={handleStateChange}
+                          required
+                          style={{ fontWeight: "700", cursor: "pointer", background: "#f8fafc" }}
+                        >
+                          {STATES_LIST.map((st) => (
+                            <option key={st} value={st}>
+                              {st}
+                            </option>
+                          ))}
+                          <option value="Other">Other State...</option>
+                        </select>
+                        {formData.state === "Other" && (
+                          <input
+                            type="text"
+                            name="customState"
+                            placeholder="Enter State Name"
+                            className="rta-input-field"
+                            style={{ marginTop: "8px" }}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, state: e.target.value }))}
+                            required
+                          />
+                        )}
                       </div>
+
+                      <div>
+                        <label htmlFor="district" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          District <span style={{ color: "#e11d48" }}>*</span>
+                        </label>
+                        <select
+                          id="district"
+                          name="district"
+                          className="rta-input-field"
+                          value={formData.district}
+                          onChange={handleDistrictChange}
+                          required
+                          style={{ fontWeight: "700", cursor: "pointer", background: "#f8fafc" }}
+                        >
+                          {availableDistricts.map((dst) => (
+                            <option key={dst} value={dst}>
+                              {dst}
+                            </option>
+                          ))}
+                          <option value="Other">Other District...</option>
+                        </select>
+                        {formData.district === "Other" && (
+                          <input
+                            type="text"
+                            name="customDistrict"
+                            placeholder="Enter District Name"
+                            className="rta-input-field"
+                            style={{ marginTop: "8px" }}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, district: e.target.value }))}
+                            required
+                          />
+                        )}
+                        {formData.district.trim() && districtValidation.valid && (
+                          <div style={{ marginTop: "6px", fontSize: "11px", color: "#15803d", fontWeight: "700" }}>
+                            ✓ District Selected
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                      <div>
+                        <label htmlFor="city" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          City / Town <span style={{ color: "#e11d48" }}>*</span>
+                        </label>
+                        <select
+                          id="city"
+                          name="city"
+                          className="rta-input-field"
+                          value={formData.city}
+                          onChange={handleCityChange}
+                          required
+                          style={{ fontWeight: "700", cursor: "pointer", background: "#f8fafc" }}
+                        >
+                          {availableCities.map((ct) => (
+                            <option key={ct} value={ct}>
+                              {ct}
+                            </option>
+                          ))}
+                          <option value="Other">Other City / Town...</option>
+                        </select>
+                        {formData.city === "Other" && (
+                          <input
+                            type="text"
+                            name="customCity"
+                            placeholder="Enter City / Town Name"
+                            className="rta-input-field"
+                            style={{ marginTop: "8px" }}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
+                            required
+                          />
+                        )}
+                        {formData.city.trim() && cityValidation.valid && (
+                          <div style={{ marginTop: "6px", fontSize: "11px", color: "#15803d", fontWeight: "700" }}>
+                            ✓ City Selected
+                          </div>
+                        )}
+                      </div>
+
                       <div>
                         <label htmlFor="pincode" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           PIN Code <span style={{ color: "#e11d48" }}>*</span>
@@ -581,7 +891,19 @@ export default function CardApplication() {
                           value={formData.pincode}
                           onChange={handleChange}
                           required
+                          style={{
+                            borderColor: formData.pincode.trim()
+                              ? pincodeValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
+                          }}
                         />
+                        {formData.pincode.trim() && (
+                          <div style={{ marginTop: "6px", fontSize: "11px", color: pincodeValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                            {pincodeValidation.valid ? "✓ Valid PIN Code" : `⚠️ ${pincodeValidation.message}`}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -599,7 +921,7 @@ export default function CardApplication() {
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-                    
+
                     {/* Card Category Selection (3 Options) */}
                     <div>
                       <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
@@ -639,7 +961,7 @@ export default function CardApplication() {
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: formData.cardCategory === "Student" ? "1fr" : "1fr 1fr", gap: "14px" }}>
                       <div>
                         <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           Auto Required ID Type
@@ -661,29 +983,61 @@ export default function CardApplication() {
                           <span>🔒</span>
                           <span>
                             {formData.cardCategory === "Student"
-                              ? "Student ID Card"
+                              ? "Student ID Card Verification (Document Upload)"
                               : formData.cardCategory === "Foreigner"
-                              ? "International Passport"
-                              : "Government ID Proof (Aadhaar/DL)"}
+                                ? "International Passport"
+                                : "Government ID Proof (Aadhaar/DL)"}
                           </span>
                         </div>
                       </div>
 
-                      <div>
-                        <label htmlFor="idNumber" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          {formData.cardCategory === "Foreigner" ? "Passport Number" : formData.cardCategory === "Student" ? "Student ID Number" : "Government ID Number"} <span style={{ color: "#e11d48" }}>*</span>
-                        </label>
-                        <input
-                          id="idNumber"
-                          name="idNumber"
-                          type="text"
-                          className="rta-input-field"
-                          placeholder={formData.cardCategory === "Foreigner" ? "Enter Passport Number" : formData.cardCategory === "Student" ? "Enter Roll / Student ID No" : "Enter Aadhaar / DL Number"}
-                          value={formData.idNumber}
-                          onChange={handleChange}
-                          required
-                        />
-                      </div>
+                      {formData.cardCategory !== "Student" && (
+                        <div>
+                          <label htmlFor="idNumber" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                            {formData.cardCategory === "Foreigner" ? "Passport Number" : "Government ID Number"} <span style={{ color: "#e11d48" }}>*</span>
+                          </label>
+                          <input
+                            id="idNumber"
+                            name="idNumber"
+                            type="text"
+                            className="rta-input-field"
+                            placeholder={formData.cardCategory === "Foreigner" ? "e.g. Z1234567 or A9876543" : "Enter numeric Government / Aadhaar ID No (digits only)"}
+                            value={formData.idNumber}
+                            onChange={handleChange}
+                            required
+                            style={{
+                              borderColor: formData.idNumber.trim()
+                                ? idNumberValidation.valid
+                                  ? "rgba(34, 197, 94, 0.5)"
+                                  : "rgba(225, 29, 72, 0.5)"
+                                : undefined,
+                            }}
+                          />
+                          {formData.idNumber.trim() && (
+                            <div
+                              style={{
+                                marginTop: "6px",
+                                padding: "6px 12px",
+                                borderRadius: "8px",
+                                fontSize: "12px",
+                                fontWeight: "600",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                background: idNumberValidation.valid
+                                  ? "rgba(34, 197, 94, 0.1)"
+                                  : "rgba(225, 29, 72, 0.1)",
+                                color: idNumberValidation.valid ? "#15803d" : "#be123c",
+                                border: idNumberValidation.valid
+                                  ? "1px solid rgba(34, 197, 94, 0.3)"
+                                  : "1px solid rgba(225, 29, 72, 0.3)",
+                              }}
+                            >
+                              <span>{idNumberValidation.valid ? idNumberValidation.message : `⚠️ ${idNumberValidation.message}`}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* CONDITIONAL DOCUMENT UPLOAD LOGIC */}
@@ -692,10 +1046,10 @@ export default function CardApplication() {
                         <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#6d28d9", marginBottom: "12px" }}>
                           📘 Upload Student ID Card (Required *)
                         </h4>
-                        
+
                         <div style={{ marginBottom: "14px" }}>
                           <label htmlFor="institutionName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                            School / College / Institution Name <span style={{ color: "#e11d48" }}>*</span>
+                            School / College / Institution Name <span style={{ color: "#e11d48" }}>*</span> <span style={{ fontSize: "11px", color: "#64748b", fontWeight: "600" }}>(Letters only, no numbers)</span>
                           </label>
                           <input
                             id="institutionName"
@@ -705,7 +1059,20 @@ export default function CardApplication() {
                             placeholder="e.g. Cochin University of Science and Technology"
                             value={formData.institutionName}
                             onChange={handleChange}
+                            required
+                            style={{
+                              borderColor: formData.institutionName.trim()
+                                ? institutionNameValidation.valid
+                                  ? "rgba(34, 197, 94, 0.5)"
+                                  : "rgba(225, 29, 72, 0.5)"
+                                : undefined,
+                            }}
                           />
+                          {formData.institutionName.trim() && (
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: institutionNameValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                              {institutionNameValidation.valid ? "✓ Valid Institution Name (No numbers)" : `⚠️ ${institutionNameValidation.message}`}
+                            </div>
+                          )}
                         </div>
 
                         <div>
@@ -790,70 +1157,25 @@ export default function CardApplication() {
                 </div>
               )}
 
-              {/* STEP 4: Travel Preferences & Emergency Contact */}
+              {/* STEP 4: Emergency Contact Details */}
               {step === 4 && (
                 <div>
                   <h3 style={{ fontSize: "20px", fontWeight: "800", color: "#1e293b", marginBottom: "6px" }}>
-                    4. Travel Preferences & Emergency Contact
+                    4. Emergency Contact Details
                   </h3>
                   <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "24px" }}>
-                    Configure your daily commute details and safety contact.
+                    Provide a trusted emergency contact for safety and account notifications.
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-                      <div>
-                        <label htmlFor="frequentSource" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Frequent Starting Station
-                        </label>
-                        <input
-                          id="frequentSource"
-                          name="frequentSource"
-                          type="text"
-                          className="rta-input-field"
-                          placeholder="e.g. Kochi Bus Stand"
-                          value={formData.frequentSource}
-                          onChange={handleChange}
-                        />
-                      </div>
-
-                      <div>
-                        <label htmlFor="frequentDestination" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Frequent Destination
-                        </label>
-                        <input
-                          id="frequentDestination"
-                          name="frequentDestination"
-                          type="text"
-                          className="rta-input-field"
-                          placeholder="e.g. Thiruvananthapuram Central"
-                          value={formData.frequentDestination}
-                          onChange={handleChange}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label htmlFor="preferredTime" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Preferred Travel Time Window
-                      </label>
-                      <select id="preferredTime" name="preferredTime" className="rta-input-field" value={formData.preferredTime} onChange={handleChange}>
-                        <option value="Morning">Morning Peak (06:00 AM - 11:00 AM)</option>
-                        <option value="Afternoon">Afternoon (11:00 AM - 04:00 PM)</option>
-                        <option value="Evening">Evening Peak (04:00 PM - 09:00 PM)</option>
-                      </select>
-                    </div>
-
-                    <hr style={{ border: "none", borderTop: "1px solid var(--border-color)", margin: "10px 0" }} />
-
                     <h4 style={{ fontSize: "15px", fontWeight: "800", color: "#1e293b" }}>
-                      🚨 Emergency Contact Details
+                      🚨 Emergency Contact Details <span style={{ color: "#e11d48" }}>*</span>
                     </h4>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
                       <div>
                         <label htmlFor="emergencyName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Contact Name
+                          Contact Name <span style={{ color: "#e11d48" }}>*</span>
                         </label>
                         <input
                           id="emergencyName"
@@ -863,12 +1185,25 @@ export default function CardApplication() {
                           placeholder="e.g. Parent / Spouse"
                           value={formData.emergencyName}
                           onChange={handleChange}
+                          required
+                          style={{
+                            borderColor: formData.emergencyName.trim()
+                              ? emergencyNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
+                          }}
                         />
+                        {formData.emergencyName.trim() && (
+                          <div style={{ marginTop: "6px", fontSize: "11px", color: emergencyNameValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                            {emergencyNameValidation.valid ? "✓ Valid Name" : `⚠️ ${emergencyNameValidation.message}`}
+                          </div>
+                        )}
                       </div>
 
                       <div>
                         <label htmlFor="emergencyRelation" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Relation
+                          Relation <span style={{ color: "#e11d48" }}>*</span>
                         </label>
                         <input
                           id="emergencyRelation"
@@ -878,22 +1213,65 @@ export default function CardApplication() {
                           placeholder="e.g. Father"
                           value={formData.emergencyRelation}
                           onChange={handleChange}
+                          required
                         />
                       </div>
 
                       <div>
                         <label htmlFor="emergencyPhone" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Emergency Phone
+                          Emergency Phone <span style={{ color: "#e11d48" }}>*</span>
                         </label>
-                        <input
-                          id="emergencyPhone"
-                          name="emergencyPhone"
-                          type="tel"
-                          className="rta-input-field"
-                          placeholder="e.g. 9876500000"
-                          value={formData.emergencyPhone}
-                          onChange={handleChange}
-                        />
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <select
+                            id="emergencyCountryCode"
+                            name="emergencyCountryCode"
+                            className="rta-input-field"
+                            value={formData.emergencyCountryCode || "+91"}
+                            onChange={handleChange}
+                            style={{ maxWidth: "115px", padding: "8px", fontWeight: "700", cursor: "pointer", background: "#f8fafc", fontSize: "12px" }}
+                          >
+                            {COUNTRY_CODES.map((c) => (
+                              <option key={`em-${c.code}-${c.dialCode}`} value={c.dialCode}>
+                                {c.flag} {c.dialCode}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            id="emergencyPhone"
+                            name="emergencyPhone"
+                            type="tel"
+                            className="rta-input-field"
+                            placeholder={getCountryByCode(formData.emergencyCountryCode).placeholder || "Emergency phone"}
+                            value={formData.emergencyPhone}
+                            onChange={handleChange}
+                            required
+                          />
+                        </div>
+                        {formData.emergencyPhone && (
+                          <div
+                            style={{
+                              marginTop: "6px",
+                              padding: "6px 10px",
+                              borderRadius: "8px",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              background:
+                                emergencyPhoneValidation.badgeType === "success"
+                                  ? "rgba(34, 197, 94, 0.1)"
+                                  : emergencyPhoneValidation.badgeType === "error"
+                                    ? "rgba(225, 29, 72, 0.1)"
+                                    : "rgba(245, 158, 11, 0.12)",
+                              color:
+                                emergencyPhoneValidation.badgeType === "success"
+                                  ? "#15803d"
+                                  : emergencyPhoneValidation.badgeType === "error"
+                                    ? "#be123c"
+                                    : "#b45309",
+                            }}
+                          >
+                            {emergencyPhoneValidation.message}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -912,30 +1290,17 @@ export default function CardApplication() {
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                    
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-                      <div>
-                        <label htmlFor="initialRecharge" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Initial Wallet Recharge (INR/AED)
-                        </label>
-                        <select id="initialRecharge" name="initialRecharge" className="rta-input-field" value={formData.initialRecharge} onChange={handleChange}>
-                          <option value="20">20 (Minimum Balance)</option>
-                          <option value="50">50</option>
-                          <option value="100">100</option>
-                          <option value="200">200</option>
-                        </select>
-                      </div>
 
-                      <div>
-                        <label htmlFor="paymentMethod" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Payment Method
-                        </label>
-                        <select id="paymentMethod" name="paymentMethod" className="rta-input-field" value={formData.paymentMethod} onChange={handleChange}>
-                          <option value="Razorpay">Razorpay Gateway (UPI / Cards / NetBanking)</option>
-                          <option value="UPI">Razorpay Instant UPI (Google Pay, PhonePe, Paytm)</option>
-                          <option value="Card">Razorpay Credit / Debit Card</option>
-                        </select>
-                      </div>
+                    <div>
+                      <label htmlFor="initialRecharge" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                        Initial Wallet Recharge (INR/AED) <span style={{ color: "#e11d48" }}>*</span>
+                      </label>
+                      <select id="initialRecharge" name="initialRecharge" className="rta-input-field" value={formData.initialRecharge} onChange={handleChange} required>
+                        <option value="20">₹20 (Minimum Balance)</option>
+                        <option value="50">₹50</option>
+                        <option value="100">₹100</option>
+                        <option value="200">₹200</option>
+                      </select>
                     </div>
 
                     {/* Safety Toggles */}

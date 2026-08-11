@@ -28,9 +28,9 @@ function App(){
         <Route path="/book-bus" element={<BusBooking />} />
         <Route path="/wallet" element={<Wallet />} />
         <Route path="/profile" element={<Profile />} />
-        <Route path="/admin" element={<Admin />} />
-        <Route path="/admin/bus-routes" element={<AdminAddBusRoute />} />
-        <Route path="/admin/add-bus-route" element={<AdminAddBusRoute />} />
+        <Route path="/admin" element={<Admin defaultTab="overview" />} />
+        <Route path="/admin/bus-routes" element={<Admin defaultTab="busRoutes" />} />
+        <Route path="/admin/add-bus-route" element={<Admin defaultTab="busRoutes" />} />
       </Routes>
     </BrowserRouter>
   );

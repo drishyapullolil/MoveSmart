@@ -1,5 +1,13 @@
 const mongoose = require("mongoose");
 
+const routeStopSchema = new mongoose.Schema({
+  stop_id: { type: mongoose.Schema.Types.ObjectId, ref: "Stop" },
+  name: { type: String, required: true },
+  order: { type: Number, required: true },
+  travel_time_from_prev: { type: Number, default: 0 }, // Travel time in minutes from previous stop
+  offset_minutes: { type: Number, default: 0 }, // Cumulative offset in minutes from source stop
+}, { _id: false });
+
 const routeSchema = new mongoose.Schema(
   {
     routeId: {
@@ -33,12 +41,26 @@ const routeSchema = new mongoose.Schema(
       type: String,
       default: "4h 30m",
     },
+    total_duration_minutes: {
+      type: Number,
+      default: 270,
+    },
+    base_start_time: {
+      type: String,
+      default: "08:00 AM",
+    },
     frequency: {
       type: String,
       default: "Every 30 mins",
     },
-    stops: {
+    // Array of string names for backwards compatibility
+    legacyStops: {
       type: [String],
+      default: [],
+    },
+    // MoveSmart Offset-based structured stops
+    stops: {
+      type: [routeStopSchema],
       default: [],
     },
     fare: {

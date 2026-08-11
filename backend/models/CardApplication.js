@@ -12,39 +12,50 @@ const cardApplicationSchema = new mongoose.Schema({
     default: null,
   },
   // 1. Personal Information
-  fullName: { type: String, required: true },
-  dob: { type: String },
-  gender: { type: String },
-  phone: { type: String },
-  email: { type: String },
+  fullName: {
+    type: String,
+    required: [true, "Full Name is required"],
+    trim: true,
+    minlength: [2, "Full Name must be at least 2 characters long"],
+    validate: {
+      validator: function (v) {
+        return typeof v === "string" && !/\d/.test(v);
+      },
+      message: "Full Name cannot contain numbers",
+    },
+  },
+  dob: { type: String, required: [true, "Date of Birth is required"] },
+  gender: { type: String, required: [true, "Gender is required"] },
+  phone: { type: String, required: [true, "Phone Number is required"] },
+  email: { type: String, required: [true, "Email Address is required"] },
   phoneVerified: { type: Boolean, default: false },
 
   // 2. Address Details
-  street: { type: String },
-  city: { type: String },
-  district: { type: String },
-  state: { type: String, default: "Kerala" },
-  pincode: { type: String },
+  street: { type: String, required: [true, "Street / House Name is required"] },
+  city: { type: String, required: [true, "City is required"] },
+  district: { type: String, required: [true, "District is required"] },
+  state: { type: String, required: [true, "State is required"], default: "Kerala" },
+  pincode: { type: String, required: [true, "PIN Code is required"] },
 
   // 3. Identification Details
-  idType: { type: String, default: "Aadhaar" },
-  idNumber: { type: String, required: true },
+  idType: { type: String, required: true, default: "Aadhaar" },
+  idNumber: { type: String, required: [true, "ID Number is required"] },
   idProofUrl: { type: String },
-  cardCategory: { type: String, default: "Regular" },
+  cardCategory: { type: String, required: true, default: "Regular" },
   institutionName: { type: String },
   studentIdUrl: { type: String },
 
-  // 4. Travel Preferences & Emergency
-  frequentSource: { type: String },
-  frequentDestination: { type: String },
-  preferredTime: { type: String, enum: ["Morning", "Afternoon", "Evening"], default: "Morning" },
-  emergencyName: { type: String },
-  emergencyRelation: { type: String },
-  emergencyPhone: { type: String },
+  // 4. Emergency Contact
+  frequentSource: { type: String, required: false, default: "N/A" },
+  frequentDestination: { type: String, required: false, default: "N/A" },
+  preferredTime: { type: String, required: false, default: "Morning" },
+  emergencyName: { type: String, required: [true, "Emergency Contact Name is required"] },
+  emergencyRelation: { type: String, required: [true, "Emergency Contact Relation is required"] },
+  emergencyPhone: { type: String, required: [true, "Emergency Phone is required"] },
 
   // 5. Wallet & Safety
-  initialRecharge: { type: Number, default: 20 },
-  paymentMethod: { type: String, enum: ["Razorpay", "UPI", "Card", "Cash"], default: "Razorpay" },
+  initialRecharge: { type: Number, required: true, default: 20 },
+  paymentMethod: { type: String, required: false, default: "Razorpay" },
   enableSos: { type: Boolean, default: true },
   shareLocation: { type: Boolean, default: false },
   termsAccepted: { type: Boolean, default: true },

@@ -4,6 +4,12 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { sendOtpEmail } = require("../utils/mailer");
 
+const {
+  validatePhoneNumber,
+  validateDrivingLicense,
+  validateExperienceYears,
+} = require("../utils/formValidators");
+
 const router = express.Router();
 
 const otpStore = new Map();
@@ -170,17 +176,17 @@ router.post("/login", async (req, res) => {
             { expiresIn: "7d" }
         );
 
-            res.json({
-                message: "Login successful",
-                token,
-                user: {
-                    id: user._id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    verificationStatus: user.verificationStatus
-                }
-            });
+        res.json({
+            message: "Login successful",
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                verificationStatus: user.verificationStatus
+            }
+        });
 
 
     } catch (error) {
@@ -366,16 +372,31 @@ router.get("/me", protect, async (req, res) => {
 // APPLY DRIVER POST API
 router.post("/apply-driver", protect, async (req, res) => {
     try {
-        const { licenseNumber, experienceYears, phone, profilePic, licenseImage } = req.body;
+        const { licenseNumber, experienceYears, phone, countryCode = "+91", profilePic, licenseImage } = req.body;
         const user = await User.findById(req.user._id);
-        
+
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
 
+        const phoneCheck = validatePhoneNumber(countryCode, phone);
+        if (!phoneCheck.valid) {
+            return res.status(400).json({ message: phoneCheck.message });
+        }
+
+        const expCheck = validateExperienceYears(experienceYears);
+        if (!expCheck.valid) {
+            return res.status(400).json({ message: expCheck.message });
+        }
+
+        const licenseCheck = validateDrivingLicense(licenseNumber);
+        if (!licenseCheck.valid) {
+            return res.status(400).json({ message: licenseCheck.message });
+        }
+
         user.licenseNumber = licenseNumber;
         user.experienceYears = experienceYears;
-        user.phone = phone;
+        user.phone = phoneCheck.formatted || phone;
         if (profilePic) user.profilePic = profilePic;
         if (licenseImage) user.licenseImage = licenseImage;
         user.verificationStatus = "Pending";

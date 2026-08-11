@@ -7,6 +7,17 @@ const Journey = require("../models/Journey");
 const CardApplication = require("../models/CardApplication");
 const Transaction = require("../models/Transaction");
 const { sendApplicationStatusEmail } = require("../utils/mailer");
+const {
+  validateEmail,
+  validateDob,
+  validatePincode,
+  validateLocationName,
+  validateInstitutionName,
+  validateIdNumber,
+  validateStreet,
+  validateName,
+  validatePhoneNumber,
+} = require("../utils/formValidators");
 
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
@@ -728,6 +739,104 @@ router.post("/tap", async (req, res) => {
 router.post("/apply", async (req, res) => {
   try {
     const data = req.body;
+
+    // 1. Personal Info Validation
+    const nameCheck = validateName(data.fullName);
+    if (!nameCheck.valid) {
+      return res.status(400).json({ error: nameCheck.message, reason: nameCheck.reason });
+    }
+
+    const dobCheck = validateDob(data.dob);
+    if (!dobCheck.valid) {
+      return res.status(400).json({ error: dobCheck.message });
+    }
+
+    if (!data.gender) {
+      return res.status(400).json({ error: "Gender is required." });
+    }
+
+    const phoneCheck = validatePhoneNumber(data.phone);
+    if (!phoneCheck.valid) {
+      return res.status(400).json({ error: phoneCheck.message, reason: phoneCheck.reason });
+    }
+
+    const emailCheck = validateEmail(data.email);
+    if (!emailCheck.valid) {
+      return res.status(400).json({ error: emailCheck.message });
+    }
+
+    // 2. Address Details Validation
+    const streetCheck = validateStreet(data.street);
+    if (!streetCheck.valid) {
+      return res.status(400).json({ error: streetCheck.message });
+    }
+
+    const cityCheck = validateLocationName(data.city, "City");
+    if (!cityCheck.valid) {
+      return res.status(400).json({ error: cityCheck.message });
+    }
+
+    const districtCheck = validateLocationName(data.district, "District");
+    if (!districtCheck.valid) {
+      return res.status(400).json({ error: districtCheck.message });
+    }
+
+    if (!data.state || !data.state.trim() || data.state.trim().length < 2) {
+      return res.status(400).json({ error: "State is required." });
+    }
+
+    const pincodeCheck = validatePincode(data.pincode);
+    if (!pincodeCheck.valid) {
+      return res.status(400).json({ error: pincodeCheck.message });
+    }
+
+    // 3. ID & Category Validation
+    if (!data.cardCategory) {
+      return res.status(400).json({ error: "Pass Type selection is required." });
+    }
+
+    if (data.cardCategory === "Student") {
+      const instCheck = validateInstitutionName(data.institutionName);
+      if (!instCheck.valid) {
+        return res.status(400).json({ error: instCheck.message });
+      }
+      if (!data.studentIdUrl) {
+        return res.status(400).json({ error: "Student ID Card document upload is required." });
+      }
+      data.idNumber = data.idNumber || "STUDENT-PASS";
+    } else {
+      const idNumberCheck = validateIdNumber(data.idNumber, data.cardCategory);
+      if (!idNumberCheck.valid) {
+        return res.status(400).json({ error: idNumberCheck.message });
+      }
+      if (!data.idProofUrl) {
+        return res.status(400).json({ error: "ID Proof document upload is required." });
+      }
+    }
+
+    // 4. Emergency Contact Validation
+    data.frequentSource = data.frequentSource || "N/A";
+    data.frequentDestination = data.frequentDestination || "N/A";
+
+    const emergencyNameCheck = validateName(data.emergencyName);
+    if (!emergencyNameCheck.valid) {
+      return res.status(400).json({ error: `Emergency Contact Name error: ${emergencyNameCheck.message}` });
+    }
+
+    if (!data.emergencyRelation || !data.emergencyRelation.trim() || data.emergencyRelation.trim().length < 2) {
+      return res.status(400).json({ error: "Emergency Contact Relation is required." });
+    }
+
+    const emergencyPhoneCheck = validatePhoneNumber(data.emergencyPhone);
+    if (!emergencyPhoneCheck.valid) {
+      return res.status(400).json({ error: `Emergency Phone error: ${emergencyPhoneCheck.message}` });
+    }
+
+    // 5. Terms Acceptance
+    if (!data.termsAccepted) {
+      return res.status(400).json({ error: "You must accept the Terms & Conditions to submit application." });
+    }
+
     const count = await CardApplication.countDocuments();
     const applicationId = `APP-MS-${(count + 1001).toString()}`;
 
@@ -737,7 +846,7 @@ router.post("/apply", async (req, res) => {
       fullName: data.fullName || "Commuter",
       dob: data.dob,
       gender: data.gender,
-      phone: data.phone,
+      phone: phoneCheck.formatted || data.phone,
       email: data.email,
       phoneVerified: data.phoneVerified || false,
 

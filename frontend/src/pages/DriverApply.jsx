@@ -4,6 +4,12 @@ import axios from "axios";
 import { getStoredUser, getStoredToken, setStoredUser } from "../utils/session";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import { COUNTRY_CODES } from "../utils/countryPhoneData";
+import { validatePhoneNumber } from "../utils/phoneValidator";
+import {
+  validateDrivingLicense,
+  validateExperienceYears,
+} from "../utils/formValidators";
 
 function DriverApply() {
   const navigate = useNavigate();
@@ -11,6 +17,7 @@ function DriverApply() {
   const [submitting, setSubmitting] = useState(false);
   
   const [formData, setFormData] = useState({
+    countryCode: "+91",
     licenseNumber: user?.licenseNumber || "",
     experienceYears: user?.experienceYears || "",
     phone: user?.phone || "",
@@ -28,12 +35,16 @@ function DriverApply() {
     }
   }, [user, navigate]);
 
+  const phoneValidation = validatePhoneNumber(formData.countryCode || "+91", formData.phone);
+  const expValidation = validateExperienceYears(formData.experienceYears);
+  const licenseValidation = validateDrivingLicense(formData.licenseNumber);
+
   const handleFileUpload = (e, field) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setFormData({ ...formData, [field]: reader.result });
+        setFormData((prev) => ({ ...prev, [field]: reader.result }));
       };
       reader.readAsDataURL(file);
     }
@@ -41,8 +52,34 @@ function DriverApply() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.licenseNumber || !formData.experienceYears || !formData.phone) {
-      alert("Please fill all required fields!");
+
+    if (!formData.phone || !formData.phone.trim()) {
+      alert("⚠️ Contact Phone Number is required!");
+      return;
+    }
+
+    if (!phoneValidation.valid) {
+      alert(`⚠️ Contact Phone Error: ${phoneValidation.message}`);
+      return;
+    }
+
+    if (!expValidation.valid) {
+      alert(`⚠️ Experience Error: ${expValidation.message}`);
+      return;
+    }
+
+    if (!licenseValidation.valid) {
+      alert(`⚠️ Driving License Error: ${licenseValidation.message}`);
+      return;
+    }
+
+    if (!formData.profilePic) {
+      alert("⚠️ Profile Photo upload is required!");
+      return;
+    }
+
+    if (!formData.licenseImage) {
+      alert("⚠️ License Document upload is required!");
       return;
     }
 
@@ -57,6 +94,7 @@ function DriverApply() {
         const updatedUser = {
           ...user,
           ...formData,
+          phone: phoneValidation.formatted || formData.phone,
           verificationStatus: "Pending"
         };
         setUser(updatedUser);
@@ -210,23 +248,110 @@ function DriverApply() {
               </div>
 
               <form onSubmit={handleSubmit}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "16px" }}>
                   <div>
-                    <label style={styles.formLabel}>Contact Phone <span style={{color:"#e11d48"}}>*</span></label>
-                    <input type="text" required value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} placeholder="+91 98765 43210" style={styles.formInput} />
+                    <label style={styles.formLabel}>Contact Phone (India +91) <span style={{color:"#e11d48"}}>*</span></label>
+                    <div style={{ display: "flex", alignItems: "center", marginBottom: "14px" }}>
+                      <div
+                        style={{
+                          padding: "14px 14px",
+                          background: "#e2e8f0",
+                          border: "1.5px solid #cbd5e1",
+                          borderRight: "none",
+                          borderRadius: "12px 0 0 12px",
+                          fontSize: "14px",
+                          fontWeight: "800",
+                          color: "#334155",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <span>🇮🇳</span>
+                        <span>+91</span>
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        placeholder="98765 43210"
+                        style={{
+                          ...styles.formInput,
+                          borderRadius: "0 12px 12px 0",
+                          marginBottom: 0,
+                          borderColor: formData.phone.trim()
+                            ? phoneValidation.valid
+                              ? "rgba(34, 197, 94, 0.6)"
+                              : "rgba(225, 29, 72, 0.6)"
+                            : "#cbd5e1",
+                        }}
+                      />
+                    </div>
+                    {formData.phone.trim() && (
+                      <div style={{ marginTop: "-8px", marginBottom: "14px", fontSize: "11px", color: phoneValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                        {phoneValidation.valid ? "✓ Valid 10-Digit Indian Mobile Number (+91)" : `⚠️ ${phoneValidation.message}`}
+                      </div>
+                    )}
                   </div>
+
                   <div>
                     <label style={styles.formLabel}>Years of Experience <span style={{color:"#e11d48"}}>*</span></label>
-                    <input type="number" required value={formData.experienceYears} onChange={(e) => setFormData({...formData, experienceYears: e.target.value})} placeholder="e.g. 5" style={styles.formInput} />
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      max="50"
+                      value={formData.experienceYears}
+                      onChange={(e) => setFormData({ ...formData, experienceYears: e.target.value })}
+                      placeholder="e.g. 5"
+                      style={{
+                        ...styles.formInput,
+                        marginBottom: formData.experienceYears.toString().trim() ? "6px" : "20px",
+                        borderColor: formData.experienceYears.toString().trim()
+                          ? expValidation.valid
+                            ? "rgba(34, 197, 94, 0.6)"
+                            : "rgba(225, 29, 72, 0.6)"
+                          : "#cbd5e1",
+                      }}
+                    />
+                    {formData.experienceYears.toString().trim() && (
+                      <div style={{ marginBottom: "14px", fontSize: "11px", color: expValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                        {expValidation.valid ? "✓ Valid Experience Level" : `⚠️ ${expValidation.message}`}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <label style={styles.formLabel}>Driving License Number <span style={{color:"#e11d48"}}>*</span></label>
-                <input type="text" required value={formData.licenseNumber} onChange={(e) => setFormData({...formData, licenseNumber: e.target.value})} placeholder="e.g. KL-07-2018-99210" style={styles.formInput} />
+                <div>
+                  <label style={styles.formLabel}>Driving License Number <span style={{color:"#e11d48"}}>*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.licenseNumber}
+                    onChange={(e) => setFormData({ ...formData, licenseNumber: e.target.value.toUpperCase() })}
+                    placeholder="e.g. KL-07-2018-99210"
+                    style={{
+                      ...styles.formInput,
+                      marginBottom: formData.licenseNumber.trim() ? "6px" : "20px",
+                      borderColor: formData.licenseNumber.trim()
+                        ? licenseValidation.valid
+                          ? "rgba(34, 197, 94, 0.6)"
+                          : "rgba(225, 29, 72, 0.6)"
+                        : "#cbd5e1",
+                    }}
+                  />
+                  {formData.licenseNumber.trim() && (
+                    <div style={{ marginBottom: "14px", fontSize: "11px", color: licenseValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                      {licenseValidation.valid ? "✓ Valid Driving License Number" : `⚠️ ${licenseValidation.message}`}
+                    </div>
+                  )}
+                </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                   <div>
-                    <label style={styles.formLabel}>Profile Photo</label>
+                    <label style={styles.formLabel}>Profile Photo <span style={{color:"#e11d48"}}>*</span></label>
                     <div style={{...styles.fileUploadBox, border: formData.profilePic ? "2px solid #38a169" : styles.fileUploadBox.border, background: formData.profilePic ? "#f0fdf4" : styles.fileUploadBox.background}}>
                       <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ opacity: 0, position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "pointer" }} />
                       {formData.profilePic ? (
@@ -244,7 +369,7 @@ function DriverApply() {
                   </div>
 
                   <div>
-                    <label style={styles.formLabel}>License Document</label>
+                    <label style={styles.formLabel}>License Document <span style={{color:"#e11d48"}}>*</span></label>
                     <div style={{...styles.fileUploadBox, border: formData.licenseImage ? "2px solid #38a169" : styles.fileUploadBox.border, background: formData.licenseImage ? "#f0fdf4" : styles.fileUploadBox.background}}>
                       <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ opacity: 0, position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "pointer" }} />
                       {formData.licenseImage ? (

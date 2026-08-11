@@ -1,14 +1,65 @@
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { getStoredUser, clearStoredSession, getStoredToken } from "../utils/session";
 import AdminHeader from "../components/AdminHeader";
 import AdminFooter from "../components/AdminFooter";
+import AdminAddBusRoute from "./AdminAddBusRoute";
+import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
+import {
+  LayoutDashboard,
+  CreditCard,
+  UserCheck,
+  CalendarX,
+  FileCheck,
+  Bus,
+  Users,
+  Wallet,
+  LogOut,
+  ChevronLeft,
+  ChevronRight,
+  Sun,
+  Moon,
+  Bell,
+  CheckCircle,
+  AlertCircle,
+  Search,
+  Check,
+  X,
+  Eye,
+  RefreshCw,
+  Plus,
+  Trash2,
+  Edit2,
+  ShieldCheck,
+  Award,
+  Phone,
+  FileText,
+  DollarSign,
+  Route as RouteIcon,
+  Zap,
+  Navigation,
+  Menu,
+  Sliders,
+  Calendar
+} from "lucide-react";
 
-export default function Admin() {
+export default function Admin({ defaultTab = "overview" }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState(() => getStoredUser());
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
+      return "busRoutes";
+    }
+    return defaultTab;
+  });
+
+  useEffect(() => {
+    if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
+      setActiveTab("busRoutes");
+    }
+  }, [location.pathname]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -479,8 +530,8 @@ export default function Admin() {
           alignItems: "center",
           gap: "10px",
           animation: "slideIn 0.3s ease",
-        }}>
-          <span>{toast.type === "error" ? "⚠️" : "🔔"}</span>
+            }}>
+          <span>{toast.type === "error" ? <AlertCircle size={18} /> : <CheckCircle size={18} />}</span>
           {toast.message}
         </div>
       )}
@@ -502,17 +553,31 @@ export default function Admin() {
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <button 
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
-            style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: textPrimary }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center" }}
           >
-            ☰
+            <Menu size={20} />
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "linear-gradient(135deg, #6d28d9, #2e1065)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: "18px" }}>
-              M
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div
+              style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "12px",
+                background: "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "4px",
+                boxShadow: "0 4px 14px rgba(109, 40, 217, 0.15)",
+                border: "1.5px solid rgba(139, 92, 246, 0.3)",
+                flexShrink: 0,
+              }}
+            >
+              <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <div>
-              <strong style={{ fontSize: "17px", fontWeight: "900", letterSpacing: "-0.3px", color: textPrimary, display: "block" }}>MoveSmart</strong>
-              <span style={{ fontSize: "11px", fontWeight: "800", color: "#a78bfa", textTransform: "uppercase" }}>Admin Console</span>
+              <strong style={{ fontSize: "18px", fontWeight: "900", letterSpacing: "-0.4px", color: textPrimary, display: "block", lineHeight: 1.1 }}>MoveSmart</strong>
+              <span style={{ fontSize: "11px", fontWeight: "800", color: "#8b5cf6", letterSpacing: "0.5px", textTransform: "uppercase", marginTop: "2px", display: "block" }}>Admin Console</span>
             </div>
           </div>
         </div>
@@ -524,9 +589,9 @@ export default function Admin() {
           <div style={{ position: "relative" }}>
             <button 
               onClick={() => setNotificationOpen(!notificationOpen)}
-              style={{ background: "none", border: `1px solid ${borderCol}`, width: "40px", height: "40px", borderRadius: "12px", cursor: "pointer", fontSize: "18px", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+              style={{ background: "none", border: `1px solid ${borderCol}`, width: "40px", height: "40px", borderRadius: "12px", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
             >
-              🔔
+              <Bell size={18} />
               {totalNotificationCount > 0 && (
                 <span style={{ position: "absolute", top: "-4px", right: "-4px", background: "#ef4444", color: "#ffffff", fontSize: "10.5px", fontWeight: "900", width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {totalNotificationCount}
@@ -541,14 +606,14 @@ export default function Admin() {
                   System Notifications
                 </h4>
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "12.5px" }}>
-                  <div onClick={() => { setActiveTab("applications"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer" }}>
-                    📥 <strong>{pendingAppsCount} Card Applications</strong> pending review
+                  <div onClick={() => { setActiveTab("applications"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <FileCheck size={14} style={{ color: "#0ea5e9" }} /> <strong>{pendingAppsCount} Card Applications</strong> pending
                   </div>
-                  <div onClick={() => { setActiveTab("drivers"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer" }}>
-                    🪪 <strong>{pendingDriversCount} Driver Licenses</strong> awaiting verification
+                  <div onClick={() => { setActiveTab("drivers"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <UserCheck size={14} style={{ color: "#8b5cf6" }} /> <strong>{pendingDriversCount} Driver Licenses</strong> awaiting review
                   </div>
-                  <div onClick={() => { setActiveTab("busRequests"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer" }}>
-                    🚌 <strong>{pendingBusReqsCount} Bus Assignment Requests</strong> pending
+                  <div onClick={() => { setActiveTab("busRequests"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Bus size={14} style={{ color: "#10b981" }} /> <strong>{pendingBusReqsCount} Bus Assignment Requests</strong> pending
                   </div>
                 </div>
               </div>
@@ -560,7 +625,7 @@ export default function Admin() {
             onClick={() => setDarkMode(!darkMode)} 
             style={{ background: "none", border: `1px solid ${borderCol}`, padding: "8px 14px", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "700", color: textPrimary, display: "flex", alignItems: "center", gap: "6px" }}
           >
-            {darkMode ? "☀️ Light" : "🌙 Dark"}
+            {darkMode ? <Sun size={14} /> : <Moon size={14} />} {darkMode ? "Light" : "Dark"}
           </button>
 
           {/* Admin Profile & Logout */}
@@ -596,18 +661,19 @@ export default function Admin() {
           flexShrink: 0
         }}>
           {[
-            { id: "overview", label: "Dashboard Overview", icon: "📊" },
-            { id: "applications", label: "Card Applications", icon: "📥", badge: pendingAppsCount },
-            { id: "cards", label: "RFID Card Portal", icon: "💳" },
-            { id: "passengers", label: "Passengers & Wallet", icon: "👥" },
-            { id: "drivers", label: "Driver Management", icon: "🧑✈️", badge: pendingDriversCount },
-            { id: "busRequests", label: "Bus Requests", icon: "🚌", badge: pendingBusReqsCount },
-            { id: "routes", label: "Routes & Stops", icon: "📍" },
-            { id: "transactions", label: "Payments & Logs", icon: "💰" },
-            { id: "leaves", label: "Driver Leaves", icon: "📅" },
-            { id: "settings", label: "Settings & Tools", icon: "⚙️" },
+            { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
+            { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
+            { id: "applications", label: "Card Applications", Icon: FileCheck, badge: pendingAppsCount },
+            { id: "cards", label: "RFID Card Portal", Icon: CreditCard },
+            { id: "passengers", label: "Passengers & Wallet", Icon: Users },
+            { id: "drivers", label: "Driver Management", Icon: UserCheck, badge: pendingDriversCount },
+            { id: "busRequests", label: "Bus Requests", Icon: Bus, badge: pendingBusReqsCount },
+            { id: "transactions", label: "Payments & Logs", Icon: Wallet },
+            { id: "leaves", label: "Driver Leaves", Icon: CalendarX },
+            { id: "settings", label: "Settings & Tools", Icon: ShieldCheck },
           ].map((item) => {
             const isSel = activeTab === item.id;
+            const ItemIcon = item.Icon;
             return (
               <button
                 key={item.id}
@@ -630,7 +696,7 @@ export default function Admin() {
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span style={{ fontSize: "18px" }}>{item.icon}</span>
+                  <ItemIcon size={18} style={{ color: isSel ? "#ffffff" : textSecondary }} />
                   {!sidebarCollapsed && <span>{item.label}</span>}
                 </div>
 
@@ -650,6 +716,41 @@ export default function Admin() {
           {/* SECTION 1: DASHBOARD OVERVIEW */}
           {activeTab === "overview" && (
             <div className="fade-in-section">
+
+              {/* MoveSmart Offset Bus Timing & Schedule Banner */}
+              <div style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #311042 100%)", color: "#ffffff", padding: "20px 24px", borderRadius: "20px", marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", boxShadow: "0 8px 24px rgba(49, 16, 66, 0.3)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <div>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(74, 222, 128, 0.2)", color: "#4ade80", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", marginBottom: "8px" }}>
+                    ⚡ MoveSmart Bus Timing Engine Active
+                  </div>
+                  <h3 style={{ fontSize: "19px", fontWeight: "900", margin: 0, color: "#ffffff" }}>
+                    📍 Bus Route Offset Timings &amp; Departure Schedule System
+                  </h3>
+                  <p style={{ color: "#c4b5fd", fontSize: "13px", marginTop: "4px", margin: 0, maxWidth: "650px" }}>
+                    Define incremental travel minutes between stops. Offsets, total duration, and live stop arrival timetables auto-calculate for any departure schedule.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    onClick={() => setActiveTab("busRoutes")}
+                    style={{
+                      padding: "12px 24px",
+                      borderRadius: "12px",
+                      background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
+                      color: "#ffffff",
+                      fontSize: "14px",
+                      fontWeight: "800",
+                      border: "none",
+                      cursor: "pointer",
+                      boxShadow: "0 4px 14px rgba(14, 165, 233, 0.4)",
+                    }}
+                  >
+                    Manage Bus Routes &amp; Schedules →
+                  </button>
+                </div>
+              </div>
+
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
                 <div>
                   <h2 style={{ fontSize: "24px", fontWeight: "900", margin: 0, color: textPrimary }}>System Executive Summary</h2>
@@ -693,7 +794,7 @@ export default function Admin() {
                 {/* 1. Daily Transactions Volume Visual Bar */}
                 <div style={{ background: bgCard, borderRadius: "24px", padding: "24px", border: `1px solid ${borderCol}` }}>
                   <h3 style={{ fontSize: "17px", fontWeight: "900", margin: "0 0 4px 0", color: textPrimary }}>📈 Daily Passenger Tap Volume</h3>
-                  <p style={{ fontSize: "12.5px", color: textSecondary, margin: "0 0 20px 0" }}>Weekly breakdown of bus tap-ins across KSRTC &amp; private routes.</p>
+                  <p style={{ fontSize: "12.5px", color: textSecondary, margin: "0 0 20px 0" }}>Weekly breakdown of bus tap-ins across express &amp; feeder routes.</p>
                   
                   <div style={{ display: "flex", alignItems: "flex-end", justifyBetween: "space-between", gap: "14px", height: "180px", paddingTop: "20px" }}>
                     {[
@@ -1115,66 +1216,12 @@ export default function Admin() {
             </div>
           )}
 
-          {/* SECTION 7: ROUTES & STOPS */}
-          {activeTab === "routes" && (
+
+
+          {/* SECTION: BUS ROUTES, OFFSET TIMINGS & SCHEDULES */}
+          {activeTab === "busRoutes" && (
             <div className="fade-in-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <div>
-                  <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary }}>📍 Routes &amp; Stop Distance Configuration</h2>
-                  <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>Add stops, configure inter-stop distances, and view transit routes.</p>
-                </div>
-                <button onClick={handleReSeed} style={{ padding: "8px 16px", borderRadius: "12px", background: "rgba(217, 119, 6, 0.1)", color: "#d97706", border: "1px solid rgba(217, 119, 6, 0.3)", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>
-                  🔄 Re-Seed Defaults
-                </button>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px" }}>
-                {/* Add Stop */}
-                <div style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}` }}>
-                  <h3 style={{ fontSize: "16.5px", fontWeight: "900", margin: "0 0 12px 0", color: textPrimary }}>➕ Add New Stop</h3>
-                  <form onSubmit={handleAddStop}>
-                    <div className="rta-input-group" style={{ marginBottom: "12px" }}>
-                      <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Stop Name</label>
-                      <input type="text" className="rta-input-field" value={newStopName} onChange={(e) => setNewStopName(e.target.value)} required placeholder="e.g. Alappuzha KSRTC" />
-                    </div>
-                    <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                      <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Stop Code</label>
-                      <input type="text" className="rta-input-field" value={newStopCode} onChange={(e) => setNewStopCode(e.target.value)} required placeholder="e.g. ALP01" />
-                    </div>
-                    <button type="submit" style={{ width: "100%", padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
-                      Add Stop →
-                    </button>
-                  </form>
-                </div>
-
-                {/* Configure Distance */}
-                <div style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}` }}>
-                  <h3 style={{ fontSize: "16.5px", fontWeight: "900", margin: "0 0 12px 0", color: textPrimary }}>📏 Distance Settings (km)</h3>
-                  <form onSubmit={handleAddDistance}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
-                      <div>
-                        <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary }}>From Stop</label>
-                        <select className="rta-input-field" value={distFromStop} onChange={(e) => setDistFromStop(e.target.value)}>
-                          {dbStops.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary }}>To Stop</label>
-                        <select className="rta-input-field" value={distToStop} onChange={(e) => setDistToStop(e.target.value)}>
-                          {dbStops.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                      <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Distance (kilometers)</label>
-                      <input type="number" step="0.1" className="rta-input-field" value={distKm} onChange={(e) => setDistKm(e.target.value)} required placeholder="e.g. 14.5" />
-                    </div>
-                    <button type="submit" style={{ width: "100%", padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
-                      Save Distance →
-                    </button>
-                  </form>
-                </div>
-              </div>
+              <AdminAddBusRoute isEmbedded={true} />
             </div>
           )}
 

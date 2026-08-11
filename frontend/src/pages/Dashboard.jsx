@@ -67,8 +67,8 @@ function Dashboard() {
       {
         id: 1,
         mode: "Express Bus",
-        busName: "KSRTC Kerala Express",
-        busNumber: "KL-101",
+        busName: "MoveSmart Express",
+        busNumber: "KL-07-MS-8812",
         source: origin,
         destination,
         departureTime: planTime,
@@ -88,7 +88,7 @@ function Dashboard() {
       {
         id: 2,
         mode: "Direct Coach",
-        busName: "KSRTC Swift Deluxe",
+        busName: "MoveSmart Swift Deluxe",
         busNumber: "KL-202",
         source: origin,
         destination,
@@ -245,19 +245,19 @@ function Dashboard() {
       "K01": {
         name: "Kochi Bus Stand ➜ Thiruvananthapuram Central",
         frequency: "Every 30 mins",
-        stops: ["Kochi Bus Stand", "Alappuzha KSRTC", "Kollam Central", "Thiruvananthapuram Central"],
+        stops: ["Kochi Bus Stand", "Alappuzha Terminal", "Kollam Central", "Thiruvananthapuram Central"],
         timetable: ["06:00", "06:30", "07:00", "07:30", "08:00"]
       },
       "K02": {
         name: "Ernakulam (Kaloor) ➜ Kozhikode (Mofussil Stand)",
         frequency: "Every 45 mins",
-        stops: ["Ernakulam Kaloor", "Thrissur Sakthan", "Palakkad KSRTC", "Kozhikode Mofussil"],
+        stops: ["Ernakulam Kaloor", "Thrissur Sakthan", "Palakkad Central", "Kozhikode Mofussil"],
         timetable: ["05:45", "06:30", "07:15", "08:00", "08:45"]
       },
       "K03": {
         name: "Thiruvananthapuram ➜ Kottayam Express",
         frequency: "Every 20 mins",
-        stops: ["Thiruvananthapuram Central", "Nedumangad", "Kottayam KSRTC"],
+        stops: ["Thiruvananthapuram Central", "Nedumangad", "Kottayam Central"],
         timetable: ["06:10", "06:30", "06:50", "07:10", "07:30"]
       }
     };
@@ -306,7 +306,7 @@ function Dashboard() {
       } else if (q.includes("intercity") || q.includes("express")) {
         botResponse = "Yes, intercity express coaches connect major hubs like Ernakulam, Kozhikode, Thrissur, and Thiruvananthapuram. Check out the Express Tickets tab!";
       } else if (q.includes("fare") || q.includes("price")) {
-        botResponse = "Fares depend on transit distance. KSRTC and private express services offer dynamic pricing based on your destination.";
+        botResponse = "Fares depend on transit distance. MoveSmart express services offer dynamic pricing based on your destination.";
       }
 
       setChatMessages(prev => [...prev, { sender: "bot", text: botResponse }]);
@@ -349,7 +349,7 @@ function Dashboard() {
             MoveSmart <span style={{ color: "#a78bfa" }}>Transit Portal</span>
           </h1>
           <p style={{ fontSize: "14.5px", color: "#cbd5e1", margin: "10px auto 0 auto", maxWidth: "700px", lineHeight: "1.6" }}>
-            Plan inter-district routes, manage your virtual RFID smart wallet, view live KSRTC timetables, and book express coach lines across Kerala.
+            Plan inter-district routes, manage your virtual RFID smart wallet, view live bus timetables, and book express coach lines across Kerala.
           </p>
         </div>
       </header>
@@ -592,7 +592,7 @@ function Dashboard() {
                             </div>
                             <div style={{ textAlign: "right" }}>
                               <div style={{ fontSize: "18px", fontWeight: "900", color: "#2e1065" }}>₹ {res.fare}</div>
-                              <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "2px" }}>⭐ {res.rating} • {res.distance} • Live KSRTC GPS</div>
+                              <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "2px" }}>⭐ {res.rating} • {res.distance} • Live GPS</div>
                             </div>
                           </div>
                         </div>
@@ -728,7 +728,7 @@ function Dashboard() {
                           value={bookCardType}
                           onChange={(e) => setBookCardType(e.target.value)}
                         >
-                          <option value="Silver">Silver Pass (Standard KSRTC Fare)</option>
+                          <option value="Silver">Silver Pass (Standard Fare)</option>
                           <option value="Gold">Gold Pass (1.5x Fare, Premium A/C Express)</option>
                           <option value="Blue">Blue Pass (0.9x Student / Concession)</option>
                         </select>
@@ -935,7 +935,7 @@ function Dashboard() {
             <div className="fade-in-section">
               <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Bus Timetables &amp; Schedules</h3>
               <p style={{ color: "#64748b", fontSize: "13.5px", marginBottom: "24px" }}>
-                Search for KSRTC and private bus schedules by route code. Try searching <strong>K01</strong>, <strong>K02</strong>, or <strong>K03</strong>.
+                Search for bus schedules by route code. Try searching <strong>K01</strong>, <strong>K02</strong>, or <strong>K03</strong>.
               </p>
 
               <div style={{ display: "flex", gap: "12px", maxWidth: "600px", margin: "0 auto 32px auto", flexWrap: "wrap" }}>
@@ -1037,7 +1037,7 @@ function Dashboard() {
                       <option value="Thiruvananthapuram (Central Station)">Thiruvananthapuram (Central Station)</option>
                       <option value="Kozhikode (Private Bus Stand)">Kozhikode (Private Bus Stand)</option>
                       <option value="Thrissur (Sakthan Stand)">Thrissur (Sakthan Stand)</option>
-                      <option value="Kottayam (KSRTC Terminal)">Kottayam (KSRTC Terminal)</option>
+                      <option value="Kottayam (Central Terminal)">Kottayam (Central Terminal)</option>
                     </select>
                   </div>
 
@@ -1052,9 +1052,9 @@ function Dashboard() {
                       <option value="Thiruvananthapuram (Central Bus Station)">Thiruvananthapuram (Central Bus Station)</option>
                       <option value="Kozhikode (Mofussil Bus Stand)">Kozhikode (Mofussil Bus Stand)</option>
                       <option value="Thrissur (Central Station)">Thrissur (Central Station)</option>
-                      <option value="Kollam (KSRTC Bus Station)">Kollam (KSRTC Bus Station)</option>
+                      <option value="Kollam (Central Bus Station)">Kollam (Central Bus Station)</option>
                       <option value="Kannur (Central Bus Stand)">Kannur (Central Bus Stand)</option>
-                      <option value="Palakkad (KSRTC Terminal)">Palakkad (KSRTC Terminal)</option>
+                      <option value="Palakkad (Central Terminal)">Palakkad (Central Terminal)</option>
                     </select>
                   </div>
 
@@ -1127,7 +1127,7 @@ function Dashboard() {
               <h2 style={{ fontWeight: "900", fontSize: "24px", color: "#1e293b", marginBottom: "12px" }}>The Smart Way to Board &amp; Pay</h2>
               <p style={{ fontSize: "14px", color: "#64748b", lineHeight: "1.6", marginBottom: "20px" }}>
                 The <strong>MoveSmart Nol Card</strong> is an RFID smart pass enabling tap-and-go fare deduction across Kerala bus services.
-                Use it to ride KSRTC Fast Passenger, Swift Deluxe, and private feeder lines with dynamic distance-based calculation.
+                Use it to ride Fast Passenger, Swift Deluxe, and private feeder lines with dynamic distance-based calculation.
               </p>
               <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                 <Link to="/card-application" style={{ padding: "10px 20px", borderRadius: "12px", background: "#6d28d9", color: "#ffffff", textDecoration: "none", fontWeight: "800", fontSize: "13px" }}>Apply for Smart Pass</Link>

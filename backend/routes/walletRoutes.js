@@ -303,7 +303,7 @@ router.get("/transactions", async (req, res) => {
             isDebit: true,
             status: "Success",
             paymentMethod: "Wallet Balance",
-            description: "Bus Fare - Erattupetta to Pala (KSRTC Fast Passenger)",
+            description: "Bus Fare - Erattupetta to Pala (Express Fast Passenger)",
             cardNumber: "4910",
             user: userObjectId,
             createdAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),

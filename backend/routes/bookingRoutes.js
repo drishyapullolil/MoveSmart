@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const Bus = require("../models/Bus");
 const Booking = require("../models/Booking");
 const Route = require("../models/Route");
+const Schedule = require("../models/Schedule");
 
 // Initial Seed Data for testing
 const defaultBuses = [
@@ -34,7 +35,7 @@ const defaultBuses = [
     busNumber: "KL-14-MS-2045",
     busName: "SwiftConnect Multi-Axle Volvo",
     busType: "AC Luxury Seater (2+2)",
-    operator: "KSRTC Swift Connect",
+    operator: "MoveSmart Express Connect",
     fromLocation: "Kochi",
     toLocation: "Trivandrum",
     departureTime: "08:15 AM",
@@ -436,7 +437,10 @@ router.get("/locations", async (req, res) => {
       if (b.fromLocation) locationSet.add(b.fromLocation);
       if (b.toLocation) locationSet.add(b.toLocation);
       if (Array.isArray(b.stops)) {
-        b.stops.forEach((s) => locationSet.add(s));
+        b.stops.forEach((s) => {
+          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop) : s;
+          if (stName) locationSet.add(String(stName).trim());
+        });
       }
     });
 
@@ -445,7 +449,10 @@ router.get("/locations", async (req, res) => {
       if (r.fromLocation) locationSet.add(r.fromLocation);
       if (r.toLocation) locationSet.add(r.toLocation);
       if (Array.isArray(r.stops)) {
-        r.stops.forEach((s) => locationSet.add(s));
+        r.stops.forEach((s) => {
+          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop) : s;
+          if (stName) locationSet.add(String(stName).trim());
+        });
       }
     });
 
@@ -540,7 +547,9 @@ const matchLocationStr = (locationInDB, searchQuery) => {
 
 // Build a complete ordered sequence of all stops from origin to destination for a bus
 const buildCompleteStopsList = (bus) => {
-  const rawStops = Array.isArray(bus.stops) ? bus.stops.map((s) => String(s).trim()) : [];
+  const rawStops = Array.isArray(bus.stops)
+    ? bus.stops.map((s) => (typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop || "") : String(s)).trim())
+    : [];
   const list = [];
 
   if (bus.fromLocation) {
@@ -1042,15 +1051,79 @@ router.get("/admin/routes", async (req, res) => {
   }
 });
 
+function processStopsAndOffsets(stopsInput) {
+  let rawStops = [];
+  if (Array.isArray(stopsInput)) {
+    rawStops = stopsInput;
+  } else if (typeof stopsInput === "string") {
+    rawStops = stopsInput.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
+  let cumulative = 0;
+  const legacyList = [];
+  const structuredList = rawStops.map((st, idx) => {
+    let stopName = "";
+    let travelTime = 0;
+    let latitude = null;
+    let longitude = null;
+    let distanceFromPreviousStop = 0;
+    let cumulativeDistance = 0;
+    let source = "automatic";
+
+    if (typeof st === "object" && st !== null) {
+      stopName = (st.stopName || st.name || st.stop || "").trim();
+      travelTime = idx === 0 ? 0 : Math.max(0, Number(st.travel_time_from_prev) || 0);
+      latitude = st.latitude !== undefined && st.latitude !== null ? Number(st.latitude) : null;
+      longitude = st.longitude !== undefined && st.longitude !== null ? Number(st.longitude) : null;
+      distanceFromPreviousStop = Number(st.distanceFromPreviousStop || 0);
+      cumulativeDistance = Number(st.cumulativeDistance || 0);
+      source = st.source || "automatic";
+    } else {
+      stopName = String(st).trim();
+      travelTime = idx === 0 ? 0 : 25;
+    }
+
+    cumulative += travelTime;
+    legacyList.push(stopName);
+
+    return {
+      stopName: stopName,
+      name: stopName,
+      order: idx + 1,
+      latitude: latitude,
+      longitude: longitude,
+      distanceFromPreviousStop: distanceFromPreviousStop,
+      cumulativeDistance: cumulativeDistance,
+      travel_time_from_prev: travelTime,
+      offset_minutes: cumulative,
+      source: source,
+    };
+  });
+
+  const hours = Math.floor(cumulative / 60);
+  const remainingMins = cumulative % 60;
+  let formattedDuration = `${cumulative}m`;
+  if (hours > 0) {
+    formattedDuration = remainingMins === 0 ? `${hours}h` : `${hours}h ${remainingMins}m`;
+  }
+
+  return {
+    structuredStops: structuredList,
+    legacyStops: legacyList,
+    totalDurationMinutes: cumulative,
+    formattedDuration: cumulative > 0 ? formattedDuration : null,
+  };
+}
+
 // POST /admin/routes (Create new route)
 router.post("/admin/routes", async (req, res) => {
   try {
-    const { routeId, routeName, fromLocation, toLocation, distanceKm, duration, frequency, stops, fare, status } = req.body;
+    const { routeId, routeName, fromLocation, toLocation, startingPoint, destination, routeGeometry, totalDistance, distanceKm, duration, estimatedTravelTime, base_start_time, frequency, stops, fare, status } = req.body;
 
-    if (!routeId || !routeName || !fromLocation || !toLocation || !distanceKm || !fare) {
+    if (!routeId || (!fromLocation && !startingPoint?.name) || (!toLocation && !destination?.name) || (!distanceKm && !totalDistance) || !fare) {
       return res.status(400).json({
         success: false,
-        message: "Route ID, Route Name, From/To locations, distance, and fare are required.",
+        message: "Route ID, From/To locations, distance, and fare are required.",
       });
     }
 
@@ -1062,22 +1135,29 @@ router.post("/admin/routes", async (req, res) => {
       });
     }
 
-    let parsedStops = [];
-    if (Array.isArray(stops)) {
-      parsedStops = stops;
-    } else if (typeof stops === "string") {
-      parsedStops = stops.split(",").map((s) => s.trim()).filter(Boolean);
-    }
+    const { structuredStops, legacyStops, totalDurationMinutes, formattedDuration } = processStopsAndOffsets(stops);
+
+    const fromName = (fromLocation || startingPoint?.name || "").trim();
+    const toName = (toLocation || destination?.name || "").trim();
+    const generatedRouteName = routeName ? routeName.trim() : `${fromName} ➔ ${toName}`;
 
     const newRoute = new Route({
       routeId: routeId.trim().toUpperCase(),
-      routeName: routeName.trim(),
-      fromLocation: fromLocation.trim(),
-      toLocation: toLocation.trim(),
-      distanceKm: Number(distanceKm),
-      duration: duration || "4h 30m",
+      routeName: generatedRouteName,
+      fromLocation: fromName,
+      toLocation: toName,
+      startingPoint: startingPoint || { name: fromName, latitude: null, longitude: null },
+      destination: destination || { name: toName, latitude: null, longitude: null },
+      routeGeometry: routeGeometry || [],
+      totalDistance: Number(totalDistance || distanceKm || 0),
+      distanceKm: Number(distanceKm || totalDistance || 0),
+      duration: duration || estimatedTravelTime || formattedDuration || "4h 30m",
+      estimatedTravelTime: estimatedTravelTime || duration || formattedDuration || "4h 30m",
+      total_duration_minutes: totalDurationMinutes || 270,
+      base_start_time: base_start_time || "08:00 AM",
       frequency: frequency || "Every 30 mins",
-      stops: parsedStops,
+      legacyStops,
+      stops: structuredStops,
       fare: Number(fare),
       status: status || "Active",
     });
@@ -1103,22 +1183,30 @@ router.put("/admin/routes/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Route not found." });
     }
 
-    const { routeId, routeName, fromLocation, toLocation, distanceKm, duration, frequency, stops, fare, status } = req.body;
+    const { routeId, routeName, fromLocation, toLocation, startingPoint, destination, routeGeometry, totalDistance, distanceKm, duration, estimatedTravelTime, base_start_time, frequency, stops, fare, status } = req.body;
 
     if (routeId) route.routeId = routeId.trim().toUpperCase();
     if (routeName) route.routeName = routeName.trim();
     if (fromLocation) route.fromLocation = fromLocation.trim();
     if (toLocation) route.toLocation = toLocation.trim();
+    if (startingPoint) route.startingPoint = startingPoint;
+    if (destination) route.destination = destination;
+    if (routeGeometry) route.routeGeometry = routeGeometry;
+    if (totalDistance !== undefined) route.totalDistance = Number(totalDistance);
     if (distanceKm !== undefined) route.distanceKm = Number(distanceKm);
-    if (duration) route.duration = duration.trim();
+    if (base_start_time) route.base_start_time = base_start_time.trim();
     if (frequency) route.frequency = frequency.trim();
+
     if (stops !== undefined) {
-      if (Array.isArray(stops)) {
-        route.stops = stops;
-      } else if (typeof stops === "string") {
-        route.stops = stops.split(",").map((s) => s.trim()).filter(Boolean);
-      }
+      const { structuredStops, legacyStops, totalDurationMinutes, formattedDuration } = processStopsAndOffsets(stops);
+      route.stops = structuredStops;
+      route.legacyStops = legacyStops;
+      route.total_duration_minutes = totalDurationMinutes;
+      if (formattedDuration) route.duration = formattedDuration;
     }
+
+    if (duration) route.duration = duration.trim();
+    if (estimatedTravelTime) route.estimatedTravelTime = estimatedTravelTime.trim();
     if (fare !== undefined) route.fare = Number(fare);
     if (status) route.status = status;
 
@@ -1142,6 +1230,7 @@ router.delete("/admin/routes/:id", async (req, res) => {
     if (!route) {
       return res.status(404).json({ success: false, message: "Route not found." });
     }
+    await Schedule.deleteMany({ route_id: req.params.id });
     res.json({
       success: true,
       message: `Route "${route.routeId} - ${route.routeName}" deleted successfully! 🗑️`,
@@ -1149,6 +1238,141 @@ router.delete("/admin/routes/:id", async (req, res) => {
   } catch (error) {
     console.error("Error deleting route:", error);
     res.status(500).json({ success: false, message: error.message || "Failed to delete route." });
+  }
+});
+
+// --- SCHEDULE DEPARTURES MANAGEMENT ---
+
+function addMinutesToTimeStr(timeStr, minutesToAdd = 0, bufferMinutes = 0) {
+  if (!timeStr) return "08:00 AM";
+  const cleanStr = timeStr.trim().toUpperCase();
+  const isPM = cleanStr.includes("PM");
+  const isAM = cleanStr.includes("AM");
+  const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return timeStr;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  const totalMins = (hours * 60 + minutes + Number(minutesToAdd) + Number(bufferMinutes)) % 1440;
+  const h24 = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  const period = h24 >= 12 ? "PM" : "AM";
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")} ${period}`;
+}
+
+// GET /admin/schedules (Fetch all route departure schedules)
+router.get("/admin/schedules", async (req, res) => {
+  try {
+    const schedules = await Schedule.find().populate("route_id").sort({ createdAt: -1 });
+    res.json({ success: true, count: schedules.length, schedules });
+  } catch (error) {
+    console.error("Error fetching schedules:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to fetch schedules." });
+  }
+});
+
+// POST /admin/schedules (Create departure schedule)
+router.post("/admin/schedules", async (req, res) => {
+  try {
+    const { route_id, start_time, bus_id, busNumber, driver_id, driverName, delay_buffer_minutes, is_active } = req.body;
+
+    if (!route_id || !start_time) {
+      return res.status(400).json({ success: false, message: "Route ID and Departure Start Time are required." });
+    }
+
+    const routeObj = await Route.findById(route_id);
+    if (!routeObj) {
+      return res.status(404).json({ success: false, message: "Associated route not found." });
+    }
+
+    const newSchedule = new Schedule({
+      route_id,
+      routeName: routeObj.routeName,
+      start_time: start_time.trim(),
+      bus_id: bus_id || null,
+      busNumber: busNumber || "",
+      driver_id: driver_id || null,
+      driverName: driverName || "",
+      delay_buffer_minutes: Number(delay_buffer_minutes || 0),
+      is_active: is_active !== false,
+    });
+
+    await newSchedule.save();
+
+    res.status(201).json({
+      success: true,
+      message: `Departure schedule created for ${routeObj.routeName} at ${start_time}! ⏱️`,
+      schedule: newSchedule,
+    });
+  } catch (error) {
+    console.error("Error creating schedule:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to create schedule." });
+  }
+});
+
+// DELETE /admin/schedules/:id (Delete departure schedule)
+router.delete("/admin/schedules/:id", async (req, res) => {
+  try {
+    const schedule = await Schedule.findByIdAndDelete(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ success: false, message: "Schedule not found." });
+    }
+    res.json({ success: true, message: "Schedule departure deleted successfully!" });
+  } catch (error) {
+    console.error("Error deleting schedule:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to delete schedule." });
+  }
+});
+
+// GET /api/routes/:id/schedule (Calculate & return exact stop arrival times for a route departure)
+router.get("/routes/:id/schedule", async (req, res) => {
+  try {
+    const route = await Route.findById(req.params.id);
+    if (!route) {
+      return res.status(404).json({ success: false, message: "Route not found." });
+    }
+
+    const startTime = req.query.start_time || route.base_start_time || "08:00 AM";
+    const delayBuffer = Number(req.query.delay_buffer || 0);
+
+    let stopScheduleList = [];
+    if (route.stops && route.stops.length > 0 && typeof route.stops[0] === "object") {
+      stopScheduleList = route.stops.map((st) => ({
+        stop: st.name,
+        order: st.order,
+        travel_time_from_prev: st.travel_time_from_prev,
+        offset_minutes: st.offset_minutes,
+        arrival_time: addMinutesToTimeStr(startTime, st.offset_minutes, delayBuffer),
+      }));
+    } else {
+      // Legacy string stops fallback (assuming 25m between stops)
+      const legacyStops = Array.isArray(route.stops) ? route.stops : [];
+      stopScheduleList = legacyStops.map((stName, idx) => ({
+        stop: stName,
+        order: idx + 1,
+        travel_time_from_prev: idx === 0 ? 0 : 25,
+        offset_minutes: idx * 25,
+        arrival_time: addMinutesToTimeStr(startTime, idx * 25, delayBuffer),
+      }));
+    }
+
+    res.json({
+      success: true,
+      route_id: route._id,
+      route_name: route.routeName,
+      start_time: startTime,
+      delay_buffer_minutes: delayBuffer,
+      total_duration: route.duration,
+      stops_schedule: stopScheduleList,
+    });
+  } catch (error) {
+    console.error("Error generating schedule calculation:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to generate schedule calculation." });
   }
 });
 
