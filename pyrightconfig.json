@@ -1,0 +1,33 @@
+{
+  "include": [
+    "backend/ai_monitoring"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/__pyrefly_virtual__",
+    "**/__pyrefly_virtual__/**"
+  ],
+  "extraPaths": [
+    "./backend/ai_monitoring",
+    "./backend"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "backend/ai_monitoring",
+      "extraPaths": [
+        "."
+      ]
+    },
+    {
+      "root": ".",
+      "extraPaths": [
+        "backend/ai_monitoring",
+        "backend"
+      ]
+    }
+  ],
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Windows"
+}
+

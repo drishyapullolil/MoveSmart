@@ -133,36 +133,42 @@ export default function BookingSuccess({ booking, onClose, onGoToDashboard }) {
             </div>
 
             {/* Assigned Driver Card on Boarding Pass */}
-            {(booking.bus?.driverName || booking.driverName) && (
-              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f8fafc", padding: 10, borderRadius: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#38a169", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, overflow: "hidden", border: "2px solid #86efac" }}>
-                    {(booking.bus?.driverPhoto || booking.driverPhoto) ? (
-                      <img src={booking.bus?.driverPhoto || booking.driverPhoto} alt={booking.bus?.driverName || booking.driverName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ) : (
-                      (booking.bus?.driverName || booking.driverName || "D")[0]
-                    )}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6 }}>
-                      <span>Driver: {booking.bus?.driverName || booking.driverName}</span>
-                      {(booking.bus?.driverVerified !== false && booking.driverVerified !== false) ? (
-                        <span style={{ fontSize: 9, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
-                          Admin Verified ✅
-                        </span>
+            {(() => {
+              const rawDrv = booking.bus?.driverName || booking.driverName;
+              const isGeneric = !rawDrv || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(rawDrv).toLowerCase().trim());
+              const displayDriverName = !isGeneric ? rawDrv : "Not Assigned";
+
+              return (
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f8fafc", padding: 10, borderRadius: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#38a169", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, overflow: "hidden", border: "2px solid #86efac" }}>
+                      {(booking.bus?.driverPhoto || booking.driverPhoto) ? (
+                        <img src={booking.bus?.driverPhoto || booking.driverPhoto} alt={displayDriverName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
-                        <span style={{ fontSize: 9, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
-                          Pending ⏳
-                        </span>
+                        displayDriverName[0]
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>
-                      Lic: <strong style={{ fontFamily: "monospace" }}>{booking.bus?.driverLicense || booking.driverLicense || "KL-07-2019-88120"}</strong> · {booking.bus?.driverPhone || booking.driverPhone || "+91 98471 22334"}
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>Driver: {displayDriverName}</span>
+                        {(booking.bus?.driverVerified !== false && booking.driverVerified !== false && !isGeneric) ? (
+                          <span style={{ fontSize: 9, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
+                            Admin Verified ✅
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 9, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
+                            Unassigned ⏳
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        Lic: <strong style={{ fontFamily: "monospace" }}>{booking.bus?.driverLicense || booking.driverLicense || "N/A"}</strong> · {booking.bus?.driverPhone || booking.driverPhone || "N/A"}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           {/* Action Buttons */}

@@ -73,7 +73,7 @@ const busSchema = new mongoose.Schema(
     },
     driverName: {
       type: String,
-      default: "",
+      default: "Not Assigned",
     },
     driverPhone: {
       type: String,
@@ -94,6 +94,10 @@ const busSchema = new mongoose.Schema(
     driverExperience: {
       type: Number,
       default: 0,
+    },
+    is_active: {
+      type: Boolean,
+      default: true,
     },
   },
   { timestamps: true, strict: false }

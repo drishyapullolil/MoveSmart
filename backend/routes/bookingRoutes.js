@@ -5,6 +5,7 @@ const Bus = require("../models/Bus");
 const Booking = require("../models/Booking");
 const Route = require("../models/Route");
 const Schedule = require("../models/Schedule");
+const User = require("../models/User");
 
 // Initial Seed Data for testing
 const defaultBuses = [
@@ -24,11 +25,11 @@ const defaultBuses = [
     rating: 4.9,
     amenities: ["Wi-Fi", "Charging Port", "Live Tracking", "Water Bottle", "AC"],
     bookedSeats: ["1A", "1B", "3C", "5A", "7B", "8D"],
-    driverName: "Suresh Menon",
-    driverPhone: "+91 98471 22334",
-    driverLicense: "KL-07-2019-88120",
-    driverExperience: 8,
-    driverVerified: true,
+    driverName: "Not Assigned",
+    driverPhone: "N/A",
+    driverLicense: "N/A",
+    driverExperience: 0,
+    driverVerified: false,
     stops: ["Kochi", "Vyttila", "Tripunithura", "Cherthala", "Alappuzha", "Ambalapuzha", "Haripad", "Kayamkulam", "Karunagappally", "Kollam", "Attingal", "Kazhakkoottam", "Trivandrum"],
   },
   {
@@ -342,11 +343,11 @@ const normalizeBusDocument = (doc, parentRoute = null) => {
     rating,
     amenities,
     bookedSeats,
-    driverName: doc.driverName || "Driver Assigned",
-    driverPhone: doc.driverPhone || "+91 98470 00000",
-    driverLicense: doc.driverLicense || "KL-07-2020-00100",
-    driverVerified: doc.driverVerified !== undefined ? doc.driverVerified : true,
-    driverExperience: doc.driverExperience || 8,
+    driverName: doc.driverName && !["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(doc.driverName).toLowerCase().trim()) ? doc.driverName : "Not Assigned",
+    driverPhone: doc.driverPhone || "N/A",
+    driverLicense: doc.driverLicense || "N/A",
+    driverVerified: doc.driverVerified !== undefined ? doc.driverVerified : false,
+    driverExperience: doc.driverExperience || 0,
     stops,
     route: doc.route || stops,
     schedule: doc.schedule || [],
@@ -744,7 +745,7 @@ router.post("/bookings", async (req, res) => {
     if (!bus) {
       const allBuses = await fetchAllNormalizedBuses();
       const norm = allBuses.find((b) => String(b._id) === String(busId) || b.busNumber === busId);
-      
+
       bus = new Bus({
         busNumber: norm ? norm.busNumber : (typeof busId === "string" ? busId : "KL-07-MS-1008"),
         busName: norm ? norm.busName : "MoveSmart Transit Express",
@@ -857,6 +858,7 @@ router.post("/admin/buses", async (req, res) => {
       amenities,
       driverName,
       driverPhone,
+      driverEmail,
       driverLicense,
       driverId,
       driverPhoto,
@@ -899,6 +901,50 @@ router.post("/admin/buses", async (req, res) => {
       ? stops
       : (typeof stops === "string" && stops.trim() ? stops.split(",").map((s) => s.trim()).filter(Boolean) : []);
 
+    // Driver Assignment Validation (ONE DRIVER -> MAXIMUM ONE BUS)
+    let assignedDriverId = null;
+    let assignedDriverName = "Not Assigned";
+    let assignedDriverPhone = "N/A";
+    let assignedDriverEmail = "";
+    let assignedDriverLicense = "N/A";
+    let assignedDriverPhoto = "";
+    let assignedDriverVerified = false;
+    let assignedDriverExperience = 0;
+
+    const rawDriverIdStr = driverId ? String(driverId).trim() : "";
+    const isValidObjectId = rawDriverIdStr && rawDriverIdStr.match(/^[0-9a-fA-F]{24}$/) && rawDriverIdStr !== "unassigned";
+
+    if (isValidObjectId) {
+      // Check if driver is assigned to another bus
+      const existingBusWithDriver = await Bus.findOne({ driverId: rawDriverIdStr });
+      if (existingBusWithDriver) {
+        return res.status(409).json({
+          success: false,
+          message: "Driver is already assigned to another bus.",
+        });
+      }
+
+      assignedDriverId = rawDriverIdStr;
+      const driverUser = await User.findById(rawDriverIdStr);
+      if (driverUser) {
+        assignedDriverName = driverUser.name || "Not Assigned";
+        assignedDriverPhone = driverUser.phone || "N/A";
+        assignedDriverEmail = driverUser.email || "";
+        assignedDriverLicense = driverUser.licenseNumber || "N/A";
+        assignedDriverPhoto = driverUser.profilePic || driverUser.licenseImage || "";
+        assignedDriverVerified = driverUser.verificationStatus === "Approved";
+        assignedDriverExperience = driverUser.experienceYears || 0;
+      }
+    } else if (driverName && !["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(driverName).toLowerCase().trim())) {
+      assignedDriverName = String(driverName).trim();
+      assignedDriverPhone = driverPhone || "N/A";
+      assignedDriverEmail = driverEmail || "";
+      assignedDriverLicense = driverLicense || "N/A";
+      assignedDriverPhoto = driverPhoto || "";
+      assignedDriverVerified = driverVerified !== undefined ? Boolean(driverVerified) : false;
+      assignedDriverExperience = driverExperience ? Number(driverExperience) : 0;
+    }
+
     const newBus = new Bus({
       busNumber: finalBusNumber,
       busName: busName.trim(),
@@ -913,13 +959,14 @@ router.post("/admin/buses", async (req, res) => {
       availableSeats: seatsCount,
       price: numericPrice,
       amenities: Array.isArray(amenities) ? amenities : ["Wi-Fi", "Charging Port", "AC"],
-      driverName: driverName || "Assigned Fleet Driver",
-      driverPhone: driverPhone || "+91 98470 12345",
-      driverLicense: driverLicense || "KL-07-2022-99011",
-      driverId: driverId && driverId.match(/^[0-9a-fA-F]{24}$/) ? driverId : null,
-      driverPhoto: driverPhoto || "",
-      driverVerified: driverVerified !== undefined ? Boolean(driverVerified) : true,
-      driverExperience: driverExperience ? Number(driverExperience) : 8,
+      driverId: assignedDriverId,
+      driverName: assignedDriverName,
+      driverPhone: assignedDriverPhone,
+      driverEmail: assignedDriverEmail,
+      driverLicense: assignedDriverLicense,
+      driverPhoto: assignedDriverPhoto,
+      driverVerified: assignedDriverVerified,
+      driverExperience: assignedDriverExperience,
       stops: parsedStops,
       bookedSeats: [],
     });
@@ -966,6 +1013,7 @@ router.put("/admin/buses/:id", async (req, res) => {
       amenities,
       driverName,
       driverPhone,
+      driverEmail,
       driverLicense,
       driverId,
       driverPhoto,
@@ -990,21 +1038,79 @@ router.put("/admin/buses/:id", async (req, res) => {
     }
     if (price) bus.price = Number(price);
     if (Array.isArray(amenities)) bus.amenities = amenities;
-    if (driverName !== undefined) bus.driverName = driverName;
-    if (driverPhone !== undefined) bus.driverPhone = driverPhone;
-    if (driverLicense !== undefined) bus.driverLicense = driverLicense;
-    if (driverId !== undefined) bus.driverId = driverId && String(driverId).match(/^[0-9a-fA-F]{24}$/) ? driverId : null;
-    if (driverPhoto !== undefined) bus.driverPhoto = driverPhoto;
-    if (driverVerified !== undefined) bus.driverVerified = Boolean(driverVerified);
-    if (driverExperience !== undefined) bus.driverExperience = Number(driverExperience);
+
+    // Driver Assignment Logic (ONE DRIVER -> MAXIMUM ONE BUS)
+    if (driverId !== undefined) {
+      const rawDriverIdStr = driverId ? String(driverId).trim() : "";
+      const isValidObjectId = rawDriverIdStr && rawDriverIdStr.match(/^[0-9a-fA-F]{24}$/) && rawDriverIdStr !== "unassigned";
+
+      if (isValidObjectId) {
+        // Check if assigned to ANOTHER bus
+        const existingBusWithDriver = await Bus.findOne({
+          driverId: rawDriverIdStr,
+          _id: { $ne: req.params.id },
+        });
+
+        if (existingBusWithDriver) {
+          return res.status(409).json({
+            success: false,
+            message: "Driver is already assigned to another bus.",
+          });
+        }
+
+        bus.driverId = rawDriverIdStr;
+        const driverUser = await User.findById(rawDriverIdStr);
+        if (driverUser) {
+          bus.driverName = driverUser.name || "Not Assigned";
+          bus.driverPhone = driverUser.phone || "N/A";
+          bus.driverEmail = driverUser.email || "";
+          bus.driverLicense = driverUser.licenseNumber || "N/A";
+          bus.driverPhoto = driverUser.profilePic || driverUser.licenseImage || "";
+          bus.driverVerified = driverUser.verificationStatus === "Approved";
+          bus.driverExperience = driverUser.experienceYears || 0;
+        } else if (driverName !== undefined) {
+          bus.driverName = driverName;
+          if (driverPhone !== undefined) bus.driverPhone = driverPhone;
+          if (driverEmail !== undefined) bus.driverEmail = driverEmail;
+          if (driverLicense !== undefined) bus.driverLicense = driverLicense;
+          if (driverPhoto !== undefined) bus.driverPhoto = driverPhoto;
+          if (driverVerified !== undefined) bus.driverVerified = Boolean(driverVerified);
+          if (driverExperience !== undefined) bus.driverExperience = Number(driverExperience);
+        }
+      } else {
+        // Unassign Driver
+        bus.driverId = null;
+        bus.driverName = "Not Assigned";
+        bus.driverPhone = "N/A";
+        bus.driverEmail = "";
+        bus.driverLicense = "N/A";
+        bus.driverPhoto = "";
+        bus.driverVerified = false;
+        bus.driverExperience = 0;
+      }
+    } else if (driverName !== undefined) {
+      const isGenericName = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+      if (isGenericName(driverName)) {
+        bus.driverId = null;
+        bus.driverName = "Not Assigned";
+        bus.driverPhone = "N/A";
+        bus.driverLicense = "N/A";
+      } else {
+        bus.driverName = driverName;
+        if (driverPhone !== undefined) bus.driverPhone = driverPhone;
+        if (driverEmail !== undefined) bus.driverEmail = driverEmail;
+        if (driverLicense !== undefined) bus.driverLicense = driverLicense;
+        if (driverPhoto !== undefined) bus.driverPhoto = driverPhoto;
+        if (driverVerified !== undefined) bus.driverVerified = Boolean(driverVerified);
+        if (driverExperience !== undefined) bus.driverExperience = Number(driverExperience);
+      }
+    }
 
     if (stops !== undefined) {
       bus.stops = Array.isArray(stops)
         ? stops
         : (typeof stops === "string" && stops.trim() ? stops.split(",").map((s) => s.trim()).filter(Boolean) : []);
     }
-
-    await bus.save();
 
     await bus.save();
 
@@ -1268,7 +1374,16 @@ function addMinutesToTimeStr(timeStr, minutesToAdd = 0, bufferMinutes = 0) {
 // GET /admin/schedules (Fetch all route departure schedules)
 router.get("/admin/schedules", async (req, res) => {
   try {
-    const schedules = await Schedule.find().populate("route_id").sort({ createdAt: -1 });
+    const rawSchedules = await Schedule.find().populate("route_id").populate("bus_id").sort({ createdAt: -1 });
+    const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(n).toLowerCase().trim());
+    const schedules = rawSchedules.map((sch) => {
+      const obj = sch.toObject ? sch.toObject() : sch;
+      const busDrv = obj.bus_id && obj.bus_id.driverName;
+      if (isGeneric(obj.driverName)) {
+        obj.driverName = !isGeneric(busDrv) ? busDrv : "Not Assigned";
+      }
+      return obj;
+    });
     res.json({ success: true, count: schedules.length, schedules });
   } catch (error) {
     console.error("Error fetching schedules:", error);
@@ -1276,18 +1391,76 @@ router.get("/admin/schedules", async (req, res) => {
   }
 });
 
+function normalizeTimeStr(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return "";
+  const cleanStr = timeStr.trim().toUpperCase();
+  const isPM = cleanStr.includes("PM");
+  const isAM = cleanStr.includes("AM");
+  
+  const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return cleanStr;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  const totalMins = (hours * 60 + minutes) % 1440;
+  const hours24 = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+
+  const period = hours24 >= 12 ? "PM" : "AM";
+  let hours12 = hours24 % 12;
+  if (hours12 === 0) hours12 = 12;
+
+  return `${hours12.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")} ${period}`;
+}
+
 // POST /admin/schedules (Create departure schedule)
 router.post("/admin/schedules", async (req, res) => {
   try {
-    const { route_id, start_time, bus_id, busNumber, driver_id, driverName, delay_buffer_minutes, is_active } = req.body;
+    let { route_id, start_time, bus_id, busNumber, driver_id, driverName, delay_buffer_minutes, is_active } = req.body;
 
     if (!route_id || !start_time) {
       return res.status(400).json({ success: false, message: "Route ID and Departure Start Time are required." });
     }
 
+    // 1. Normalize the start_time
+    const normalizedNewTime = normalizeTimeStr(start_time);
+
+    // 2. Enforce duplicate check (same route + same time)
+    const existingSchedules = await Schedule.find({ route_id });
+    const isDuplicate = existingSchedules.some(
+      (s) => normalizeTimeStr(s.start_time) === normalizedNewTime
+    );
+
+    if (isDuplicate) {
+      return res.status(400).json({
+        success: false,
+        message: "This route is already scheduled at this time. Please select a different time.",
+      });
+    }
+
     const routeObj = await Route.findById(route_id);
     if (!routeObj) {
       return res.status(404).json({ success: false, message: "Associated route not found." });
+    }
+
+    const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(n).toLowerCase().trim());
+
+    // Auto-fill bus & driver details from Bus model if bus_id is present
+    if (bus_id) {
+      const matchedBus = await Bus.findById(bus_id);
+      if (matchedBus) {
+        if (!busNumber) busNumber = matchedBus.busNumber;
+        if (isGeneric(driverName)) driverName = !isGeneric(matchedBus.driverName) ? matchedBus.driverName : "Not Assigned";
+        if (!driver_id) driver_id = matchedBus.driverId;
+      }
+    }
+
+    if (isGeneric(driverName)) {
+      driverName = "Not Assigned";
     }
 
     const newSchedule = new Schedule({
@@ -1297,7 +1470,7 @@ router.post("/admin/schedules", async (req, res) => {
       bus_id: bus_id || null,
       busNumber: busNumber || "",
       driver_id: driver_id || null,
-      driverName: driverName || "",
+      driverName: driverName,
       delay_buffer_minutes: Number(delay_buffer_minutes || 0),
       is_active: is_active !== false,
     });
@@ -1315,6 +1488,83 @@ router.post("/admin/schedules", async (req, res) => {
   }
 });
 
+// PUT /admin/schedules/:id (Update departure schedule)
+router.put("/admin/schedules/:id", async (req, res) => {
+  try {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ success: false, message: "Schedule not found." });
+    }
+
+    const { route_id, start_time, bus_id, busNumber, driver_id, driverName, delay_buffer_minutes, is_active } = req.body;
+
+    // Enforce duplicate check (same route + same time, excluding this record)
+    const newStartTime = start_time ? start_time.trim() : schedule.start_time;
+    const newRouteId = route_id || schedule.route_id;
+
+    if (newStartTime && newRouteId) {
+      const normalizedNewTime = normalizeTimeStr(newStartTime);
+      const existingSchedules = await Schedule.find({ route_id: newRouteId });
+      const isDuplicate = existingSchedules.some(
+        (s) => String(s._id) !== req.params.id && normalizeTimeStr(s.start_time) === normalizedNewTime
+      );
+
+      if (isDuplicate) {
+        return res.status(400).json({
+          success: false,
+          message: "This route is already scheduled at this time. Please select a different time.",
+        });
+      }
+    }
+
+    if (route_id) {
+      schedule.route_id = route_id;
+      const routeObj = await Route.findById(route_id);
+      if (routeObj) schedule.routeName = routeObj.routeName;
+    }
+
+    const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(n).toLowerCase().trim());
+
+    if (start_time) schedule.start_time = start_time.trim();
+    if (bus_id !== undefined) schedule.bus_id = bus_id || null;
+    if (busNumber !== undefined) schedule.busNumber = busNumber;
+    if (driver_id !== undefined) schedule.driver_id = driver_id || null;
+    if (driverName !== undefined) {
+      schedule.driverName = !isGeneric(driverName) ? driverName : "Not Assigned";
+    }
+
+    // Failsafe auto-link driver from Bus if bus_id exists
+    if (schedule.bus_id) {
+      const matchedBus = await Bus.findById(schedule.bus_id);
+      if (matchedBus) {
+        if (!schedule.busNumber) schedule.busNumber = matchedBus.busNumber;
+        if (isGeneric(schedule.driverName)) {
+          schedule.driverName = !isGeneric(matchedBus.driverName) ? matchedBus.driverName : "Not Assigned";
+        }
+        if (!schedule.driver_id) schedule.driver_id = matchedBus.driverId;
+      }
+    }
+
+    if (isGeneric(schedule.driverName)) {
+      schedule.driverName = "Not Assigned";
+    }
+
+    if (delay_buffer_minutes !== undefined) schedule.delay_buffer_minutes = Number(delay_buffer_minutes || 0);
+    if (is_active !== undefined) schedule.is_active = Boolean(is_active);
+
+    await schedule.save();
+
+    res.json({
+      success: true,
+      message: "Schedule departure updated successfully! ⏱️",
+      schedule,
+    });
+  } catch (error) {
+    console.error("Error updating schedule:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to update schedule." });
+  }
+});
+
 // DELETE /admin/schedules/:id (Delete departure schedule)
 router.delete("/admin/schedules/:id", async (req, res) => {
   try {
@@ -1328,6 +1578,57 @@ router.delete("/admin/schedules/:id", async (req, res) => {
     res.status(500).json({ success: false, message: error.message || "Failed to delete schedule." });
   }
 });
+
+// PATCH /admin/schedules/:id/toggle — Toggle is_active on a departure schedule
+router.patch("/admin/schedules/:id/toggle", async (req, res) => {
+  try {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ success: false, message: "Schedule not found." });
+    }
+    schedule.is_active = !schedule.is_active;
+    await schedule.save();
+    const state = schedule.is_active ? "enabled" : "disabled";
+    res.json({ success: true, is_active: schedule.is_active, message: `Departure schedule ${state} successfully.` });
+  } catch (error) {
+    console.error("Error toggling schedule:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to toggle schedule." });
+  }
+});
+
+// PATCH /admin/routes/:id/toggle — Toggle route status Active ↔ Suspended
+router.patch("/admin/routes/:id/toggle", async (req, res) => {
+  try {
+    const route = await Route.findById(req.params.id);
+    if (!route) {
+      return res.status(404).json({ success: false, message: "Route not found." });
+    }
+    route.status = route.status === "Active" ? "Suspended" : "Active";
+    await route.save();
+    res.json({ success: true, status: route.status, message: `Route ${route.status === "Active" ? "activated" : "suspended"} successfully.` });
+  } catch (error) {
+    console.error("Error toggling route:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to toggle route." });
+  }
+});
+
+// PATCH /admin/buses/:id/toggle — Toggle is_active on a bus
+router.patch("/admin/buses/:id/toggle", async (req, res) => {
+  try {
+    const bus = await Bus.findById(req.params.id);
+    if (!bus) {
+      return res.status(404).json({ success: false, message: "Bus not found." });
+    }
+    bus.is_active = !bus.is_active;
+    await bus.save();
+    const state = bus.is_active ? "activated" : "deactivated";
+    res.json({ success: true, is_active: bus.is_active, message: `Bus ${bus.busNumber} ${state} successfully.` });
+  } catch (error) {
+    console.error("Error toggling bus:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to toggle bus." });
+  }
+});
+
 
 // GET /api/routes/:id/schedule (Calculate & return exact stop arrival times for a route departure)
 router.get("/routes/:id/schedule", async (req, res) => {

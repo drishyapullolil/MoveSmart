@@ -36,97 +36,104 @@ import {
   Tag,
   Wifi,
   Zap,
+  RotateCcw,
 } from "lucide-react";
 
-// Standard Verified Fleet Drivers List
-const defaultFleetDrivers = [
-  { id: "def-1", name: "Suresh Menon", phone: "+91 98471 22334", licenseNumber: "KL-07-2019-88120", experienceYears: 8, verificationStatus: "Approved" },
-  { id: "def-2", name: "Anil Kumar", phone: "+91 98472 55667", licenseNumber: "KL-14-2017-44321", experienceYears: 10, verificationStatus: "Approved" },
-  { id: "def-3", name: "Ramesh Pillai", phone: "+91 98473 88990", licenseNumber: "KL-11-2016-11223", experienceYears: 12, verificationStatus: "Approved" },
-  { id: "def-4", name: "Vijayan Nair", phone: "+91 98474 33445", licenseNumber: "KL-01-2015-77889", experienceYears: 15, verificationStatus: "Approved" },
-  { id: "def-5", name: "Mohan Varghese", phone: "+91 98475 66778", licenseNumber: "KL-08-2020-55667", experienceYears: 6, verificationStatus: "Approved" },
-  { id: "def-6", name: "Joseph Thomas", phone: "+91 98476 99001", licenseNumber: "KL-05-2018-33445", experienceYears: 9, verificationStatus: "Approved" },
-  { id: "def-7", name: "Mathew Jacob", phone: "+91 98477 11223", licenseNumber: "KL-05-2016-99887", experienceYears: 11, verificationStatus: "Approved" },
-  { id: "def-8", name: "Unnikrishnan P", phone: "+91 98478 44556", licenseNumber: "KL-09-2019-12345", experienceYears: 10, verificationStatus: "Approved" },
-  { id: "def-9", name: "Santhosh Kumar", phone: "+91 98479 77889", licenseNumber: "KL-13-2017-67890", experienceYears: 14, verificationStatus: "Approved" },
-];
-
-// Major Kerala Transit Stops Catalog
+// Major Kottayam & Neighbouring District Transit Hubs Catalog
 const KERALA_TRANSIT_STOPS = [
-  "Thrissur",
-  "Angamaly",
+  // Kottayam Core
   "Kottayam",
-  "Kochi",
-  "Aluva",
-  "Trivandrum",
-  "Calicut",
-  "Palakkad",
   "Kanjirappally",
-  "Cherthala",
-  "Alappuzha",
-  "Kollam",
-  "Kayamkulam",
-  "Karunagappally",
-  "Changanassery",
-  "Thiruvalla",
-  "Ettumanoor",
+  "Erumely",
   "Pala",
   "Erattupetta",
-  "Chalakkudy",
-  "Wadakkanchery",
-  "Kuttippuram",
-  "Valanchery",
-  "Koyilandy",
-  "Vadakara",
-  "Thalassery",
-  "Kannur",
+  "Ponkunnam",
+  "Podimattom",
+  "Manarcadu",
+  "Ettumanoor",
+  "Changanassery",
+  "Vaikom",
+  "Mundakayam",
+  "Cherpunkal",
+  "Bharananganam",
+  "Vagamon",
+  "Kumarakom",
+  "Kuravilangad",
+  "Kaduthuruthy",
+  "Uzhavoor",
+  "Pampady",
+  "Poonjar",
+  "Teekoy",
+  "Kidangoor",
+
+  // Pathanamthitta (Neighbouring)
+  "Sabarimala",
+  "Nilakkal",
+  "Pampa",
+  "Ranni",
+  "Konni",
+  "Pathanamthitta",
+  "Thiruvalla",
+  "Adoor",
+
+  // Idukki (Neighbouring)
+  "Kuttikkanam",
+  "Peermade",
+  "Kumily",
+  "Thodupuzha",
+  "Adimali",
+  "Kattappana",
+
+  // Alappuzha (Neighbouring)
+  "Alappuzha",
+  "Cherthala",
+  "Chengannur",
+  "Mavelikkara",
+  "Kayamkulam",
+
+  // Ernakulam (Neighbouring)
+  "Kochi",
+  "Aluva",
+  "Angamaly",
+  "Muvattupuzha",
+  "Piravom",
+  "Perumbavoor",
 ];
 
 // Pre-configured Intercity Route Presets for Quick Auto-Fill
 const defaultRoutePresets = [
   {
     id: "preset-1",
-    name: "Thrissur ➔ Angamaly ➔ Kottayam Express",
-    fromLocation: "Thrissur",
-    toLocation: "Kottayam",
-    price: 320,
-    base_start_time: "08:00 AM",
+    name: "Kottayam ➔ Kanjirappally ➔ Erumely Pilgrim Express",
+    fromLocation: "Kottayam",
+    toLocation: "Erumely",
+    price: 180,
+    base_start_time: "06:15 AM",
     stopsList: [
-      { name: "Thrissur", travel_time_from_prev: 0 },
-      { name: "Angamaly", travel_time_from_prev: 45 },
-      { name: "Kottayam", travel_time_from_prev: 75 },
+      { name: "Kottayam", travel_time_from_prev: 0 },
+      { name: "Manarcadu", travel_time_from_prev: 15 },
+      { name: "Ponkunnam", travel_time_from_prev: 35 },
+      { name: "Kanjirappally", travel_time_from_prev: 10 },
+      { name: "Erumely", travel_time_from_prev: 25 },
     ],
   },
   {
     id: "preset-2",
-    name: "Kochi ➔ Trivandrum Express",
-    fromLocation: "Kochi",
-    toLocation: "Trivandrum",
-    price: 450,
-    base_start_time: "06:30 AM",
+    name: "Kottayam ➔ Erumely ➔ Sabarimala / Pampa Direct",
+    fromLocation: "Kottayam",
+    toLocation: "Pampa",
+    price: 250,
+    base_start_time: "05:00 AM",
     stopsList: [
-      { name: "Kochi", travel_time_from_prev: 0 },
-      { name: "Alappuzha", travel_time_from_prev: 90 },
-      { name: "Kollam", travel_time_from_prev: 105 },
-      { name: "Trivandrum", travel_time_from_prev: 90 },
+      { name: "Kottayam", travel_time_from_prev: 0 },
+      { name: "Kanjirappally", travel_time_from_prev: 50 },
+      { name: "Erumely", travel_time_from_prev: 25 },
+      { name: "Nilakkal", travel_time_from_prev: 60 },
+      { name: "Pampa", travel_time_from_prev: 20 },
     ],
   },
   {
     id: "preset-3",
-    name: "Kochi ➔ Calicut Direct",
-    fromLocation: "Kochi",
-    toLocation: "Calicut",
-    price: 320,
-    base_start_time: "07:00 AM",
-    stopsList: [
-      { name: "Kochi", travel_time_from_prev: 0 },
-      { name: "Aluva", travel_time_from_prev: 35 },
-      { name: "Thrissur", travel_time_from_prev: 65 },
-      { name: "Calicut", travel_time_from_prev: 170 },
-    ],
-  },
-  {
-    id: "preset-4",
     name: "Kottayam ➔ Pala ➔ Erattupetta Shuttle",
     fromLocation: "Kottayam",
     toLocation: "Erattupetta",
@@ -137,6 +144,47 @@ const defaultRoutePresets = [
       { name: "Ettumanoor", travel_time_from_prev: 25 },
       { name: "Pala", travel_time_from_prev: 35 },
       { name: "Erattupetta", travel_time_from_prev: 30 },
+    ],
+  },
+  {
+    id: "preset-4",
+    name: "Kottayam ➔ Mundakayam ➔ Kuttikkanam Hill Express",
+    fromLocation: "Kottayam",
+    toLocation: "Kuttikkanam",
+    price: 200,
+    base_start_time: "07:30 AM",
+    stopsList: [
+      { name: "Kottayam", travel_time_from_prev: 0 },
+      { name: "Kanjirappally", travel_time_from_prev: 45 },
+      { name: "Mundakayam", travel_time_from_prev: 20 },
+      { name: "Kuttikkanam", travel_time_from_prev: 35 },
+    ],
+  },
+  {
+    id: "preset-5",
+    name: "Kottayam ➔ Changanassery ➔ Thiruvalla Shuttle",
+    fromLocation: "Kottayam",
+    toLocation: "Thiruvalla",
+    price: 90,
+    base_start_time: "08:30 AM",
+    stopsList: [
+      { name: "Kottayam", travel_time_from_prev: 0 },
+      { name: "Changanassery", travel_time_from_prev: 30 },
+      { name: "Thiruvalla", travel_time_from_prev: 20 },
+    ],
+  },
+  {
+    id: "preset-6",
+    name: "Kottayam ➔ Vaikom ➔ Kochi Express",
+    fromLocation: "Kottayam",
+    toLocation: "Kochi",
+    price: 160,
+    base_start_time: "07:00 AM",
+    stopsList: [
+      { name: "Kottayam", travel_time_from_prev: 0 },
+      { name: "Ettumanoor", travel_time_from_prev: 20 },
+      { name: "Vaikom", travel_time_from_prev: 40 },
+      { name: "Kochi", travel_time_from_prev: 60 },
     ],
   },
 ];
@@ -160,6 +208,8 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const [routes, setRoutes] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [driversList, setDriversList] = useState([]);
+  const [driverLeaves, setDriverLeaves] = useState([]);
+  const [scheduleEditingId, setScheduleEditingId] = useState(null);
 
   // Search & Filter
   const [busSearch, setBusSearch] = useState("");
@@ -185,13 +235,13 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   // ---------------- ROUTE & TIMING FORM STATE ----------------
   const [routeEditingId, setRouteEditingId] = useState(null);
   const [routeId, setRouteId] = useState("");
-  const [routeName, setRouteName] = useState("Kanjirappally ➔ Pala");
-  const [fromLocation, setFromLocation] = useState("Kanjirappally");
-  const [toLocation, setToLocation] = useState("Pala");
-  const [distanceKm, setDistanceKm] = useState(35.4);
-  const [baseStartTime, setBaseStartTime] = useState("08:00 AM");
+  const [routeName, setRouteName] = useState("");
+  const [fromLocation, setFromLocation] = useState("");
+  const [toLocation, setToLocation] = useState("");
+  const [distanceKm, setDistanceKm] = useState("");
+  const [baseStartTime, setBaseStartTime] = useState("");
   const [ratePerKm, setRatePerKm] = useState(5);
-  const [fare, setFare] = useState(177); // 35.4 * 5 = 177
+  const [fare, setFare] = useState("");
   const [status, setStatus] = useState("Active");
 
   // Auto-calculate Standard Fare based on ratePerKm (default ₹5/km) and total distance (distanceKm)
@@ -204,19 +254,15 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
   // Interactive Map & Detailed Bus Stop Panel States
   const [mapRouteData, setMapRouteData] = useState({
-    startingPoint: { name: "Kanjirappally", latitude: 9.5544, longitude: 76.7865 },
-    destination: { name: "Pala", latitude: 9.7081, longitude: 76.6837 },
-    totalDistance: 35.4,
-    estimatedTravelTime: "50 mins",
+    startingPoint: { name: "", latitude: null, longitude: null },
+    destination: { name: "", latitude: null, longitude: null },
+    totalDistance: 0,
+    estimatedTravelTime: "",
     routeGeometry: [],
     selectedRouteId: null,
   });
 
-  const [mapStopsList, setMapStopsList] = useState([
-    { order: 1, stopName: "Kanjirappally", name: "Kanjirappally", latitude: 9.5544, longitude: 76.7865, distanceFromPreviousStop: 0, cumulativeDistance: 0, travel_time_from_prev: 0, offset_minutes: 0, source: "automatic" },
-    { order: 2, stopName: "Ponkunnam", name: "Ponkunnam", latitude: 9.5667, longitude: 76.7583, distanceFromPreviousStop: 5.8, cumulativeDistance: 5.8, travel_time_from_prev: 10, offset_minutes: 10, source: "automatic" },
-    { order: 3, stopName: "Pala", name: "Pala", latitude: 9.7081, longitude: 76.6837, distanceFromPreviousStop: 29.6, cumulativeDistance: 35.4, travel_time_from_prev: 40, offset_minutes: 50, source: "automatic" },
-  ]);
+  const [mapStopsList, setMapStopsList] = useState([]);
 
   const [selectedMapStopIndex, setSelectedMapStopIndex] = useState(null);
   const [editingStopIdx, setEditingStopIdx] = useState(null);
@@ -224,27 +270,88 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
   // Dynamic Stop Builder list
   const [stopBuilderList, setStopBuilderList] = useState([
-    { name: "Thrissur", travel_time_from_prev: 0 },
-    { name: "Angamaly", travel_time_from_prev: 45 },
-    { name: "Kottayam", travel_time_from_prev: 75 },
+    { name: "", travel_time_from_prev: 0 },
+    { name: "", travel_time_from_prev: 0 },
   ]);
 
   // Live calculation of offsets and total duration
   const { stops: computedStops, totalDurationMinutes, durationStr } = calculateCumulativeOffsets(stopBuilderList);
 
   // Live timeline preview start time input
-  const [previewStartTime, setPreviewStartTime] = useState("08:00 AM");
+  const [previewStartTime, setPreviewStartTime] = useState("");
 
   // ---------------- SCHEDULE DEPARTURES FORM STATE ----------------
+  const [scheduleErrors, setScheduleErrors] = useState({});
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
   const [scheduleRouteId, setScheduleRouteId] = useState("");
   const [scheduleStartTime, setScheduleStartTime] = useState("08:30 AM");
   const [scheduleBusId, setScheduleBusId] = useState("");
   const [scheduleDriverId, setScheduleDriverId] = useState("");
   const [scheduleDelayBuffer, setScheduleDelayBuffer] = useState(0);
 
+  // ---------------- SCHEDULE BUS & DRIVER CONFLICT FILTERING ----------------
+  const availableBusesForSchedule = useMemo(() => {
+    if (!scheduleStartTime) return buses;
+    const normStart = scheduleStartTime.trim().toLowerCase().replace(/^0/, "");
+
+    // Find all bus IDs already assigned to a schedule at this exact departure time
+    const busyBusIds = new Set(
+      schedules
+        .filter((s) => (s.start_time || "").trim().toLowerCase().replace(/^0/, "") === normStart)
+        .map((s) => {
+          if (typeof s.bus_id === "object" && s.bus_id?._id) return String(s.bus_id._id);
+          return String(s.bus_id || s.busNumber || "");
+        })
+        .filter(Boolean)
+    );
+
+    return buses.filter((b) => {
+      const bId = String(b._id || b.id || "");
+      const bNum = String(b.busNumber || "");
+      return !busyBusIds.has(bId) && !busyBusIds.has(bNum);
+    });
+  }, [buses, schedules, scheduleStartTime]);
+
+  const availableDriversForSchedule = useMemo(() => {
+    const normStart = scheduleStartTime ? scheduleStartTime.trim().toLowerCase().replace(/^0/, "") : "";
+
+    // Find all driver IDs / names assigned to a schedule at this exact departure time
+    const busyDriverIds = new Set(
+      schedules
+        .filter((s) => normStart && (s.start_time || "").trim().toLowerCase().replace(/^0/, "") === normStart)
+        .map((s) => {
+          if (typeof s.driver_id === "object" && s.driver_id?._id) return String(s.driver_id._id);
+          return String(s.driver_id || s.driverName || "");
+        })
+        .filter(Boolean)
+    );
+
+    // Find all driver IDs / names / emails with APPROVED LEAVE
+    const onLeaveIdentifiers = new Set();
+    driverLeaves.forEach((lv) => {
+      const isApproved = lv.status?.toLowerCase() === "approved" || lv.leaveStatus?.toLowerCase() === "approved";
+      if (isApproved) {
+        if (lv.driverId) onLeaveIdentifiers.add(String(lv.driverId));
+        if (lv.driverName) onLeaveIdentifiers.add(String(lv.driverName).toLowerCase().trim());
+        if (lv.driverEmail) onLeaveIdentifiers.add(String(lv.driverEmail).toLowerCase().trim());
+      }
+    });
+
+    return driversList.filter((d) => {
+      const dId = String(d._id || d.id || "");
+      const dName = String(d.name || "").toLowerCase().trim();
+      const dEmail = String(d.email || "").toLowerCase().trim();
+
+      const isBusy = busyDriverIds.has(dId) || busyDriverIds.has(dName);
+      const isOnApprovedLeave = onLeaveIdentifiers.has(dId) || onLeaveIdentifiers.has(dName) || onLeaveIdentifiers.has(dEmail);
+
+      return !isBusy && !isOnApprovedLeave;
+    });
+  }, [driversList, schedules, scheduleStartTime, driverLeaves]);
+
   // ---------------- BUS FORM STATE ----------------
   const [busEditingId, setBusEditingId] = useState(null);
-  const [selectedDriverOption, setSelectedDriverOption] = useState("");
+  const [selectedDriverOption, setSelectedDriverOption] = useState("unassigned");
   const [selectedRouteOption, setSelectedRouteOption] = useState("");
 
   const [busForm, setBusForm] = useState({
@@ -252,28 +359,117 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     busName: "",
     busType: "Normal Bus",
     operator: "MoveSmart Fleet Ops",
-    fromLocation: "Thrissur",
-    toLocation: "Kottayam",
-    departureTime: "08:00 AM",
-    arrivalTime: "10:00 AM",
-    duration: "2h 00m",
+    fromLocation: "",
+    toLocation: "",
+    departureTime: "",
+    arrivalTime: "",
+    duration: "",
     totalSeats: 32,
-    price: 320,
-    amenities: ["Wi-Fi", "Charging Port", "Live Tracking", "AC"],
+    price: "",
+    amenities: [],
     driverName: "",
     driverPhone: "",
     driverLicense: "",
     driverId: "",
     driverPhoto: "",
-    driverVerified: true,
+    driverVerified: false,
     driverExperience: 0,
-    stops: "Thrissur, Angamaly, Kottayam",
+    stops: "",
   });
+
+  const isGenericDriverName = (n) => {
+    if (!n) return true;
+    const s = String(n).toLowerCase().trim();
+    return (
+      ["unassigned", "not assigned", "driver assigned", "assigned driver", "driver user", "driver", "n/a", "none"].includes(s) ||
+      s.includes("unassigned") ||
+      s.includes("not assigned") ||
+      s.includes("replacement driver required")
+    );
+  };
+
+  // Combined list of DB drivers + any drivers assigned to existing buses
+  const combinedDriversList = useMemo(() => {
+    const list = [...driversList];
+    const seenIds = new Set(list.map((d) => String(d._id || d.id)));
+    const seenNames = new Set(list.map((d) => String(d.name).toLowerCase().trim()));
+
+    buses.forEach((b) => {
+      const bDrvName = (b.driverName || "").trim();
+      const bDrvId = b.driverId ? String(b.driverId) : null;
+
+      if (!isGenericDriverName(bDrvName) && !seenNames.has(bDrvName.toLowerCase())) {
+        const newId = bDrvId && bDrvId.match(/^[0-9a-fA-F]{24}$/) ? bDrvId : `bus-drv-${b._id || b.id}`;
+        if (!seenIds.has(newId)) {
+          seenIds.add(newId);
+          seenNames.add(bDrvName.toLowerCase());
+          list.push({
+            id: newId,
+            _id: newId,
+            name: bDrvName,
+            phone: b.driverPhone || "N/A",
+            licenseNumber: b.driverLicense || "N/A",
+            experienceYears: b.driverExperience || 0,
+            verificationStatus: b.driverVerified ? "Approved" : "Unverified",
+            profilePic: b.driverPhoto || "",
+            isDbDriver: false,
+          });
+        }
+      }
+    });
+
+    return list;
+  }, [driversList, buses]);
+
+  // Unassigned drivers from database (hides drivers already assigned to active fleet buses by ID only)
+  const availableUnassignedDrivers = useMemo(() => {
+    // Gather MongoDB IDs of drivers currently assigned to registered buses (excluding current editing bus)
+    // We use ID-ONLY matching to avoid false exclusions based on name matching.
+    const assignedIds = new Set(
+      buses
+        .filter((b) => !busEditingId || String(b._id || b.id) !== String(busEditingId))
+        .map((b) => (b.driverId ? String(b.driverId) : null))
+        .filter((id) => id && id !== "null" && id !== "undefined" && id.match(/^[0-9a-fA-F]{24}$/))
+    );
+
+    return combinedDriversList.filter((d) => {
+      const dId = String(d._id || d.id || "");
+      // Only exclude if we have a real MongoDB ObjectId match — never exclude by name alone
+      const isAssignedById = dId && assignedIds.has(dId);
+      return !isAssignedById;
+    });
+  }, [combinedDriversList, buses, busEditingId]);
+
+  // Driver options to display in dropdown — all drivers, with assigned ones labelled clearly
+  const dropdownDriverOptions = useMemo(() => {
+    // Build set of IDs already assigned to other buses
+    const assignedIds = new Set(
+      buses
+        .filter((b) => !busEditingId || String(b._id || b.id) !== String(busEditingId))
+        .map((b) => (b.driverId ? String(b.driverId) : null))
+        .filter((id) => id && id !== "null" && id !== "undefined" && id.match(/^[0-9a-fA-F]{24}$/))
+    );
+
+    // Build map of driverId -> bus name for labelling assigned drivers
+    const assignedToBus = {};
+    buses
+      .filter((b) => !busEditingId || String(b._id || b.id) !== String(busEditingId))
+      .forEach((b) => {
+        if (b.driverId && String(b.driverId).match(/^[0-9a-fA-F]{24}$/)) {
+          assignedToBus[String(b.driverId)] = b.busName || b.busNumber || "a bus";
+        }
+      });
+
+    return combinedDriversList.map((d) => ({
+      ...d,
+      isAssigned: assignedIds.has(String(d._id || d.id || "")),
+      assignedBusName: assignedToBus[String(d._id || d.id || "")] || null,
+    }));
+  }, [combinedDriversList, buses, busEditingId]);
 
   // Validation Errors State
   const [routeErrors, setRouteErrors] = useState({});
   const [busErrors, setBusErrors] = useState({});
-  const [scheduleErrors, setScheduleErrors] = useState({});
 
   // Combine default and custom presets
   const allPresets = useMemo(() => [...defaultRoutePresets, ...customPresets], [customPresets]);
@@ -300,6 +496,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       fetchRoutes();
       fetchSchedules();
       fetchDrivers();
+      fetchDriverLeaves();
     }
   }, [user, navigate]);
 
@@ -317,18 +514,31 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     }, 5000);
   };
 
+  const fetchDriverLeaves = async () => {
+    try {
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get("/api/admin/leaves", { headers, timeout: 8000 });
+      if (res.data && res.data.leaves && Array.isArray(res.data.leaves)) {
+        setDriverLeaves(res.data.leaves);
+      }
+    } catch (err) {
+      console.warn("Could not fetch driver leaves for schedule assignment:", err.message);
+    }
+  };
+
   const fetchDrivers = async () => {
     try {
       const token = getStoredToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get("/api/admin/drivers", { headers, timeout: 8000 });
       if (res.data && res.data.drivers && Array.isArray(res.data.drivers)) {
-        // STRICT: ONLY load users from MongoDB User collection where role === "driver" OR verificationStatus === "Approved"
-        const userRoleDriversOnly = res.data.drivers
-          .filter((d) => d.role?.toLowerCase() === "driver" || d.verificationStatus?.toLowerCase() === "approved")
+        const dbDrivers = res.data.drivers
+          // Safety filter: only show users whose role is strictly 'driver'
+          .filter((d) => String(d.role || "").toLowerCase().trim() === "driver")
           .map((d) => ({
-            id: d._id,
-            _id: d._id,
+            id: d._id || d.id,
+            _id: d._id || d.id,
             name: d.name || "Driver User",
             phone: d.phone || "N/A",
             licenseNumber: d.licenseNumber || "N/A",
@@ -337,8 +547,9 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
             profilePic: d.profilePic || "",
             isDbDriver: true,
           }));
-
-        setDriversList(userRoleDriversOnly);
+        setDriversList(dbDrivers);
+      } else {
+        setDriversList([]);
       }
     } catch (err) {
       console.warn("Error fetching driver users from database:", err.message);
@@ -376,12 +587,16 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
   const fetchSchedules = async () => {
     try {
+      setSchedulesLoading(true);
       const res = await axios.get("/api/admin/schedules");
       if (res.data.success) {
         setSchedules(res.data.schedules || []);
       }
     } catch (err) {
       console.error("Error fetching schedules:", err);
+      showNotification("Failed to fetch departure schedules: " + (err.response?.data?.message || err.message), true);
+    } finally {
+      setSchedulesLoading(false);
     }
   };
 
@@ -463,6 +678,29 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     setBaseStartTime(presetObj.base_start_time || "08:00 AM");
     setPreviewStartTime(presetObj.base_start_time || "08:00 AM");
     setStopBuilderList(presetObj.stopsList.map((s) => ({ ...s })));
+
+    let cumDist = 0;
+    let cumTime = 0;
+    const formattedPresetStops = presetObj.stopsList.map((s, idx) => {
+      const prevTime = s.travel_time_from_prev || 0;
+      cumTime += prevTime;
+      const prevDist = idx === 0 ? 0 : Number((prevTime * 0.6).toFixed(1));
+      cumDist += prevDist;
+      return {
+        order: idx + 1,
+        stopName: s.name,
+        name: s.name,
+        latitude: null,
+        longitude: null,
+        distanceFromPreviousStop: prevDist,
+        cumulativeDistance: Number(cumDist.toFixed(1)),
+        travel_time_from_prev: prevTime,
+        offset_minutes: cumTime,
+        source: "preset",
+      };
+    });
+    setMapStopsList(formattedPresetStops);
+    if (cumDist > 0) setDistanceKm(Number(cumDist.toFixed(1)));
     showNotification(`Loaded preset: ${presetObj.name}`);
   };
 
@@ -503,7 +741,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     if (!routeId.trim()) errs.routeId = "Route ID Code is required (e.g. RT-101)";
     const activeStops = mapStopsList.length > 0 ? mapStopsList : computedStops;
     if (activeStops.length < 2) errs.stops = "At least 2 stops (Starting Point & Destination) are required.";
-    
+
     // Check duplicate stop names
     const names = activeStops.map((s) => (s.stopName || s.name || "").trim().toLowerCase()).filter(Boolean);
     const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
@@ -599,10 +837,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     setRouteName(route.routeName || "");
     setFromLocation(route.fromLocation || "");
     setToLocation(route.toLocation || "");
-    setDistanceKm(route.distanceKm || 120);
-    setBaseStartTime(route.base_start_time || "08:00 AM");
-    setPreviewStartTime(route.base_start_time || "08:00 AM");
-    setFare(route.fare || 320);
+    setDistanceKm(route.distanceKm || 0);
+    setBaseStartTime(route.base_start_time || "");
+    setPreviewStartTime(route.base_start_time || "");
+    setFare(route.fare || "");
     setStatus(route.status || "Active");
 
     if (route.stops && route.stops.length > 0 && typeof route.stops[0] === "object") {
@@ -616,7 +854,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       setStopBuilderList(
         route.stops.map((stName, idx) => ({
           name: stName,
-          travel_time_from_prev: idx === 0 ? 0 : 30,
+          travel_time_from_prev: idx === 0 ? 0 : 0,
         }))
       );
     }
@@ -624,15 +862,18 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     window.scrollTo({ top: 300, behavior: "smooth" });
   };
 
-  const handleDeleteRoute = async (id, rCode) => {
-    if (!window.confirm(`Are you sure you want to delete route "${rCode}" and all associated departure schedules?`)) return;
+  const handleToggleRoute = async (id, currentStatus) => {
+    const action = currentStatus === "Active" ? "suspend" : "activate";
+    if (!window.confirm(`Are you sure you want to ${action} this route? Its associated departure schedules will still exist but won't serve passengers while suspended.`)) return;
     try {
-      const res = await axios.delete(`/api/admin/routes/${id}`);
-      showNotification(res.data.message || "Route deleted.");
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.patch(`/api/admin/routes/${id}/toggle`, {}, { headers });
+      showNotification(res.data.message || `Route ${action}d successfully.`);
       fetchRoutes();
       fetchSchedules();
     } catch (err) {
-      showNotification(err.response?.data?.message || "Failed to delete route", true);
+      showNotification(err.response?.data?.message || `Failed to ${action} route`, true);
     }
   };
 
@@ -640,71 +881,243 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     setRouteEditingId(null);
     setRouteId("");
     setRouteName("");
-    setFromLocation("Thrissur");
-    setToLocation("Kottayam");
-    setDistanceKm(120);
-    setBaseStartTime("08:00 AM");
-    setPreviewStartTime("08:00 AM");
-    setFare(320);
+    setFromLocation("");
+    setToLocation("");
+    setDistanceKm("");
+    setBaseStartTime("");
+    setPreviewStartTime("");
+    setFare("");
     setStatus("Active");
     setRouteErrors({});
     setStopBuilderList([
-      { name: "Thrissur", travel_time_from_prev: 0 },
-      { name: "Angamaly", travel_time_from_prev: 45 },
-      { name: "Kottayam", travel_time_from_prev: 75 },
+      { name: "", travel_time_from_prev: 0 },
+      { name: "", travel_time_from_prev: 0 },
     ]);
+    setMapStopsList([]);
+    setMapRouteData({
+      startingPoint: { name: "", latitude: null, longitude: null },
+      destination: { name: "", latitude: null, longitude: null },
+      totalDistance: 0,
+      estimatedTravelTime: "",
+      routeGeometry: [],
+      selectedRouteId: null,
+    });
   };
 
   // ---------------- SCHEDULE DEPARTURES HANDLERS ----------------
 
+  const checkDuplicateTime = (timeStr, excludeId = null) => {
+    if (!timeStr) return null;
+    try {
+      const normalizedNew = addMinutesToTime(timeStr, 0);
+
+      const duplicate = schedules.find((s) => {
+        if (excludeId && String(s._id || s.id) === String(excludeId)) {
+          return false;
+        }
+        return addMinutesToTime(s.start_time, 0) === normalizedNew;
+      });
+
+      if (duplicate) {
+        return "A route is already scheduled at this time. Please select a different time.";
+      }
+    } catch (e) {
+      // Incomplete or unparseable time format, ignore until it is typed completely
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    if (!scheduleStartTime) {
+      setScheduleErrors((prev) => ({ ...prev, startTime: "" }));
+      return;
+    }
+
+    const cleanStr = scheduleStartTime.trim().toUpperCase();
+    const hasCol = cleanStr.includes(":");
+    const hasPeriod = cleanStr.includes("AM") || cleanStr.includes("PM");
+
+    if (hasCol && hasPeriod) {
+      const dupMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId);
+      if (dupMsg) {
+        setScheduleErrors((prev) => ({ ...prev, startTime: dupMsg }));
+      } else {
+        setScheduleErrors((prev) => ({ ...prev, startTime: "" }));
+      }
+    } else {
+      setScheduleErrors((prev) => ({ ...prev, startTime: "" }));
+    }
+  }, [scheduleStartTime, scheduleEditingId, schedules]);
+
+  const handleSwitchToSchedulesTab = () => {
+    setActiveTab("schedules");
+    if (!scheduleRouteId && routes.length > 0) {
+      setScheduleRouteId(routes[0]._id);
+    }
+    fetchSchedules();
+  };
+
   const validateScheduleForm = () => {
     const errs = {};
     if (!scheduleRouteId) errs.route = "Please select a route for this schedule.";
-    if (!scheduleStartTime.trim()) errs.startTime = "Departure Start Time is required.";
+    if (!scheduleStartTime.trim()) {
+      errs.startTime = "Departure Start Time is required.";
+    } else {
+      const duplicateMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId);
+      if (duplicateMsg) {
+        errs.startTime = duplicateMsg;
+      }
+    }
     setScheduleErrors(errs);
     return Object.keys(errs).length === 0;
+  };
+
+  const handleScheduleBusSelect = (busIdVal) => {
+    setScheduleBusId(busIdVal);
+    if (!busIdVal) return;
+
+    const selectedBusObj = buses.find((b) => String(b._id || b.id) === String(busIdVal));
+    if (selectedBusObj) {
+      const linkedDriver = driversList.find(
+        (d) =>
+          (selectedBusObj.driverId && String(d._id || d.id) === String(selectedBusObj.driverId)) ||
+          (selectedBusObj.driverName && String(d.name).toLowerCase().trim() === String(selectedBusObj.driverName).toLowerCase().trim())
+      );
+
+      if (linkedDriver) {
+        setScheduleDriverId(String(linkedDriver._id || linkedDriver.id));
+      } else {
+        setScheduleDriverId("");
+      }
+
+      const linkedRoute = routes.find(
+        (r) =>
+          String(r._id) === String(selectedBusObj.route_id) ||
+          (selectedBusObj.routeName && String(r.routeName).toLowerCase().trim() === String(selectedBusObj.routeName).toLowerCase().trim()) ||
+          (selectedBusObj.fromLocation && selectedBusObj.toLocation &&
+            selectedBusObj.fromLocation.toLowerCase() === r.fromLocation.toLowerCase() &&
+            selectedBusObj.toLocation.toLowerCase() === r.toLocation.toLowerCase())
+      );
+
+      if (linkedRoute) {
+        setScheduleRouteId(String(linkedRoute._id));
+      }
+
+      const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+      const driverNameDisp = linkedDriver?.name || (!isGeneric(selectedBusObj.driverName) ? selectedBusObj.driverName : "Unassigned");
+      const routeNameDisp = linkedRoute?.routeName || selectedBusObj.routeName || "Assigned Route";
+      showNotification(`⚡ Bus ${selectedBusObj.busNumber} (${selectedBusObj.busName}) selected! Assigned Driver: "${driverNameDisp}" & Route: "${routeNameDisp}" 🚌`);
+    }
+  };
+
+  const handleScheduleRouteSelect = (routeIdVal) => {
+    setScheduleRouteId(routeIdVal);
+    if (!routeIdVal) return;
+
+    const selectedRouteObj = routes.find((r) => String(r._id) === String(routeIdVal));
+    if (selectedRouteObj) {
+      const linkedBus = buses.find(
+        (b) =>
+          String(b.route_id) === String(selectedRouteObj._id) ||
+          (b.routeName && String(b.routeName).toLowerCase().trim() === String(selectedRouteObj.routeName).toLowerCase().trim()) ||
+          (b.fromLocation && b.toLocation &&
+            b.fromLocation.toLowerCase() === selectedRouteObj.fromLocation.toLowerCase() &&
+            b.toLocation.toLowerCase() === selectedRouteObj.toLocation.toLowerCase())
+      );
+
+      if (linkedBus) {
+        setScheduleBusId(String(linkedBus._id || linkedBus.id));
+        const linkedDriver = driversList.find(
+          (d) =>
+            (linkedBus.driverId && String(d._id || d.id) === String(linkedBus.driverId)) ||
+            (linkedBus.driverName && String(d.name).toLowerCase().trim() === String(linkedBus.driverName).toLowerCase().trim())
+        );
+        if (linkedDriver) {
+          setScheduleDriverId(String(linkedDriver._id || linkedDriver.id));
+        } else {
+          setScheduleDriverId("");
+        }
+      }
+    }
   };
 
   const handleScheduleSubmit = async (e) => {
     e.preventDefault();
     if (!validateScheduleForm()) return;
 
-    const selectedBus = buses.find((b) => b._id === scheduleBusId);
+    const selectedBus = buses.find((b) => String(b._id || b.id) === String(scheduleBusId));
     const selectedDriver = driversList.find((d) => String(d._id || d.id) === String(scheduleDriverId));
+
+    const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+    const driverNameFinal = selectedDriver?.name || (!isGeneric(selectedBus?.driverName) ? selectedBus.driverName : "Not Assigned");
+    const driverIdFinal = selectedDriver?._id || selectedDriver?.id || (selectedBus?.driverId ? selectedBus.driverId : null);
 
     const payload = {
       route_id: scheduleRouteId,
       start_time: scheduleStartTime,
       bus_id: scheduleBusId || null,
       busNumber: selectedBus?.busNumber || "",
-      driver_id: scheduleDriverId || null,
-      driverName: selectedDriver?.name || "",
+      driver_id: driverIdFinal,
+      driverName: driverNameFinal,
       delay_buffer_minutes: Number(scheduleDelayBuffer) || 0,
       is_active: true,
     };
 
     try {
       setIsSubmitting(true);
-      const res = await axios.post("/api/admin/schedules", payload);
-      showNotification(res.data.message || "Departure schedule created!");
+      if (scheduleEditingId) {
+        const res = await axios.put(`/api/admin/schedules/${scheduleEditingId}`, payload);
+        showNotification(res.data.message || "Departure schedule updated successfully!");
+        setScheduleEditingId(null);
+      } else {
+        const res = await axios.post("/api/admin/schedules", payload);
+        showNotification(res.data.message || "Departure schedule created!");
+      }
       fetchSchedules();
       setScheduleStartTime("08:30 AM");
       setScheduleErrors({});
     } catch (err) {
-      showNotification(err.response?.data?.message || "Failed to create schedule departure", true);
+      showNotification(err.response?.data?.message || "Failed to save schedule departure", true);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteSchedule = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this departure schedule?")) return;
+  const handleEditSchedule = (sch) => {
+    setScheduleEditingId(sch._id);
+    const rId = typeof sch.route_id === "object" ? sch.route_id._id : sch.route_id || "";
+    setScheduleRouteId(rId);
+    setScheduleStartTime(sch.start_time || "08:30 AM");
+    setScheduleDelayBuffer(sch.delay_buffer_minutes || 0);
+
+    if (sch.bus_id) {
+      setScheduleBusId(typeof sch.bus_id === "object" ? sch.bus_id._id : sch.bus_id);
+    }
+    if (sch.driver_id) {
+      setScheduleDriverId(typeof sch.driver_id === "object" ? sch.driver_id._id : sch.driver_id);
+    }
+
+    showNotification(`✏️ Editing schedule at ${sch.start_time}. Update fields above and click Save ✓`);
+  };
+
+  const handleCancelScheduleEdit = () => {
+    setScheduleEditingId(null);
+    setScheduleStartTime("08:30 AM");
+    setScheduleDelayBuffer(0);
+    setScheduleErrors({});
+    showNotification("Cancelled schedule editing mode.");
+  };
+
+  const handleToggleSchedule = async (id, currentlyActive) => {
+    const action = currentlyActive ? "disable" : "enable";
     try {
-      const res = await axios.delete(`/api/admin/schedules/${id}`);
-      showNotification(res.data.message || "Schedule deleted.");
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.patch(`/api/admin/schedules/${id}/toggle`, {}, { headers });
+      showNotification(res.data.message || `Schedule ${action}d successfully.`);
       fetchSchedules();
     } catch (err) {
-      showNotification(err.response?.data?.message || "Failed to delete schedule", true);
+      showNotification(err.response?.data?.message || `Failed to ${action} schedule`, true);
     }
   };
 
@@ -713,14 +1126,25 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   // Driver Dropdown Auto-Fill Handler
   const handleDriverSelectChange = (driverIdVal) => {
     setSelectedDriverOption(driverIdVal);
+    if (!driverIdVal || driverIdVal === "unassigned") {
+      setBusForm((prev) => ({
+        ...prev,
+        driverName: "Not Assigned",
+        driverPhone: "N/A",
+        driverLicense: "N/A",
+        driverExperience: 0,
+        driverId: null,
+      }));
+      return;
+    }
     const driverObj = driversList.find((d) => String(d._id || d.id) === String(driverIdVal));
     if (driverObj) {
       setBusForm((prev) => ({
         ...prev,
         driverName: driverObj.name,
-        driverPhone: driverObj.phone || "+91 98470 00000",
-        driverLicense: driverObj.licenseNumber || "KL-07-2020-00100",
-        driverExperience: driverObj.experienceYears || 5,
+        driverPhone: driverObj.phone || "N/A",
+        driverLicense: driverObj.licenseNumber || "N/A",
+        driverExperience: driverObj.experienceYears || 0,
         driverId: driverObj._id || driverObj.id,
       }));
     }
@@ -731,18 +1155,19 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     setSelectedRouteOption(routeIdVal);
     const routeObj = routes.find((r) => r._id === routeIdVal);
     if (routeObj) {
-      const arrTime = addMinutesToTime(routeObj.base_start_time || "08:00 AM", 120);
+      const depTime = routeObj.base_start_time || "";
+      const arrTime = depTime ? addMinutesToTime(depTime, routeObj.total_duration_minutes || 120) : "";
       const stopsStr = Array.isArray(routeObj.stops)
         ? routeObj.stops.map((s) => (typeof s === "object" ? s.name : s)).join(", ")
         : `${routeObj.fromLocation}, ${routeObj.toLocation}`;
 
       setBusForm((prev) => ({
         ...prev,
-        fromLocation: routeObj.fromLocation,
-        toLocation: routeObj.toLocation,
-        duration: routeObj.duration || "2h 00m",
-        price: routeObj.fare || 320,
-        departureTime: routeObj.base_start_time || "08:00 AM",
+        fromLocation: routeObj.fromLocation || "",
+        toLocation: routeObj.toLocation || "",
+        duration: routeObj.duration || "",
+        price: routeObj.fare || "",
+        departureTime: depTime,
         arrivalTime: arrTime,
         stops: stopsStr,
       }));
@@ -809,95 +1234,116 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const resetBusForm = () => {
     setBusEditingId(null);
     setSelectedRouteOption("");
-    const firstDriver = driversList[0] || defaultFleetDrivers[0];
-    setSelectedDriverOption(String(firstDriver._id || firstDriver.id));
+    setSelectedDriverOption("unassigned");
     setBusErrors({});
     setBusForm({
       busNumber: "",
       busName: "",
-      busType: "AC Seater / Sleeper (2+2)",
+      busType: "Normal Bus",
       operator: "MoveSmart Fleet Ops",
-      fromLocation: "Thrissur",
-      toLocation: "Kottayam",
-      departureTime: "08:00 AM",
-      arrivalTime: "10:00 AM",
-      duration: "2h 00m",
+      fromLocation: "",
+      toLocation: "",
+      departureTime: "",
+      arrivalTime: "",
+      duration: "",
       totalSeats: 32,
-      price: 320,
-      amenities: ["Wi-Fi", "Charging Port", "Live Tracking", "AC"],
-      driverName: firstDriver.name,
-      driverPhone: firstDriver.phone,
-      driverLicense: firstDriver.licenseNumber,
-      driverId: firstDriver._id || firstDriver.id,
-      driverPhoto: firstDriver.profilePic || "",
-      driverVerified: true,
-      driverExperience: 8,
-      stops: "Thrissur, Angamaly, Kottayam",
+      price: "",
+      amenities: [],
+      driverName: "",
+      driverPhone: "",
+      driverLicense: "",
+      driverId: null,
+      driverPhoto: "",
+      driverVerified: false,
+      driverExperience: 0,
+      stops: "",
     });
   };
 
   const handleEditBus = (bus) => {
+    const isGenericName = (n) => !n || ["unassigned", "not assigned", "driver assigned", "assigned driver", "driver user", "driver"].includes(String(n).toLowerCase().trim());
+    const validDriverId = bus.driverId && String(bus.driverId).match(/^[0-9a-fA-F]{24}$/) ? String(bus.driverId) : null;
+    const resolvedDriverName = !isGenericName(bus.driverName) ? bus.driverName : "Not Assigned";
+
+    const matchedDriver = combinedDriversList.find(
+      (d) =>
+        (validDriverId && String(d._id || d.id) === validDriverId) ||
+        (!isGenericName(bus.driverName) && String(d.name).toLowerCase().trim() === String(bus.driverName).toLowerCase().trim())
+    );
+
+    const driverIdToUse = matchedDriver ? String(matchedDriver._id || matchedDriver.id) : validDriverId;
+
     setBusEditingId(bus._id);
     setBusForm({
       busNumber: bus.busNumber || "",
       busName: bus.busName || "",
-      busType: bus.busType || "AC Seater / Sleeper (2+2)",
+      busType: bus.busType || "Normal Bus",
       operator: bus.operator || "MoveSmart Fleet Ops",
-      fromLocation: bus.fromLocation || "Thrissur",
-      toLocation: bus.toLocation || "Kottayam",
-      departureTime: bus.departureTime || "08:00 AM",
-      arrivalTime: bus.arrivalTime || "10:00 AM",
-      duration: bus.duration || "2h 00m",
+      fromLocation: bus.fromLocation || "",
+      toLocation: bus.toLocation || "",
+      departureTime: bus.departureTime || "",
+      arrivalTime: bus.arrivalTime || "",
+      duration: bus.duration || "",
       totalSeats: bus.totalSeats || 32,
-      price: bus.price || 320,
-      amenities: bus.amenities || ["Wi-Fi", "Charging Port", "Live Tracking", "AC"],
-      driverName: bus.driverName || "Suresh Menon",
-      driverPhone: bus.driverPhone || "+91 98471 22334",
-      driverLicense: bus.driverLicense || "KL-07-2019-88120",
-      driverId: bus.driverId || "def-1",
-      driverPhoto: bus.driverPhoto || "",
-      driverVerified: bus.driverVerified !== false,
-      driverExperience: bus.driverExperience || 8,
-      stops: bus.stops || "Thrissur, Angamaly, Kottayam",
+      price: bus.price || "",
+      amenities: bus.amenities || [],
+      driverName: matchedDriver ? matchedDriver.name : resolvedDriverName,
+      driverPhone: matchedDriver?.phone || bus.driverPhone || "",
+      driverLicense: matchedDriver?.licenseNumber || bus.driverLicense || "",
+      driverId: driverIdToUse,
+      driverPhoto: matchedDriver?.profilePic || bus.driverPhoto || "",
+      driverVerified: matchedDriver ? matchedDriver.verificationStatus === "Approved" : Boolean(bus.driverVerified),
+      driverExperience: matchedDriver?.experienceYears || bus.driverExperience || 0,
+      stops: Array.isArray(bus.stops) ? bus.stops.join(", ") : (bus.stops || ""),
     });
 
-    if (bus.driverId) {
-      setSelectedDriverOption(String(bus.driverId));
+    if (driverIdToUse) {
+      setSelectedDriverOption(driverIdToUse);
+    } else {
+      setSelectedDriverOption("unassigned");
     }
     window.scrollTo({ top: 300, behavior: "smooth" });
   };
 
-  const handleDeleteBus = async (id, bNum) => {
-    if (!window.confirm(`Are you sure you want to remove bus "${bNum}" from fleet?`)) return;
+  const handleToggleBus = async (id, currentlyActive) => {
+    const action = currentlyActive ? "deactivate" : "activate";
     try {
-      const res = await axios.delete(`/api/admin/buses/${id}`);
-      showNotification(res.data.message || "Bus removed from fleet.");
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.patch(`/api/admin/buses/${id}/toggle`, {}, { headers });
+      showNotification(res.data.message || `Bus ${action}d successfully.`);
       fetchBuses();
     } catch (err) {
-      showNotification(err.response?.data?.message || "Failed to delete bus", true);
+      showNotification(err.response?.data?.message || `Failed to ${action} bus`, true);
     }
   };
 
-  // Filtered lists for search
+  // Filtered lists for search with safe property access
+  const safeBusQuery = (busSearch || "").toLowerCase().trim();
   const filteredBuses = buses.filter(
     (b) =>
-      b.busName?.toLowerCase().includes(busSearch.toLowerCase()) ||
-      b.busNumber?.toLowerCase().includes(busSearch.toLowerCase()) ||
-      b.fromLocation?.toLowerCase().includes(busSearch.toLowerCase()) ||
-      b.toLocation?.toLowerCase().includes(busSearch.toLowerCase())
+      !safeBusQuery ||
+      (b.busName || "").toLowerCase().includes(safeBusQuery) ||
+      (b.busNumber || "").toLowerCase().includes(safeBusQuery) ||
+      (b.fromLocation || "").toLowerCase().includes(safeBusQuery) ||
+      (b.toLocation || "").toLowerCase().includes(safeBusQuery) ||
+      (b.driverName || "").toLowerCase().includes(safeBusQuery) ||
+      (b.busType || "").toLowerCase().includes(safeBusQuery)
   );
 
+  const safeRouteQuery = (routeSearch || "").toLowerCase().trim();
   const filteredRoutes = routes.filter(
     (r) =>
-      r.routeName?.toLowerCase().includes(routeSearch.toLowerCase()) ||
-      r.routeId?.toLowerCase().includes(routeSearch.toLowerCase()) ||
-      r.fromLocation?.toLowerCase().includes(routeSearch.toLowerCase()) ||
-      r.toLocation?.toLowerCase().includes(routeSearch.toLowerCase())
+      !safeRouteQuery ||
+      (r.routeName || "").toLowerCase().includes(safeRouteQuery) ||
+      (r.routeId || "").toLowerCase().includes(safeRouteQuery) ||
+      (r.fromLocation || "").toLowerCase().includes(safeRouteQuery) ||
+      (r.toLocation || "").toLowerCase().includes(safeRouteQuery)
   );
 
   const mainContent = (
     <div style={{ maxWidth: isEmbedded ? "100%" : "1380px", margin: "0 auto", padding: isEmbedded ? "0" : "28px 24px", flex: 1, width: "100%" }}>
-      
+
       {/* Notifications */}
       {successMsg && (
         <div style={{ padding: "14px 18px", borderRadius: "12px", background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#047857", fontSize: "14px", fontWeight: "700", display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
@@ -943,7 +1389,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
           <ArrowRight size={14} style={{ color: "rgba(255,255,255,0.3)" }} />
 
           <div
-            onClick={() => setActiveTab("schedules")}
+            onClick={handleSwitchToSchedulesTab}
             style={{
               display: "flex",
               alignItems: "center",
@@ -1036,7 +1482,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
         <button
           type="button"
-          onClick={() => setActiveTab("schedules")}
+          onClick={handleSwitchToSchedulesTab}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1082,7 +1528,49 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       {/* ==================================================== */}
       {activeTab === "routes" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-          
+
+          {/* Quick Presets Section for Fast Stress-Free Admin Setup */}
+          <div style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", borderRadius: "18px", padding: "18px 22px", color: "#ffffff", boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Zap size={18} style={{ color: "#f59e0b" }} />
+                <span style={{ fontSize: "14px", fontWeight: "800", color: "#ffffff" }}>⚡ 1-Click Fast Inter-City Presets (Stress-Free Route Setup)</span>
+              </div>
+              <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700" }}>Click any preset to auto-fill origin, destination &amp; fare</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "10px" }}>
+              {allPresets.map((preset) => {
+                const safeFrom = (fromLocation || "").toLowerCase();
+                const safeTo = (toLocation || "").toLowerCase();
+                const presetFrom = (preset.fromLocation || "").toLowerCase();
+                const presetTo = (preset.toLocation || "").toLowerCase();
+                const isActive = safeFrom === presetFrom && safeTo === presetTo;
+                return (
+                  <div
+                    key={preset.id}
+                    onClick={() => handlePresetSelect(preset)}
+                    style={{
+                      background: isActive ? "linear-gradient(135deg, #2563eb, #1d4ed8)" : "rgba(255, 255, 255, 0.08)",
+                      border: isActive ? "2px solid #60a5fa" : "1px solid rgba(255, 255, 255, 0.12)",
+                      borderRadius: "12px",
+                      padding: "12px 14px",
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: "800", color: isActive ? "#dbeafe" : "#94a3b8" }}>
+                      <span>{preset.fromLocation} ➔ {preset.toLocation}</span>
+                      <span style={{ color: isActive ? "#ffffff" : "#4ade80" }}>₹{preset.price}</span>
+                    </div>
+                    <div style={{ fontSize: "12px", fontWeight: "800", color: "#ffffff", marginTop: "4px" }}>
+                      {preset.name}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* 1. Interactive Route Map Component */}
           <RouteMap
             fromLocationName={fromLocation}
@@ -1139,7 +1627,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                         const next = mapStopsList[insertIdx];
                         const newLat = prev ? Number(((prev.latitude + (next ? next.latitude : prev.latitude)) / 2).toFixed(5)) : 9.5544;
                         const newLng = prev ? Number(((prev.longitude + (next ? next.longitude : prev.longitude)) / 2).toFixed(5)) : 76.7865;
-                        
+
                         const newStopObj = {
                           order: insertIdx + 1,
                           stopName: cleanName,
@@ -1155,10 +1643,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
                         const updated = [...mapStopsList];
                         updated.splice(insertIdx, 0, newStopObj);
-                        
+
                         let cum = 0;
                         const reordered = updated.map((st, i) => {
-                          const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(st.latitude - updated[i-1].latitude, 2) + Math.pow(st.longitude - updated[i-1].longitude, 2)) * 111).toFixed(1));
+                          const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(st.latitude - updated[i - 1].latitude, 2) + Math.pow(st.longitude - updated[i - 1].longitude, 2)) * 111).toFixed(1));
                           cum += pDist;
                           return {
                             ...st,
@@ -1258,8 +1746,21 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                             ) : (
                               <div>
                                 <span style={{ fontWeight: 700, color: "#1e293b" }}>{st.stopName || st.name}</span>
-                                {isFirst && <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, marginLeft: 6 }}>(Origin)</span>}
-                                {isLast && <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 700, marginLeft: 6 }}>(Destination)</span>}
+                                {isFirst && (
+                                  <span style={{ fontSize: 10, color: "#166534", fontWeight: 800, marginLeft: 8, background: "#dcfce7", padding: "2px 8px", borderRadius: 10, border: "1px solid #86efac" }}>
+                                    🚩 Starting Point
+                                  </span>
+                                )}
+                                {isLast && (
+                                  <span style={{ fontSize: 10, color: "#991b1b", fontWeight: 800, marginLeft: 8, background: "#fee2e2", padding: "2px 8px", borderRadius: 10, border: "1px solid #fca5a5" }}>
+                                    🏁 Destination
+                                  </span>
+                                )}
+                                {!isFirst && !isLast && (
+                                  <span style={{ fontSize: 10, color: "#1e40af", fontWeight: 700, marginLeft: 8, background: "#eff6ff", padding: "2px 8px", borderRadius: 10, border: "1px solid #bfdbfe" }}>
+                                    🚏 Sub-Station
+                                  </span>
+                                )}
                               </div>
                             )}
                           </td>
@@ -1295,7 +1796,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                                   updated[idx - 1] = temp;
                                   let cum = 0;
                                   const reordered = updated.map((item, i) => {
-                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i-1].latitude, 2) + Math.pow(item.longitude - updated[i-1].longitude, 2)) * 111).toFixed(1));
+                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i - 1].latitude, 2) + Math.pow(item.longitude - updated[i - 1].longitude, 2)) * 111).toFixed(1));
                                     cum += pDist;
                                     return {
                                       ...item,
@@ -1323,7 +1824,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                                   updated[idx + 1] = temp;
                                   let cum = 0;
                                   const reordered = updated.map((item, i) => {
-                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i-1].latitude, 2) + Math.pow(item.longitude - updated[i-1].longitude, 2)) * 111).toFixed(1));
+                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i - 1].latitude, 2) + Math.pow(item.longitude - updated[i - 1].longitude, 2)) * 111).toFixed(1));
                                     cum += pDist;
                                     return {
                                       ...item,
@@ -1362,7 +1863,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                                   const updated = mapStopsList.filter((_, i) => i !== idx);
                                   let cum = 0;
                                   const reordered = updated.map((item, i) => {
-                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i-1].latitude, 2) + Math.pow(item.longitude - updated[i-1].longitude, 2)) * 111).toFixed(1));
+                                    const pDist = i === 0 ? 0 : Number((Math.sqrt(Math.pow(item.latitude - updated[i - 1].latitude, 2) + Math.pow(item.longitude - updated[i - 1].longitude, 2)) * 111).toFixed(1));
                                     cum += pDist;
                                     return {
                                       ...item,
@@ -1461,20 +1962,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                     />
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: "11px", fontWeight: "800", color: "#475569", marginBottom: "4px" }}>
-                        Base Departure Time
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 08:00 AM"
-                        value={baseStartTime}
-                        onChange={(e) => setBaseStartTime(e.target.value)}
-                        style={{ width: "100%", padding: "8px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "600" }}
-                      />
-                    </div>
-
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     <div>
                       <label style={{ display: "block", fontSize: "11px", fontWeight: "800", color: "#475569", marginBottom: "4px" }}>
                         Per KM Rate (₹/km) *
@@ -1515,37 +2003,60 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                     </div>
                   )}
 
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    style={{
-                      width: "100%",
-                      padding: "13px",
-                      borderRadius: "12px",
-                      background: isSubmitting ? "#94a3b8" : "linear-gradient(135deg, #0ea5e9, #0284c7)",
-                      color: "#ffffff",
-                      fontSize: "14px",
-                      fontWeight: "800",
-                      border: "none",
-                      cursor: isSubmitting ? "not-allowed" : "pointer",
-                      boxShadow: "0 4px 12px rgba(14, 165, 233, 0.4)",
-                      marginTop: "6px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                    }}
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <RefreshCw className="spin" size={16} /> Saving Route to Database...
-                      </>
-                    ) : routeEditingId ? (
-                      "Save Route & Timing Settings ✓"
-                    ) : (
-                      "Save Route to Database ✓"
-                    )}
-                  </button>
+                  <div style={{ display: "flex", gap: "10px", marginTop: "6px" }}>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      style={{
+                        flex: 1,
+                        padding: "13px",
+                        borderRadius: "12px",
+                        background: isSubmitting ? "#94a3b8" : "linear-gradient(135deg, #0ea5e9, #0284c7)",
+                        color: "#ffffff",
+                        fontSize: "14px",
+                        fontWeight: "800",
+                        border: "none",
+                        cursor: isSubmitting ? "not-allowed" : "pointer",
+                        boxShadow: "0 4px 12px rgba(14, 165, 233, 0.4)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                      }}
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="spin" size={16} /> Saving Route...
+                        </>
+                      ) : routeEditingId ? (
+                        "Save Route Settings ✓"
+                      ) : (
+                        "Save Route to Database ✓"
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={resetRouteForm}
+                      title="Reset and clear route form"
+                      style={{
+                        padding: "13px 18px",
+                        borderRadius: "12px",
+                        background: "#f1f5f9",
+                        color: "#475569",
+                        fontSize: "13px",
+                        fontWeight: "700",
+                        border: "1px solid #cbd5e1",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <RotateCcw size={15} />
+                      <span>Reset</span>
+                    </button>
+                  </div>
                 </form>
               </div>
 
@@ -1563,7 +2074,18 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                       </div>
                       <div style={{ display: "flex", gap: "4px" }}>
                         <button type="button" onClick={() => handleEditRoute(r)} style={{ padding: "3px 6px", borderRadius: "4px", background: "#eff6ff", color: "#2563eb", fontSize: "10px", fontWeight: "700", border: "none", cursor: "pointer" }}>Edit</button>
-                        <button type="button" onClick={() => handleDeleteRoute(r._id, r.routeId)} style={{ padding: "3px 6px", borderRadius: "4px", background: "#fee2e2", color: "#dc2626", fontSize: "10px", fontWeight: "700", border: "none", cursor: "pointer" }}>Delete</button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleRoute(r._id, r.status)}
+                          style={{
+                            padding: "3px 6px", borderRadius: "4px",
+                            background: r.status === "Active" ? "#fffbeb" : "#f0fdf4",
+                            color: r.status === "Active" ? "#b45309" : "#16a34a",
+                            fontSize: "10px", fontWeight: "700", border: "none", cursor: "pointer"
+                          }}
+                        >
+                          {r.status === "Active" ? "⏸ Suspend" : "▶ Activate"}
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1616,9 +2138,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   <select
                     required
                     value={scheduleRouteId}
-                    onChange={(e) => setScheduleRouteId(e.target.value)}
+                    onChange={(e) => handleScheduleRouteSelect(e.target.value)}
                     style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: `1px solid ${scheduleErrors.route ? "#ef4444" : "#cbd5e1"}`, fontSize: "14px", fontWeight: "700", outline: "none" }}
                   >
+                    <option value="">-- Select Route --</option>
                     {routes.map((r) => (
                       <option key={r._id} value={r._id}>
                         {r.routeId} - {r.routeName} ({r.duration})
@@ -1645,6 +2168,11 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                       onChange={(e) => setScheduleStartTime(e.target.value)}
                       style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "14px", fontWeight: "700" }}
                     />
+                    {scheduleErrors.startTime && (
+                      <span style={{ color: "#ef4444", fontSize: "11px", fontWeight: "700", marginTop: "3px", display: "block" }}>
+                        ⚠️ {scheduleErrors.startTime}
+                      </span>
+                    )}
                   </div>
 
                   <div>
@@ -1661,84 +2189,120 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
-                      Assigned Bus (Optional)
-                    </label>
-                    <select
-                      value={scheduleBusId}
-                      onChange={(e) => setScheduleBusId(e.target.value)}
-                      style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "600" }}
-                    >
-                      <option value="">-- No Bus Assigned --</option>
-                      {buses.map((b) => (
-                        <option key={b._id} value={b._id}>
-                          {b.busName} ({b.busNumber})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
-                      Assigned Driver (Optional)
-                    </label>
-                    <select
-                      value={scheduleDriverId}
-                      onChange={(e) => setScheduleDriverId(e.target.value)}
-                      style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "600" }}
-                    >
-                      <option value="">-- No Driver Assigned --</option>
-                      {driversList.map((d) => (
-                        <option key={String(d._id || d.id)} value={String(d._id || d.id)}>
-                          {d.name} ({d.licenseNumber})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
+                    Assigned Bus (Optional)
+                    {scheduleStartTime && (
+                      <span style={{ fontSize: "11px", fontWeight: "700", color: availableBusesForSchedule.length === buses.length ? "#10b981" : "#f59e0b", marginLeft: "6px" }}>
+                        ({availableBusesForSchedule.length} available at {scheduleStartTime})
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    value={scheduleBusId}
+                    onChange={(e) => handleScheduleBusSelect(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "600" }}
+                  >
+                    <option value="">-- Select Available Bus --</option>
+                    {availableBusesForSchedule.map((b) => (
+                      <option key={b._id} value={b._id}>
+                        {b.busName} ({b.busNumber})
+                      </option>
+                    ))}
+                  </select>
+                  {buses.length > availableBusesForSchedule.length && (
+                    <span style={{ fontSize: "10px", color: "#d97706", display: "block", marginTop: "4px", fontWeight: "600" }}>
+                      🔒 {buses.length - availableBusesForSchedule.length} bus(es) driving another route at {scheduleStartTime} are hidden.
+                    </span>
+                  )}
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  style={{
-                    width: "100%",
-                    padding: "13px",
-                    borderRadius: "12px",
-                    background: isSubmitting ? "#94a3b8" : "linear-gradient(135deg, #8b5cf6, #6d28d9)",
-                    color: "#ffffff",
-                    fontSize: "14px",
-                    fontWeight: "800",
-                    border: "none",
-                    cursor: isSubmitting ? "not-allowed" : "pointer",
-                    boxShadow: "0 4px 12px rgba(139, 92, 246, 0.4)",
-                    marginTop: "8px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                  }}
-                >
-                  {isSubmitting ? (
-                    <>
-                      <RefreshCw className="spin" size={16} /> Saving Schedule...
-                    </>
-                  ) : (
-                    "Create Departure Schedule ✓"
+                {/* ⚡ CLEAR VISUAL AUTO-LINKED SUMMARY BADGE / BANNER */}
+                {scheduleBusId && (
+                  <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)", border: "2px solid #86efac", borderRadius: "14px", padding: "14px 18px", marginTop: "4px", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.12)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                      <span style={{ fontSize: "12px", fontWeight: "900", color: "#166534", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: "6px" }}>
+                        ⚡ AUTO-LINKED BUS TO ROUTE
+                      </span>
+                      <span style={{ fontSize: "11px", fontWeight: "800", background: "#ffffff", color: "#15803d", padding: "3px 10px", borderRadius: "10px", border: "1px solid #86efac" }}>
+                        Fixed Route Binding
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "13px", color: "#14532d", fontWeight: "700" }}>
+                      <div>🚌 <strong>Bus:</strong> {buses.find(b => String(b._id || b.id) === String(scheduleBusId))?.busNumber || "Selected Bus"}</div>
+                      <div>📍 <strong>Route:</strong> {routes.find(r => String(r._id) === String(scheduleRouteId))?.routeName || "Selected Route"}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    style={{
+                      flex: 1,
+                      padding: "13px",
+                      borderRadius: "12px",
+                      background: isSubmitting ? "#94a3b8" : scheduleEditingId ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                      color: "#ffffff",
+                      fontSize: "14px",
+                      fontWeight: "800",
+                      border: "none",
+                      cursor: isSubmitting ? "not-allowed" : "pointer",
+                      boxShadow: "0 4px 12px rgba(139, 92, 246, 0.4)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <RefreshCw className="spin" size={16} /> Saving Schedule...
+                      </>
+                    ) : scheduleEditingId ? (
+                      "Save Schedule Changes ✓"
+                    ) : (
+                      "Create Departure Schedule ✓"
+                    )}
+                  </button>
+
+                  {scheduleEditingId && (
+                    <button
+                      type="button"
+                      onClick={handleCancelScheduleEdit}
+                      style={{ padding: "13px 18px", borderRadius: "12px", background: "#f1f5f9", color: "#475569", fontSize: "13px", fontWeight: "800", border: "1.5px solid #cbd5e1", cursor: "pointer" }}
+                    >
+                      Cancel Edit
+                    </button>
                   )}
-                </button>
+                </div>
               </form>
             )}
           </div>
 
           {/* Right Column: Active Schedule Timetables List */}
           <div>
-            <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", marginBottom: "14px" }}>
-              Active Departure Timetables ({schedules.length})
-            </h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+              <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                Active Departure Timetables ({schedules.length})
+              </h3>
+              <button
+                type="button"
+                onClick={fetchSchedules}
+                disabled={schedulesLoading}
+                style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 12px", borderRadius: "10px", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
+              >
+                <RefreshCw size={14} className={schedulesLoading ? "spin" : ""} /> {schedulesLoading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
 
-            {schedules.length === 0 ? (
+            {schedulesLoading ? (
+              <div style={{ background: "#ffffff", padding: "30px", borderRadius: "16px", textAlign: "center", color: "#64748b", border: "1px solid #e2e8f0" }}>
+                <RefreshCw size={32} className="spin" style={{ color: "#8b5cf6", marginBottom: "10px" }} />
+                <p style={{ margin: 0, fontWeight: "700", color: "#475569" }}>Loading Departure Schedules...</p>
+              </div>
+            ) : schedules.length === 0 ? (
               <div style={{ background: "#ffffff", padding: "30px", borderRadius: "16px", textAlign: "center", color: "#64748b", border: "1px solid #e2e8f0" }}>
                 <Calendar size={36} style={{ opacity: 0.3, marginBottom: "8px" }} />
                 <p style={{ margin: 0, fontWeight: "600" }}>No departure schedules created yet. Add departure times above!</p>
@@ -1748,6 +2312,31 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                 {schedules.map((sch) => {
                   const matchedRoute = typeof sch.route_id === "object" ? sch.route_id : routes.find((r) => r._id === sch.route_id);
                   const routeStops = matchedRoute?.stops || [];
+
+                  const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(n).toLowerCase().trim());
+
+                  // Failsafe match bus object by ID or busNumber (stripping spaces & hyphens)
+                  const matchedBus = buses.find(
+                    (b) =>
+                      (sch.bus_id && String(b._id || b.id) === String(typeof sch.bus_id === "object" ? sch.bus_id._id : sch.bus_id)) ||
+                      (sch.busNumber && String(b.busNumber).replace(/[\s\-]+/g, "").toLowerCase() === String(sch.busNumber).replace(/[\s\-]+/g, "").toLowerCase())
+                  );
+
+                  // Failsafe match driver object by ID or Name
+                  const matchedDriver = driversList.find(
+                    (d) =>
+                      (sch.driver_id && String(d._id || d.id) === String(sch.driver_id)) ||
+                      (matchedBus?.driverId && String(d._id || d.id) === String(matchedBus.driverId)) ||
+                      (!isGeneric(sch.driverName) && String(d.name).toLowerCase().trim() === String(sch.driverName).toLowerCase().trim()) ||
+                      (!isGeneric(matchedBus?.driverName) && String(d.name).toLowerCase().trim() === String(matchedBus.driverName).toLowerCase().trim())
+                  );
+
+                  const displayBusNumber = sch.busNumber || matchedBus?.busNumber || "Unassigned";
+                  const displayDriverName =
+                    matchedDriver?.name ||
+                    (!isGeneric(sch.driverName) ? sch.driverName : null) ||
+                    (!isGeneric(matchedBus?.driverName) ? matchedBus.driverName : null) ||
+                    "Not Assigned";
 
                   return (
                     <div key={sch._id} style={{ background: "#ffffff", padding: "18px", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
@@ -1760,18 +2349,38 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                             </span>
                           </div>
                           <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
-                            Bus: <strong>{sch.busNumber || "Unassigned"}</strong> · Driver: <strong>{sch.driverName || "Unassigned"}</strong>
+                            Bus: <strong>{displayBusNumber}</strong>
                             {sch.delay_buffer_minutes > 0 && <span style={{ color: "#eab308", fontWeight: "700", marginLeft: "8px" }}>+{sch.delay_buffer_minutes}m Traffic Buffer</span>}
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSchedule(sch._id)}
-                          style={{ padding: "6px 12px", borderRadius: "8px", background: "#fee2e2", color: "#dc2626", fontSize: "12px", fontWeight: "700", border: "none", cursor: "pointer" }}
-                        >
-                          Delete
-                        </button>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            type="button"
+                            onClick={() => handleEditSchedule(sch)}
+                            style={{ padding: "8px 14px", borderRadius: "10px", background: "linear-gradient(135deg, #8b5cf6, #6d28d9)", color: "#ffffff", fontSize: "12px", fontWeight: "800", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 3px 10px rgba(139, 92, 246, 0.3)" }}
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSchedule(sch._id, sch.is_active !== false)}
+                            style={{
+                              padding: "8px 14px", borderRadius: "10px",
+                              background: sch.is_active !== false
+                                ? "linear-gradient(135deg, #fbbf24, #d97706)"
+                                : "linear-gradient(135deg, #10b981, #047857)",
+                              color: "#ffffff", fontSize: "12px", fontWeight: "800",
+                              border: "none", cursor: "pointer", display: "inline-flex",
+                              alignItems: "center", gap: "6px",
+                              boxShadow: sch.is_active !== false
+                                ? "0 3px 10px rgba(251,191,36,0.35)"
+                                : "0 3px 10px rgba(16,185,129,0.35)"
+                            }}
+                          >
+                            {sch.is_active !== false ? "⏸ Disable" : "▶ Enable"}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Calculated Stop Arrival Timetable */}
@@ -1834,7 +2443,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
             </div>
 
             <form onSubmit={handleBusSubmitClick} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              
+
               {/* Bus Name & Number Plate Number */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                 <div>
@@ -1913,7 +2522,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                 </div>
               </div>
 
-              {/* Driver Selection Dropdown */}
+              {/* Driver Selection Dropdown (Only Displays Unassigned Drivers from DB) */}
               <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
                   <User size={14} style={{ color: "#0ea5e9" }} /> Assigned Driver *
@@ -1923,13 +2532,25 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   onChange={(e) => handleDriverSelectChange(e.target.value)}
                   style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "700", background: "#ffffff" }}
                 >
-                  <option value="">-- Select Driver --</option>
-                  {driversList.map((d) => (
+                  <option value="unassigned">Select Driver / Unassigned</option>
+                  {dropdownDriverOptions.map((d) => (
                     <option key={String(d._id || d.id)} value={String(d._id || d.id)}>
-                      {d.name} ({d.phone} · License: {d.licenseNumber}){d.isDbDriver ? " (Approved Driver)" : ""}
+                      {d.isAssigned
+                        ? `⚠️ ${d.name} (Assigned to: ${d.assignedBusName || "another bus"}) · ${d.phone}`
+                        : `✅ ${d.name} (${d.phone} · License: ${d.licenseNumber})`}
                     </option>
                   ))}
                 </select>
+
+                {dropdownDriverOptions.filter((d) => !d.isAssigned).length === 0 ? (
+                  <div style={{ marginTop: "6px", fontSize: "11px", color: "#d97706", fontWeight: "700" }}>
+                    ⚠️ All verified drivers are currently assigned to buses. You can still re-assign one by selecting them above (marked with ⚠️).
+                  </div>
+                ) : (
+                  <div style={{ marginTop: "6px", fontSize: "11px", color: "#059669", fontWeight: "700" }}>
+                    ✅ {dropdownDriverOptions.filter((d) => !d.isAssigned).length} free driver(s) available · {dropdownDriverOptions.filter((d) => d.isAssigned).length} already assigned (selectable).
+                  </div>
+                )}
 
                 {/* Driver Details Preview */}
                 {busForm.driverName && (
@@ -2011,7 +2632,15 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                           {b.busType} · Seats: <strong>{b.totalSeats}</strong>
                         </div>
                         <div style={{ fontSize: "11.5px", color: "#475569", marginTop: "4px" }}>
-                          Driver: <strong>{b.driverName || "Suresh Menon"}</strong> ({b.driverPhone || "+91 98471 22334"})
+                          Driver: {(!b.driverName || ["unassigned", "not assigned"].includes(String(b.driverName).toLowerCase().trim())) ? (
+                            <span style={{ color: "#be123c", fontWeight: "800", background: "#ffe4e6", padding: "2px 8px", borderRadius: "6px", border: "1px solid #fecdd3" }}>
+                              🔴 Not Assigned
+                            </span>
+                          ) : (
+                            <>
+                              <strong>{b.driverName}</strong> {b.driverPhone && b.driverPhone !== "Not Assigned" ? `(${b.driverPhone})` : ""}
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -2025,10 +2654,15 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteBus(b._id, b.busNumber)}
-                          style={{ padding: "4px 8px", borderRadius: "6px", background: "#fee2e2", color: "#dc2626", fontSize: "11px", fontWeight: "700", border: "none", cursor: "pointer" }}
+                          onClick={() => handleToggleBus(b._id, b.is_active !== false)}
+                          style={{
+                            padding: "4px 8px", borderRadius: "6px",
+                            background: b.is_active !== false ? "#fffbeb" : "#f0fdf4",
+                            color: b.is_active !== false ? "#b45309" : "#16a34a",
+                            fontSize: "11px", fontWeight: "700", border: "none", cursor: "pointer"
+                          }}
                         >
-                          Delete
+                          {b.is_active !== false ? "⏸ Disable" : "▶ Enable"}
                         </button>
                       </div>
                     </div>

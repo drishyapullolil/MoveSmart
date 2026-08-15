@@ -15,6 +15,8 @@ import {
   ArrowRight,
   LocateFixed,
   HelpCircle,
+  RefreshCw,
+  RotateCcw,
 } from "lucide-react";
 
 // Haversine distance in km
@@ -25,25 +27,11 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
-}
-
-// Calculate total length of polyline coordinates array [[lat, lng], ...]
-function calculatePolylineTotalDistance(coords) {
-  let total = 0;
-  for (let i = 0; i < coords.length - 1; i++) {
-    total += haversineDistance(
-      coords[i][0],
-      coords[i][1],
-      coords[i + 1][0],
-      coords[i + 1][1]
-    );
-  }
-  return total;
 }
 
 // Project a point [lat, lng] onto polyline coords [[lat, lng], ...]
@@ -68,7 +56,6 @@ function projectPointOntoPolyline(lat, lng, coords) {
     const p2 = coords[i + 1];
     const segDist = haversineDistance(p1[0], p1[1], p2[0], p2[1]);
 
-    // Vector projection in lat/lng degrees
     const dx = p2[1] - p1[1];
     const dy = p2[0] - p1[0];
     const lenSq = dx * dx + dy * dy;
@@ -103,23 +90,28 @@ function projectPointOntoPolyline(lat, lng, coords) {
   };
 }
 
-// Custom DivIcons for Leaflet
+// Custom DivIcons for Leaflet (Compact, Modern & Collision-Free)
 function createCustomIcon(label, color = "#2563eb", iconType = "number", source = "automatic") {
   let inner = label;
   let bg = color;
   let textColor = "#ffffff";
   let border = "2px solid #ffffff";
-  let shadow = "0 3px 8px rgba(0,0,0,0.3)";
+  let shadow = "0 2px 6px rgba(0,0,0,0.25)";
+  let size = 26;
 
   if (iconType === "start") {
     bg = "#10b981"; // Emerald
     inner = "🚩";
+    size = 28;
   } else if (iconType === "end") {
     bg = "#ef4444"; // Red
     inner = "🏁";
+    size = 28;
   } else if (source === "admin") {
     bg = "#8b5cf6"; // Purple
     border = "2px solid #f59e0b";
+    inner = `⭐${label}`;
+    size = 28;
   }
 
   const html = `
@@ -128,18 +120,19 @@ function createCustomIcon(label, color = "#2563eb", iconType = "number", source 
       color: ${textColor};
       border: ${border};
       box-shadow: ${shadow};
-      width: 28px;
-      height: 28px;
+      width: ${size}px;
+      height: ${size}px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 700;
-      font-size: 12px;
-      font-family: system-ui, sans-serif;
+      font-weight: 800;
+      font-size: ${typeof inner === 'string' && inner.length > 2 ? '10px' : '11px'};
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       transform: translate(-50%, -50%);
       cursor: pointer;
-      transition: transform 0.2s ease;
+      user-select: none;
+      transition: transform 0.15s ease;
     ">
       ${inner}
     </div>
@@ -148,27 +141,129 @@ function createCustomIcon(label, color = "#2563eb", iconType = "number", source 
   return L.divIcon({
     html: html,
     className: "custom-leaflet-div-icon",
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
+
+// Verified Comprehensive Kerala Transit Hubs, Sub-Stations & Junctions Catalog
+const KERALA_ALL_PLACES = [
+  // Kottayam Central Hubs & Sub-Stations
+  { name: "Kottayam", category: "District HQ / KSRTC Stand", district: "Kottayam", lat: 9.5916, lng: 76.5222 },
+  { name: "Nagampadam", category: "Sub-Station / Bus Stand", district: "Kottayam", lat: 9.6010, lng: 76.5265 },
+  { name: "Kumaranalloor", category: "Sub-Station", district: "Kottayam", lat: 9.6234, lng: 76.5340 },
+  { name: "Medical College / Gandhi Nagar", category: "Major Hub", district: "Kottayam", lat: 9.6450, lng: 76.5280 },
+  { name: "Caritas Junction", category: "Sub-Station", district: "Kottayam", lat: 9.6480, lng: 76.5450 },
+  { name: "Thellakom", category: "Sub-Station", district: "Kottayam", lat: 9.6520, lng: 76.5510 },
+  { name: "Ettumanoor", category: "Major Sub-Station", district: "Kottayam", lat: 9.6644, lng: 76.5625 },
+  { name: "Kidangoor", category: "Sub-Station", district: "Kottayam", lat: 9.6800, lng: 76.6000 },
+  { name: "Cherpunkal", category: "Sub-Station", district: "Kottayam", lat: 9.6580, lng: 76.6250 },
+  { name: "Pala", category: "Major Bus Terminal", district: "Kottayam", lat: 9.7081, lng: 76.6837 },
+  { name: "Murikkumpuzha", category: "Sub-Station", district: "Kottayam", lat: 9.6950, lng: 76.7120 },
+  { name: "Bharananganam", category: "Pilgrim Sub-Station", district: "Kottayam", lat: 9.6880, lng: 76.7200 },
+  { name: "Kizhaparayar", category: "Sub-Station", district: "Kottayam", lat: 9.6910, lng: 76.7550 },
+  { name: "Plassanal", category: "Sub-Station", district: "Kottayam", lat: 9.6700, lng: 76.7700 },
+  { name: "Choondacherry", category: "Sub-Station", district: "Kottayam", lat: 9.6650, lng: 76.6750 },
+  { name: "Pravithanam", category: "Sub-Station", district: "Kottayam", lat: 9.7200, lng: 76.6500 },
+  { name: "Poovarani", category: "Sub-Station", district: "Kottayam", lat: 9.6600, lng: 76.7000 },
+  { name: "Paika", category: "Sub-Station", district: "Kottayam", lat: 9.6400, lng: 76.7200 },
+  { name: "Ponkunnam", category: "Major Sub-Station", district: "Kottayam", lat: 9.5667, lng: 76.7583 },
+  { name: "Podimattom", category: "Sub-Station", district: "Kottayam", lat: 9.5600, lng: 76.7700 },
+  { name: "Kanjirappally", category: "Major Bus Terminal", district: "Kottayam", lat: 9.5544, lng: 76.7865 },
+  { name: "Manarcadu", category: "Sub-Station", district: "Kottayam", lat: 9.5850, lng: 76.5750 },
+  { name: "Pampady", category: "Sub-Station", district: "Kottayam", lat: 9.5583, lng: 76.6417 },
+  { name: "Vazhoor", category: "Sub-Station", district: "Kottayam", lat: 9.5500, lng: 76.7150 },
+  { name: "19th Mile / Elikulam", category: "Sub-Station", district: "Kottayam", lat: 9.5900, lng: 76.7300 },
+  { name: "Puthuppally", category: "Sub-Station", district: "Kottayam", lat: 9.5600, lng: 76.5600 },
+  { name: "Karukachal", category: "Sub-Station", district: "Kottayam", lat: 9.5100, lng: 76.6300 },
+  { name: "Mundakayam", category: "Major Sub-Station", district: "Kottayam", lat: 9.5424, lng: 76.8833 },
+  { name: "Erumely", category: "Pilgrim Bus Terminal", district: "Kottayam", lat: 9.4716, lng: 76.7865 },
+  { name: "Erattupetta", category: "Major Bus Terminal", district: "Kottayam", lat: 9.6833, lng: 76.7833 },
+  { name: "Poonjar", category: "Sub-Station", district: "Kottayam", lat: 9.6700, lng: 76.8100 },
+  { name: "Teekoy", category: "Sub-Station", district: "Kottayam", lat: 9.7100, lng: 76.8300 },
+  { name: "Vagamon", category: "Hill Station", district: "Kottayam", lat: 9.6870, lng: 76.9050 },
+  { name: "Kuravilangad", category: "Sub-Station", district: "Kottayam", lat: 9.7540, lng: 76.5680 },
+  { name: "Kaduthuruthy", category: "Sub-Station", district: "Kottayam", lat: 9.7330, lng: 76.4950 },
+  { name: "Uzhavoor", category: "Sub-Station", district: "Kottayam", lat: 9.7820, lng: 76.6120 },
+  { name: "Kadaplamattom", category: "Sub-Station", district: "Kottayam", lat: 9.7200, lng: 76.5900 },
+  { name: "Marangattupilly", category: "Sub-Station", district: "Kottayam", lat: 9.7400, lng: 76.6200 },
+  { name: "Kuruppanthara", category: "Sub-Station", district: "Kottayam", lat: 9.7100, lng: 76.5300 },
+  { name: "Monippally", category: "Sub-Station", district: "Kottayam", lat: 9.8050, lng: 76.5850 },
+  { name: "Ramapuram", category: "Sub-Station", district: "Kottayam", lat: 9.7850, lng: 76.6500 },
+  { name: "Ayarkunnam", category: "Sub-Station", district: "Kottayam", lat: 9.6200, lng: 76.6000 },
+  { name: "Vaikom", category: "Bus Terminal", district: "Kottayam", lat: 9.7478, lng: 76.3956 },
+  { name: "Changanassery", category: "Major Bus Terminal", district: "Kottayam", lat: 9.4452, lng: 76.5385 },
+  { name: "Chingavanam", category: "Sub-Station", district: "Kottayam", lat: 9.5280, lng: 76.5350 },
+  { name: "Kumarakom", category: "Tourist Hub", district: "Kottayam", lat: 9.6175, lng: 76.4300 },
+
+  // Pathanamthitta Sub-Stations & Hubs
+  { name: "Sabarimala", category: "Pilgrim Shrine", district: "Pathanamthitta", lat: 9.4350, lng: 77.0811 },
+  { name: "Pampa", category: "Pilgrim River Terminal", district: "Pathanamthitta", lat: 9.4120, lng: 77.0700 },
+  { name: "Chalakkayam", category: "Sub-Station", district: "Pathanamthitta", lat: 9.4000, lng: 77.0450 },
+  { name: "Nilakkal", category: "Pilgrim Base Station", district: "Pathanamthitta", lat: 9.3850, lng: 77.0120 },
+  { name: "Plappally", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3650, lng: 76.9550 },
+  { name: "Lahai", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3400, lng: 76.9100 },
+  { name: "Perunad", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3550, lng: 76.8450 },
+  { name: "Vadasserikkara", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3480, lng: 76.8150 },
+  { name: "Ranni", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.3800, lng: 76.7800 },
+  { name: "Ranni Ittymoove", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3850, lng: 76.7900 },
+  { name: "Kozhencherry", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3400, lng: 76.7050 },
+  { name: "Pathanamthitta", category: "District HQ / KSRTC", district: "Pathanamthitta", lat: 9.2648, lng: 76.7870 },
+  { name: "Konni", category: "Sub-Station", district: "Pathanamthitta", lat: 9.2433, lng: 76.8533 },
+  { name: "Thiruvalla", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.3834, lng: 76.5744 },
+  { name: "Adoor", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.1558, lng: 76.7324 },
+  { name: "Pandalam", category: "Pilgrim Sub-Station", district: "Pathanamthitta", lat: 9.2333, lng: 76.6833 },
+  { name: "Mallappally", category: "Sub-Station", district: "Pathanamthitta", lat: 9.4450, lng: 76.6500 },
+
+  // Idukki Sub-Stations & Hubs
+  { name: "Kuttikkanam", category: "Hill Station / Hub", district: "Idukki", lat: 9.5850, lng: 76.9680 },
+  { name: "Peermade", category: "Sub-Station", district: "Idukki", lat: 9.5667, lng: 76.9833 },
+  { name: "Vandiperiyar", category: "Sub-Station", district: "Idukki", lat: 9.5800, lng: 77.0850 },
+  { name: "Kumily", category: "Major Bus Terminal", district: "Idukki", lat: 9.6083, lng: 77.1611 },
+  { name: "Thekkady", category: "Tourist Hub", district: "Idukki", lat: 9.6000, lng: 77.1700 },
+  { name: "Elappara", category: "Sub-Station", district: "Idukki", lat: 9.6380, lng: 76.9750 },
+  { name: "Kattappana", category: "Major Bus Terminal", district: "Idukki", lat: 9.7740, lng: 77.1186 },
+  { name: "Nedumkandam", category: "Sub-Station", district: "Idukki", lat: 9.8350, lng: 77.1650 },
+  { name: "Thodupuzha", category: "Major Bus Terminal", district: "Idukki", lat: 9.8947, lng: 76.7161 },
+  { name: "Adimali", category: "Sub-Station", district: "Idukki", lat: 10.0125, lng: 76.9536 },
+  { name: "Munnar", category: "Hill Station / KSRTC", district: "Idukki", lat: 10.0889, lng: 77.0595 },
+
+  // Alappuzha Sub-Stations & Hubs
+  { name: "Alappuzha", category: "District HQ / KSRTC", district: "Alappuzha", lat: 9.4981, lng: 76.3388 },
+  { name: "Cherthala", category: "Major Bus Terminal", district: "Alappuzha", lat: 9.6847, lng: 76.3315 },
+  { name: "Chengannur", category: "Major Railway / Bus Hub", district: "Alappuzha", lat: 9.3175, lng: 76.6117 },
+  { name: "Mavelikkara", category: "Sub-Station", district: "Alappuzha", lat: 9.2570, lng: 76.5490 },
+  { name: "Kayamkulam", category: "Major Bus Terminal", district: "Alappuzha", lat: 9.1724, lng: 76.5008 },
+  { name: "Haripad", category: "Sub-Station", district: "Alappuzha", lat: 9.2797, lng: 76.4633 },
+
+  // Ernakulam Sub-Stations & Hubs
+  { name: "Kochi / Ernakulam", category: "Vyttila Mobility Hub", district: "Ernakulam", lat: 9.9680, lng: 76.3180 },
+  { name: "Kaloor", category: "Bus Stand", district: "Ernakulam", lat: 9.9920, lng: 76.2940 },
+  { name: "Aluva", category: "Major Bus & Metro Hub", district: "Ernakulam", lat: 10.1076, lng: 76.3516 },
+  { name: "Angamaly", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.1960, lng: 76.3860 },
+  { name: "Muvattupuzha", category: "Major Bus Terminal", district: "Ernakulam", lat: 9.9814, lng: 76.5786 },
+  { name: "Piravom", category: "Sub-Station", district: "Ernakulam", lat: 9.8700, lng: 76.4900 },
+  { name: "Perumbavoor", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.1147, lng: 76.4789 },
+  { name: "Kolenchery", category: "Sub-Station", district: "Ernakulam", lat: 9.9750, lng: 76.4700 },
+  { name: "Kothamangalam", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.0650, lng: 76.6250 },
+];
 
 export default function RouteMap({
   fromLocationName = "",
   toLocationName = "",
-  onLocationsChange = () => {},
-  onRouteSelected = () => {},
+  onLocationsChange = () => { },
+  onRouteSelected = () => { },
   stops = [],
-  onStopsChange = () => {},
+  onStopsChange = () => { },
   selectedStopIndex = null,
-  onSelectStopIndex = () => {},
+  onSelectStopIndex = () => { },
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersGroupRef = useRef(null);
   const polylineGroupRef = useRef(null);
 
-  // States
+  // States for query inputs
   const [fromQuery, setFromQuery] = useState(fromLocationName);
   const [toQuery, setToQuery] = useState(toLocationName);
   const [fromSuggestions, setFromSuggestions] = useState([]);
@@ -181,9 +276,9 @@ export default function RouteMap({
 
   const [routesList, setRoutesList] = useState([]); // [{ id, name, geometry, distanceKm, durationStr, durationMins }]
   const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [selectedRoute, setSelectedRoute] = useState(null);
 
   const [loadingRoute, setLoadingRoute] = useState(false);
-  const [loadingStops, setLoadingStops] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
 
   // Map Add Stop Mode
@@ -192,24 +287,28 @@ export default function RouteMap({
   const [newStopModalOpen, setNewStopModalOpen] = useState(false);
   const [modalStopName, setModalStopName] = useState("");
 
-  // Sync prop changes for from/to
+  // Sync text inputs when parent props change, without triggering auto-search
   useEffect(() => {
-    if (fromLocationName && fromLocationName !== fromQuery) setFromQuery(fromLocationName);
-  }, [fromLocationName]);
+    if (fromLocationName && fromLocationName !== fromQuery) {
+      setFromQuery(fromLocationName);
+    }
+  }, [fromLocationName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (toLocationName && toLocationName !== toQuery) setToQuery(toLocationName);
-  }, [toLocationName]);
+    if (toLocationName && toLocationName !== toQuery) {
+      setToQuery(toLocationName);
+    }
+  }, [toLocationName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
     if (mapInstanceRef.current) return;
 
-    // Default center Kerala (Kanjirappally/Kottayam area)
+    // Default center Kerala (Kottayam / Kanjirappally area)
     const map = L.map(mapContainerRef.current, {
-      center: [9.5544, 76.7865],
-      zoom: 11,
+      center: [9.5916, 76.6500],
+      zoom: 10,
       zoomControl: true,
     });
 
@@ -231,88 +330,6 @@ export default function RouteMap({
     };
   }, []);
 
-// Comprehensive Kerala Towns, Cities, Districts & Bus Hubs Dataset
-const KERALA_ALL_PLACES = [
-  { name: "Kanjirappally", category: "Town", district: "Kottayam", lat: 9.5544, lng: 76.7865 },
-  { name: "Pala", category: "Town", district: "Kottayam", lat: 9.7081, lng: 76.6837 },
-  { name: "Ponkunnam", category: "Town", district: "Kottayam", lat: 9.5667, lng: 76.7583 },
-  { name: "Erattupetta", category: "Town", district: "Kottayam", lat: 9.6833, lng: 76.7833 },
-  { name: "Kottayam", category: "District HQ", district: "Kottayam", lat: 9.5916, lng: 76.5222 },
-  { name: "Changanassery", category: "Town", district: "Kottayam", lat: 9.4452, lng: 76.5385 },
-  { name: "Ettumanoor", category: "Town", district: "Kottayam", lat: 9.6644, lng: 76.5625 },
-  { name: "Vaikom", category: "Town", district: "Kottayam", lat: 9.7478, lng: 76.3956 },
-  { name: "Mundakayam", category: "Town", district: "Kottayam", lat: 9.5424, lng: 76.8833 },
-  { name: "Kuttikkanam", category: "Hill Station", district: "Idukki", lat: 9.5850, lng: 76.9680 },
-  { name: "Kumily", category: "Town", district: "Idukki", lat: 9.6083, lng: 77.1611 },
-  { name: "Peermade", category: "Town", district: "Idukki", lat: 9.5667, lng: 76.9833 },
-  { name: "Thodupuzha", category: "Town", district: "Idukki", lat: 9.8947, lng: 76.7161 },
-  { name: "Munnar", category: "Hill Station", district: "Idukki", lat: 10.0889, lng: 77.0597 },
-  { name: "Adimali", category: "Town", district: "Idukki", lat: 10.0125, lng: 76.9536 },
-  { name: "Kattappana", category: "Town", district: "Idukki", lat: 9.7740, lng: 77.1186 },
-  { name: "Pathanamthitta", category: "District HQ", district: "Pathanamthitta", lat: 9.2648, lng: 76.7870 },
-  { name: "Ranni", category: "Town", district: "Pathanamthitta", lat: 9.3800, lng: 76.7800 },
-  { name: "Konni", category: "Town", district: "Pathanamthitta", lat: 9.2433, lng: 76.8533 },
-  { name: "Thiruvalla", category: "Town", district: "Pathanamthitta", lat: 9.3834, lng: 76.5744 },
-  { name: "Chengannur", category: "Town", district: "Alappuzha", lat: 9.3175, lng: 76.6117 },
-  { name: "Pandalam", category: "Town", district: "Pathanamthitta", lat: 9.2333, lng: 76.6833 },
-  { name: "Adoor", category: "Town", district: "Pathanamthitta", lat: 9.1558, lng: 76.7324 },
-  { name: "Mavelikkara", category: "Town", district: "Alappuzha", lat: 9.2570, lng: 76.5490 },
-  { name: "Kayamkulam", category: "Town", district: "Alappuzha", lat: 9.1724, lng: 76.5008 },
-  { name: "Alappuzha", category: "District HQ", district: "Alappuzha", lat: 9.4981, lng: 76.3388 },
-  { name: "Cherthala", category: "Town", district: "Alappuzha", lat: 9.6847, lng: 76.3315 },
-  { name: "Haripad", category: "Town", district: "Alappuzha", lat: 9.2797, lng: 76.4633 },
-  { name: "Kollam", category: "District HQ", district: "Kollam", lat: 8.8932, lng: 76.6141 },
-  { name: "Karunagappally", category: "Town", district: "Kollam", lat: 9.0533, lng: 76.5367 },
-  { name: "Kottarakkara", category: "Town", district: "Kollam", lat: 9.0000, lng: 76.7667 },
-  { name: "Punalur", category: "Town", district: "Kollam", lat: 9.0167, lng: 76.9333 },
-  { name: "Thiruvananthapuram", category: "Capital City", district: "Thiruvananthapuram", lat: 8.5241, lng: 76.9366 },
-  { name: "Neyyattinkara", category: "Town", district: "Thiruvananthapuram", lat: 8.4000, lng: 77.0833 },
-  { name: "Attingal", category: "Town", district: "Thiruvananthapuram", lat: 8.6961, lng: 76.8142 },
-  { name: "Varkala", category: "Town", district: "Thiruvananthapuram", lat: 8.7379, lng: 76.7163 },
-  { name: "Nedumangad", category: "Town", district: "Thiruvananthapuram", lat: 8.6044, lng: 76.9961 },
-  { name: "Kochi / Ernakulam", category: "Major City", district: "Ernakulam", lat: 9.9312, lng: 76.2673 },
-  { name: "Aluva", category: "Town", district: "Ernakulam", lat: 10.1076, lng: 76.3516 },
-  { name: "Angamaly", category: "Town", district: "Ernakulam", lat: 10.1960, lng: 76.3860 },
-  { name: "Muvattupuzha", category: "Town", district: "Ernakulam", lat: 9.9814, lng: 76.5786 },
-  { name: "Kothamangalam", category: "Town", district: "Ernakulam", lat: 10.0825, lng: 76.6272 },
-  { name: "Perumbavoor", category: "Town", district: "Ernakulam", lat: 10.1147, lng: 76.4789 },
-  { name: "Piravom", category: "Town", district: "Ernakulam", lat: 9.8700, lng: 76.4900 },
-  { name: "Thrissur", category: "District HQ", district: "Thrissur", lat: 10.5276, lng: 76.2144 },
-  { name: "Chalakudy", category: "Town", district: "Thrissur", lat: 10.3070, lng: 76.3333 },
-  { name: "Irinjalakuda", category: "Town", district: "Thrissur", lat: 10.3422, lng: 76.2064 },
-  { name: "Kodungallur", category: "Town", district: "Thrissur", lat: 10.2200, lng: 76.2000 },
-  { name: "Guruvayur", category: "Town", district: "Thrissur", lat: 10.5946, lng: 76.0408 },
-  { name: "Kunnamkulam", category: "Town", district: "Thrissur", lat: 10.6500, lng: 76.0667 },
-  { name: "Wadakkanchery", category: "Town", district: "Thrissur", lat: 10.6667, lng: 76.2500 },
-  { name: "Palakkad", category: "District HQ", district: "Palakkad", lat: 10.7867, lng: 76.6548 },
-  { name: "Ottapalam", category: "Town", district: "Palakkad", lat: 10.7700, lng: 76.3800 },
-  { name: "Shornur", category: "Town", district: "Palakkad", lat: 10.7600, lng: 76.2700 },
-  { name: "Mannarkkad", category: "Town", district: "Palakkad", lat: 10.9880, lng: 76.4633 },
-  { name: "Pattambi", category: "Town", district: "Palakkad", lat: 10.8080, lng: 76.1830 },
-  { name: "Chittur", category: "Town", district: "Palakkad", lat: 10.7000, lng: 76.7500 },
-  { name: "Malappuram", category: "District HQ", district: "Malappuram", lat: 11.0720, lng: 76.0740 },
-  { name: "Manjeri", category: "Town", district: "Malappuram", lat: 11.1200, lng: 76.1200 },
-  { name: "Perinthalmanna", category: "Town", district: "Malappuram", lat: 10.9758, lng: 76.2256 },
-  { name: "Tirur", category: "Town", district: "Malappuram", lat: 10.9167, lng: 75.9167 },
-  { name: "Ponnani", category: "Town", district: "Malappuram", lat: 10.7667, lng: 75.9167 },
-  { name: "Nilambur", category: "Town", district: "Malappuram", lat: 11.2758, lng: 76.2256 },
-  { name: "Kozhikode", category: "District HQ", district: "Kozhikode", lat: 11.2588, lng: 75.7804 },
-  { name: "Vadakara", category: "Town", district: "Kozhikode", lat: 11.6083, lng: 75.5917 },
-  { name: "Koyilandy", category: "Town", district: "Kozhikode", lat: 11.4333, lng: 75.7000 },
-  { name: "Thamarassery", category: "Town", district: "Kozhikode", lat: 11.4167, lng: 75.9333 },
-  { name: "Kalpetta", category: "District HQ", district: "Wayanad", lat: 11.6103, lng: 76.0828 },
-  { name: "Sultan Bathery", category: "Town", district: "Wayanad", lat: 11.6644, lng: 76.2581 },
-  { name: "Mananthavady", category: "Town", district: "Wayanad", lat: 11.8000, lng: 76.0000 },
-  { name: "Kannur", category: "District HQ", district: "Kannur", lat: 11.8745, lng: 75.3704 },
-  { name: "Thalassery", category: "Town", district: "Kannur", lat: 11.7480, lng: 75.4894 },
-  { name: "Payyanur", category: "Town", district: "Kannur", lat: 12.1000, lng: 75.2000 },
-  { name: "Mattannur", category: "Town", district: "Kannur", lat: 11.9333, lng: 75.5667 },
-  { name: "Taliparamba", category: "Town", district: "Kannur", lat: 12.0400, lng: 75.3600 },
-  { name: "Kasaragod", category: "District HQ", district: "Kasaragod", lat: 12.5000, lng: 74.9833 },
-  { name: "Kanhangad", category: "Town", district: "Kasaragod", lat: 12.3167, lng: 75.0833 },
-  { name: "Nileshwaram", category: "Town", district: "Kasaragod", lat: 12.2500, lng: 75.1333 },
-];
-
   // Geocode & Instant Local Place Suggestions (Kerala)
   const getKeralaLocationSuggestions = async (inputQuery) => {
     if (!inputQuery || inputQuery.trim().length === 0) {
@@ -327,11 +344,15 @@ const KERALA_ALL_PLACES = [
     }
 
     const q = inputQuery.trim().toLowerCase();
+    const cleanQ = q.replace(/[-\s]/g, "");
 
     // 1. Instant local filter (0ms delay)
-    const localMatches = KERALA_ALL_PLACES.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.district.toLowerCase().includes(q)
-    ).map((p) => ({
+    const localMatches = KERALA_ALL_PLACES.filter((p) => {
+      const name = p.name.toLowerCase().replace(/[-\s]/g, "");
+      const district = p.district.toLowerCase().replace(/[-\s]/g, "");
+      const category = (p.category || "").toLowerCase().replace(/[-\s]/g, "");
+      return name.includes(cleanQ) || district.includes(cleanQ) || category.includes(cleanQ);
+    }).map((p) => ({
       name: p.name,
       fullName: `${p.name}, ${p.district} District, Kerala`,
       lat: p.lat,
@@ -340,23 +361,28 @@ const KERALA_ALL_PLACES = [
       district: p.district,
     }));
 
-    // 2. Fetch Nominatim matches asynchronously if query length >= 2
+    // 2. Fetch Nominatim matches asynchronously with timeout
     let remoteMatches = [];
     if (q.length >= 2) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 900);
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q + ", Kerala, India")}&addressdetails=1&limit=6`;
-        const res = await fetch(url);
-        const data = await res.json();
-        remoteMatches = data.map((item) => ({
-          name: item.display_name.split(",")[0] || item.display_name,
-          fullName: item.display_name,
-          lat: parseFloat(item.lat),
-          lng: parseFloat(item.lon),
-          category: "Map Landmark",
-          district: "Kerala",
-        }));
-      } catch (err) {
-        console.warn("Geocoding failed:", err);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          remoteMatches = data.map((item) => ({
+            name: item.display_name.split(",")[0] || item.display_name,
+            fullName: item.display_name,
+            lat: parseFloat(item.lat),
+            lng: parseFloat(item.lon),
+            category: "Map Landmark",
+            district: "Kerala",
+          }));
+        }
+      } catch {
+        // Fallback to local in-memory dataset
       }
     }
 
@@ -371,7 +397,7 @@ const KERALA_ALL_PLACES = [
       }
     });
 
-    return combined.slice(0, 12);
+    return combined.slice(0, 10);
   };
 
   // Instant input change handlers for From & To inputs
@@ -397,10 +423,6 @@ const KERALA_ALL_PLACES = [
     setStartPoint(point);
     setShowFromDrop(false);
     onLocationsChange(item.name, toQuery);
-
-    if (destPoint) {
-      fetchOSRMAlternativeRoutes(point, destPoint);
-    }
   };
 
   const selectToLocation = (item) => {
@@ -409,180 +431,52 @@ const KERALA_ALL_PLACES = [
     setDestPoint(point);
     setShowToDrop(false);
     onLocationsChange(fromQuery, item.name);
-
-    if (startPoint) {
-      fetchOSRMAlternativeRoutes(startPoint, point);
-    }
   };
 
-  // Fetch driving routes from OSRM (Multi-Corridor Discovery)
-  const fetchOSRMAlternativeRoutes = useCallback(async (start, end) => {
-    if (!start || !end) return;
-    setLoadingRoute(true);
-    setStatusMessage("Searching all possible road routes on map...");
+  // Helper: Direct corridor polyline fallback if OSRM service is unreachable
+  const generateFallbackRoute = useCallback((start, end) => {
+    const intermediates = KERALA_ALL_PLACES.filter((p) => {
+      const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
+      const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
+      const totalDirect = haversineDistance(start.lat, start.lng, end.lat, end.lng);
+      return dStart > 1.5 && dEnd > 1.5 && (dStart + dEnd) < (totalDirect * 1.3);
+    }).sort((a, b) => haversineDistance(start.lat, start.lng, a.lat, a.lng) - haversineDistance(start.lat, start.lng, b.lat, b.lng));
 
-    try {
-      const candidatesMap = new Map();
+    const waypoints = [start, ...intermediates, end];
+    const coords = waypoints.map((w) => [w.lat, w.lng]);
 
-      // 1. Primary OSRM alternatives query (alternatives=3)
-      const primaryUrl = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=3&steps=true&annotations=true`;
-      const primaryRes = await fetch(primaryUrl);
-      const primaryData = await primaryRes.json();
-
-      if (primaryData.routes && primaryData.routes.length > 0) {
-        primaryData.routes.forEach((r, idx) => {
-          candidatesMap.set(`primary-${idx}`, r);
-        });
-      }
-
-      // 2. Discover intermediate town waypoints in bounding box using Overpass
-      const minLat = Math.min(start.lat, end.lat) - 0.06;
-      const maxLat = Math.max(start.lat, end.lat) + 0.06;
-      const minLng = Math.min(start.lng, end.lng) - 0.06;
-      const maxLng = Math.max(start.lng, end.lng) + 0.06;
-
-      try {
-        const townQuery = `
-          [out:json][timeout:5];
-          (
-            node["place"="town"](${minLat},${minLng},${maxLat},${maxLng});
-            node["place"="village"](${minLat},${minLng},${maxLat},${maxLng});
-            node["place"="suburb"](${minLat},${minLng},${maxLat},${maxLng});
-          );
-          out body 8;
-        `;
-        const townRes = await fetch("https://overpass-api.de/api/interpreter", {
-          method: "POST",
-          body: townQuery,
-        });
-
-        if (townRes.ok) {
-          const townData = await townRes.json();
-          if (townData.elements && townData.elements.length > 0) {
-            // Pick up to 8 intermediate waypoints between start and destination
-            const candidateWaypoints = townData.elements.filter((el) => {
-              const dStart = haversineDistance(start.lat, start.lng, el.lat, el.lon);
-              const dEnd = haversineDistance(end.lat, end.lng, el.lat, el.lon);
-              return dStart > 1.8 && dEnd > 1.8;
-            }).slice(0, 8);
-
-            // Query OSRM via each candidate waypoint
-            await Promise.all(
-              candidateWaypoints.map(async (wp, wIdx) => {
-                try {
-                  const wpUrl = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${wp.lon},${wp.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&steps=true`;
-                  const wpRes = await fetch(wpUrl);
-                  const wpData = await wpRes.json();
-                  if (wpData.routes && wpData.routes[0]) {
-                    const r = wpData.routes[0];
-                    r.waypointName = wp.tags?.name || wp.tags?.["name:en"] || wp.tags?.local_name || `Via Waypoint ${wIdx + 1}`;
-                    candidatesMap.set(`via-${wIdx}`, r);
-                  }
-                } catch (e) {
-                  // Ignore waypoint failure
-                }
-              })
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("Intermediate waypoint lookup skipped:", err);
-      }
-
-      const allRawRoutes = Array.from(candidatesMap.values());
-      if (allRawRoutes.length === 0) {
-        setStatusMessage("No driving route found between specified points.");
-        setLoadingRoute(false);
-        return;
-      }
-
-      // Filter distinct routes (preserves all reachable road corridors)
-      const distinctRoutes = [];
-      allRawRoutes.forEach((r) => {
-        const coords = r.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-        const distKm = Number((r.distance / 1000).toFixed(1));
-        const midIdx = Math.floor(coords.length / 2);
-        const midPoint = coords[midIdx] || coords[0];
-
-        // Only exclude if distDiff < 0.3km AND midDist < 0.5km
-        const isDuplicate = distinctRoutes.some((existing) => {
-          const distDiff = Math.abs(existing.distanceKm - distKm);
-          const midDist = haversineDistance(existing.midPoint[0], existing.midPoint[1], midPoint[0], midPoint[1]);
-          return distDiff < 0.3 && midDist < 0.5;
-        });
-
-        if (!isDuplicate) {
-          const durMins = Math.round(r.duration / 60);
-          const hours = Math.floor(durMins / 60);
-          const mins = durMins % 60;
-          const durStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} mins`;
-
-          // Extract intermediate street/place step names
-          const stepNames = [];
-          if (r.legs) {
-            r.legs.forEach((leg) => {
-              if (leg.steps) {
-                leg.steps.forEach((st) => {
-                  if (st.name && st.name.trim() && !stepNames.includes(st.name.trim()) && !/^bus\s*stop$/i.test(st.name)) {
-                    stepNames.push(st.name.trim());
-                  }
-                });
-              }
-            });
-          }
-
-          let viaSummary = r.waypointName || stepNames.slice(0, 2).join(", ");
-          if (!viaSummary || /^bus\s*stop$/i.test(viaSummary)) {
-            viaSummary = `Corridor Option ${distinctRoutes.length + 1}`;
-          }
-
-          const name = `${start.name} ➔ via ${viaSummary} ➔ ${end.name}`;
-
-          distinctRoutes.push({
-            id: `route-opt-${distinctRoutes.length}`,
-            name: name,
-            geometry: coords,
-            midPoint: midPoint,
-            distanceKm: distKm,
-            durationStr: durStr,
-            durationMins: durMins,
-            steps: r.legs ? r.legs.flatMap((l) => l.steps || []) : [],
-            stepNames: stepNames,
-          });
-        }
-      });
-
-      setRoutesList(distinctRoutes);
-      setSelectedRouteId(distinctRoutes[0].id);
-      setStatusMessage(`Found ${distinctRoutes.length} distinct road route options on map! Extracting bus stops...`);
-
-      // Trigger automatic stop extraction for default route
-      extractBusStopsForRoute(distinctRoutes[0], start, end);
-    } catch (err) {
-      console.error("OSRM Route Error:", err);
-      setStatusMessage("Failed to connect to route server.");
-    } finally {
-      setLoadingRoute(false);
+    let totalDist = 0;
+    for (let i = 1; i < waypoints.length; i++) {
+      totalDist += haversineDistance(waypoints[i - 1].lat, waypoints[i - 1].lng, waypoints[i].lat, waypoints[i].lng);
     }
+    totalDist = Number((totalDist * 1.15).toFixed(1));
+    const durMins = Math.round(totalDist * 1.8);
+    const hours = Math.floor(durMins / 60);
+    const mins = durMins % 60;
+    const durStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} mins`;
+
+    return {
+      id: "route-opt-fallback",
+      name: `${start.name} ➔ ${end.name} (Direct Corridor)`,
+      geometry: coords,
+      midPoint: coords[Math.floor(coords.length / 2)] || coords[0],
+      distanceKm: totalDist,
+      durationStr: durStr,
+      durationMins: durMins,
+      steps: [],
+      stepNames: waypoints.map((w) => w.name),
+    };
   }, []);
 
-  // Automatically fetch ALL bus stops along polyline using Overpass API + OSRM Annotations
-  const extractBusStopsForRoute = async (routeObj, start, end) => {
+  // Extract clean, collision-free Kerala bus stops along the road polyline
+  const extractBusStopsForRoute = useCallback(async (routeObj, start, end) => {
     if (!routeObj || !routeObj.geometry || routeObj.geometry.length === 0) return;
-    setLoadingStops(true);
-    setStatusMessage("Extracting all passenger bus stops along selected route...");
+    setStatusMessage("Extracting passenger bus stops along selected route...");
 
     const coords = routeObj.geometry;
-    const lats = coords.map((c) => c[0]);
-    const lngs = coords.map((c) => c[1]);
-    const minLat = Math.min(...lats) - 0.01;
-    const maxLat = Math.max(...lats) + 0.01;
-    const minLng = Math.min(...lngs) - 0.01;
-    const maxLng = Math.max(...lngs) + 0.01;
-
     let detectedStops = [];
 
-    // 1. Add Start point as Order 1
+    // 1. Add Start Point as Stop #1
     detectedStops.push({
       stopName: start.name,
       name: start.name,
@@ -590,22 +484,45 @@ const KERALA_ALL_PLACES = [
       longitude: start.lng,
       pathDistance: 0,
       source: "automatic",
-      isFixedEnd: true,
+      isStart: true,
     });
 
-    // 2. Fetch Overpass API bus stops and transit nodes along selected route polyline
+    // 2. Identify all intermediate sub-stations & junctions located along the road corridor between start and destination
+    KERALA_ALL_PLACES.forEach((p) => {
+      const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
+      const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
+      if (dStart > 0.2 && dEnd > 0.2) {
+        const proj = projectPointOntoPolyline(p.lat, p.lng, coords);
+        // Include if within 1.2 km of the road polyline and between origin and destination path
+        if (proj.offPolylineDistance <= 1.2 && proj.pathDistance > 0.1 && proj.pathDistance < (routeObj.distanceKm - 0.1)) {
+          detectedStops.push({
+            stopName: p.name,
+            name: p.name,
+            latitude: proj.projLat,
+            longitude: proj.projLng,
+            pathDistance: proj.pathDistance,
+            source: "automatic",
+            category: p.category || "Sub-Station",
+          });
+        }
+      }
+    });
+
+    // 3. Query Overpass API for real named bus stops & bus stations strictly along polyline
     try {
+      const lats = coords.map((c) => c[0]);
+      const lngs = coords.map((c) => c[1]);
+      const minLat = Math.min(...lats) - 0.005;
+      const maxLat = Math.max(...lats) + 0.005;
+      const minLng = Math.min(...lngs) - 0.005;
+      const maxLng = Math.max(...lngs) + 0.005;
+
       const overpassQuery = `
-        [out:json][timeout:10];
+        [out:json][timeout:6];
         (
           node["highway"="bus_stop"](${minLat},${minLng},${maxLat},${maxLng});
-          node["public_transport"="platform"](${minLat},${minLng},${maxLat},${maxLng});
-          node["public_transport"="stop_position"](${minLat},${minLng},${maxLat},${maxLng});
           node["amenity"="bus_station"](${minLat},${minLng},${maxLat},${maxLng});
-          node["highway"="traffic_signals"](${minLat},${minLng},${maxLat},${maxLng});
-          node["junction"="roundabout"](${minLat},${minLng},${maxLat},${maxLng});
-          node["place"="village"](${minLat},${minLng},${maxLat},${maxLng});
-          node["place"="suburb"](${minLat},${minLng},${maxLat},${maxLng});
+          node["public_transport"="platform"](${minLat},${minLng},${maxLat},${maxLng});
         );
         out body;
       `;
@@ -618,103 +535,30 @@ const KERALA_ALL_PLACES = [
         const data = await res.json();
         if (data.elements && data.elements.length > 0) {
           data.elements.forEach((node) => {
-            const lat = node.lat;
-            const lng = node.lon;
             const tags = node.tags || {};
-
-            let rawName = (tags.name || tags["name:en"] || tags["name:ml"] || tags.local_name || tags["addr:street"] || tags["addr:suburb"] || tags["addr:place"] || tags.place || "").trim();
-            const isGeneric = !rawName || /^bus\s*stop$/i.test(rawName) || /^stop$/i.test(rawName) || rawName.toLowerCase() === "bus_stop" || rawName.toLowerCase().includes("unnamed");
-
-            if (isGeneric) {
-              let closestStepName = "";
-              let minDist = Infinity;
-              if (routeObj.steps && routeObj.steps.length > 0) {
-                routeObj.steps.forEach((st) => {
-                  if (st.name && st.name.trim() && st.maneuver && st.maneuver.location) {
-                    const d = haversineDistance(lat, lng, st.maneuver.location[1], st.maneuver.location[0]);
-                    if (d < minDist) {
-                      minDist = d;
-                      closestStepName = st.name.trim();
-                    }
-                  }
+            const rawName = (tags.name || tags["name:en"] || tags["name:ml"] || tags.local_name || "").trim();
+            // Exclude unnamed or generic "bus stop" tags
+            if (rawName && !/^bus\s*stop$/i.test(rawName) && !/^stop$/i.test(rawName) && rawName.toLowerCase() !== "bus_stop") {
+              const proj = projectPointOntoPolyline(node.lat, node.lon, coords);
+              if (proj.offPolylineDistance <= 0.35) {
+                detectedStops.push({
+                  stopName: rawName,
+                  name: rawName,
+                  latitude: proj.projLat,
+                  longitude: proj.projLng,
+                  pathDistance: proj.pathDistance,
+                  source: "automatic",
                 });
               }
-
-              if (closestStepName && !/^bus\s*stop$/i.test(closestStepName)) {
-                rawName = `${closestStepName} Sub-Stop`;
-              } else {
-                rawName = `${start.name} - ${end.name} Sub-Stop ${detectedStops.length + 1}`;
-              }
-            }
-
-            const proj = projectPointOntoPolyline(lat, lng, coords);
-            // Include if within 0.6km (600m) of route polyline
-            if (proj.offPolylineDistance <= 0.6) {
-              detectedStops.push({
-                stopName: rawName,
-                name: rawName,
-                latitude: proj.projLat,
-                longitude: proj.projLng,
-                pathDistance: proj.pathDistance,
-                source: "automatic",
-              });
             }
           });
         }
       }
-    } catch (err) {
-      console.warn("Overpass API query failed, using step waypoints for sub-stops:", err);
+    } catch {
+      // Overpass API fallback handled gracefully
     }
 
-    // 3. OSRM step waypoints for intermediate sub-stops along selected road route
-    if (routeObj.steps && routeObj.steps.length > 0) {
-      routeObj.steps.forEach((step) => {
-        if (step.name && step.name.trim()) {
-          const stepName = step.name.trim();
-          if (!/^bus\s*stop$/i.test(stepName)) {
-            const stepLat = step.maneuver.location[1];
-            const stepLng = step.maneuver.location[0];
-            const proj = projectPointOntoPolyline(stepLat, stepLng, coords);
-            if (proj.offPolylineDistance <= 0.8) {
-              detectedStops.push({
-                stopName: stepName,
-                name: stepName,
-                latitude: proj.projLat,
-                longitude: proj.projLng,
-                pathDistance: proj.pathDistance,
-                source: "automatic",
-              });
-            }
-          }
-        }
-      });
-    }
-
-    // 4. Regular trajectory sampling sub-stops for long road segments (>5 km)
-    if (routeObj.distanceKm > 5 && coords.length > 6) {
-      const sampleCount = Math.min(6, Math.floor(routeObj.distanceKm / 5));
-      const stepSize = Math.floor(coords.length / (sampleCount + 1));
-      for (let i = 1; i <= sampleCount; i++) {
-        const pt = coords[i * stepSize];
-        if (pt) {
-          const proj = projectPointOntoPolyline(pt[0], pt[1], coords);
-          let sampleName = `${start.name} - ${end.name} Sub-Stop (${proj.pathDistance} km)`;
-          if (routeObj.stepNames && routeObj.stepNames[i - 1]) {
-            sampleName = `${routeObj.stepNames[i - 1]} Sub-Stop`;
-          }
-          detectedStops.push({
-            stopName: sampleName,
-            name: sampleName,
-            latitude: proj.projLat,
-            longitude: proj.projLng,
-            pathDistance: proj.pathDistance,
-            source: "automatic",
-          });
-        }
-      }
-    }
-
-    // 4. Add Destination point
+    // 4. Add Destination Point as Final Stop
     const destProj = projectPointOntoPolyline(end.lat, end.lng, coords);
     detectedStops.push({
       stopName: end.name,
@@ -723,49 +567,45 @@ const KERALA_ALL_PLACES = [
       longitude: end.lng,
       pathDistance: destProj.pathDistance > 0 ? destProj.pathDistance : routeObj.distanceKm,
       source: "automatic",
-      isFixedEnd: true,
+      isEnd: true,
     });
 
-    // 5. Sort all stops by pathDistance along polyline
+    // 5. Sort strictly by projection path distance along polyline (from start 0km to end N km)
     detectedStops.sort((a, b) => a.pathDistance - b.pathDistance);
 
-    // 6. Deduplicate stop names & very close coordinates (within 0.1km)
-    const filteredStops = [];
-    detectedStops.forEach((st) => {
-      if (filteredStops.length === 0) {
-        filteredStops.push(st);
+    // 6. Intelligent spacing deduplication (minimum 0.4 km between consecutive sub-stations)
+    const spacedStops = [detectedStops[0]];
+    for (let i = 1; i < detectedStops.length; i++) {
+      const candidate = detectedStops[i];
+      const isFinal = candidate.isEnd || i === detectedStops.length - 1;
+
+      if (isFinal) {
+        spacedStops.push(candidate);
       } else {
-        const prev = filteredStops[filteredStops.length - 1];
-        const distGap = haversineDistance(prev.latitude, prev.longitude, st.latitude, st.longitude);
-        const sameName = prev.stopName.toLowerCase() === st.stopName.toLowerCase();
-        
-        if (distGap > 0.1 && !sameName) {
-          filteredStops.push(st);
-        } else if (st.isFixedEnd) {
-          // Ensure Destination is preserved at the end
-          filteredStops.push(st);
+        const lastAdded = spacedStops[spacedStops.length - 1];
+        const distFromLast = candidate.pathDistance - lastAdded.pathDistance;
+        const sameName = candidate.stopName.toLowerCase().replace(/[^a-z0-9]/g, "") === lastAdded.stopName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+        // Only include if spaced at least 0.4 km apart and different name
+        if (distFromLast >= 0.4 && !sameName) {
+          spacedStops.push(candidate);
         }
       }
-    });
+    }
 
-    // 7. Calculate order, distanceFromPreviousStop, and cumulativeDistance
+    // 7. Calculate clean order, distances, and offset timings
     let totalCum = 0;
-    const finalStopsList = filteredStops.map((st, idx) => {
-      const prevDist = idx === 0 ? 0 : haversineDistance(filteredStops[idx - 1].latitude, filteredStops[idx - 1].longitude, st.latitude, st.longitude);
+    const finalStopsList = spacedStops.map((st, idx) => {
+      const prevDist = idx === 0 ? 0 : Number(haversineDistance(spacedStops[idx - 1].latitude, spacedStops[idx - 1].longitude, st.latitude, st.longitude).toFixed(1));
       totalCum += prevDist;
-
-      let cleanStopName = (st.stopName || st.name || "").trim();
-      if (!cleanStopName || /^bus\s*stop$/i.test(cleanStopName) || cleanStopName.toLowerCase() === "bus_stop") {
-        cleanStopName = `${start.name} - ${end.name} Stop ${idx + 1}`;
-      }
 
       return {
         order: idx + 1,
-        stopName: cleanStopName,
-        name: cleanStopName,
+        stopName: st.stopName || st.name,
+        name: st.stopName || st.name,
         latitude: Number(st.latitude.toFixed(5)),
         longitude: Number(st.longitude.toFixed(5)),
-        distanceFromPreviousStop: Number(prevDist.toFixed(1)),
+        distanceFromPreviousStop: prevDist,
         cumulativeDistance: Number(totalCum.toFixed(1)),
         travel_time_from_prev: Math.round(prevDist * 1.8),
         offset_minutes: Math.round(totalCum * 1.8),
@@ -785,19 +625,157 @@ const KERALA_ALL_PLACES = [
       routeGeometry: coords,
     });
 
-    setLoadingStops(false);
-    setStatusMessage(`Loaded ${finalStopsList.length} bus stops along route!`);
-  };
+    setStatusMessage(`Loaded ${finalStopsList.length} passenger bus stops for ${start.name} ➔ ${end.name}`);
+  }, [onStopsChange, onRouteSelected]);
 
-  // Perform geocode and route fetch for ANY arbitrary origin and destination typed by admin
+  // Fetch all possible alternative road driving routes from OSRM & Corridor Discovery
+  const fetchOSRMAlternativeRoutes = useCallback(async (start, end) => {
+    if (!start || !end) return;
+    setLoadingRoute(true);
+    setStatusMessage("Searching all possible road routes on map...");
+
+    try {
+      const candidatesMap = new Map();
+
+      // 1. Primary OSRM driving fetch with alternatives=3
+      try {
+        const primaryUrl = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=3&steps=true&annotations=true`;
+        const primaryRes = await fetch(primaryUrl);
+        if (primaryRes.ok) {
+          const primaryData = await primaryRes.json();
+          if (primaryData.routes && primaryData.routes.length > 0) {
+            primaryData.routes.forEach((r, idx) => {
+              candidatesMap.set(`primary-${idx}`, r);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Primary OSRM endpoint error:", err);
+      }
+
+      // 2. Discover alternative road corridors through intermediate major transit hubs
+      const totalDirect = haversineDistance(start.lat, start.lng, end.lat, end.lng);
+      const intermediateHubs = KERALA_ALL_PLACES.filter((p) => {
+        const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
+        const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
+        return dStart > 2.0 && dEnd > 2.0 && (dStart + dEnd) < (totalDirect * 1.45);
+      }).sort((a, b) => {
+        const dSumA = haversineDistance(start.lat, start.lng, a.lat, a.lng) + haversineDistance(end.lat, end.lng, a.lat, a.lng);
+        const dSumB = haversineDistance(start.lat, start.lng, b.lat, b.lng) + haversineDistance(end.lat, end.lng, b.lat, b.lng);
+        return dSumA - dSumB;
+      });
+
+      // Query via-hub routes (top 3 alternative highway branches)
+      for (const hub of intermediateHubs.slice(0, 3)) {
+        try {
+          const viaUrl = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${hub.lng},${hub.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&steps=true`;
+          const viaRes = await fetch(viaUrl);
+          if (viaRes.ok) {
+            const viaData = await viaRes.json();
+            if (viaData.routes && viaData.routes.length > 0) {
+              const bestVia = viaData.routes[0];
+              bestVia.waypointName = hub.name;
+              candidatesMap.set(`via-${hub.name}`, bestVia);
+            }
+          }
+        } catch {
+          // Graceful fallback per via-corridor
+        }
+      }
+
+      const allRawRoutes = Array.from(candidatesMap.values());
+      if (allRawRoutes.length === 0) {
+        const fallback = generateFallbackRoute(start, end);
+        setRoutesList([fallback]);
+        setSelectedRouteId(fallback.id);
+        setSelectedRoute(fallback);
+        extractBusStopsForRoute(fallback, start, end);
+        setLoadingRoute(false);
+        return;
+      }
+
+      // Filter distinct reachable road routes
+      const distinctRoutes = [];
+      allRawRoutes.forEach((r) => {
+        const coords = r.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+        const distKm = Number((r.distance / 1000).toFixed(1));
+        const midIdx = Math.floor(coords.length / 2);
+        const midPoint = coords[midIdx] || coords[0];
+
+        // Deduplicate very identical geometries (within 0.4km dist and 0.4km midpoint)
+        const isDuplicate = distinctRoutes.some((existing) => {
+          const distDiff = Math.abs(existing.distanceKm - distKm);
+          const midDist = haversineDistance(existing.midPoint[0], existing.midPoint[1], midPoint[0], midPoint[1]);
+          return distDiff < 0.4 && midDist < 0.4;
+        });
+
+        if (!isDuplicate) {
+          const durMins = Math.round(r.duration / 60);
+          const hours = Math.floor(durMins / 60);
+          const mins = durMins % 60;
+          const durStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} mins`;
+
+          // Extract intermediate street/landmark step names
+          const stepNames = [];
+          if (r.legs) {
+            r.legs.forEach((leg) => {
+              if (leg.steps) {
+                leg.steps.forEach((st) => {
+                  if (st.name && st.name.trim() && !stepNames.includes(st.name.trim()) && !/^bus\s*stop$/i.test(st.name)) {
+                    stepNames.push(st.name.trim());
+                  }
+                });
+              }
+            });
+          }
+
+          let viaSummary = r.waypointName || stepNames.slice(0, 2).join(", ");
+          if (!viaSummary || /^bus\s*stop$/i.test(viaSummary)) {
+            viaSummary = `Route Corridor Option ${distinctRoutes.length + 1}`;
+          }
+
+          const name = `${start.name} ➔ via ${viaSummary} ➔ ${end.name}`;
+
+          distinctRoutes.push({
+            id: `route-opt-${distinctRoutes.length}`,
+            name: name,
+            geometry: coords,
+            midPoint: midPoint,
+            distanceKm: distKm,
+            durationStr: durStr,
+            durationMins: durMins,
+            steps: r.legs ? r.legs.flatMap((l) => l.steps || []) : [],
+            stepNames: stepNames,
+          });
+        }
+      });
+
+      const finalRoutes = distinctRoutes.length > 0 ? distinctRoutes : [generateFallbackRoute(start, end)];
+      setRoutesList(finalRoutes);
+      setSelectedRouteId(finalRoutes[0].id);
+      setSelectedRoute(finalRoutes[0]);
+      extractBusStopsForRoute(finalRoutes[0], start, end);
+    } catch (err) {
+      console.error("Route search error:", err);
+      const fallback = generateFallbackRoute(start, end);
+      setRoutesList([fallback]);
+      setSelectedRouteId(fallback.id);
+      setSelectedRoute(fallback);
+      extractBusStopsForRoute(fallback, start, end);
+    } finally {
+      setLoadingRoute(false);
+    }
+  }, [generateFallbackRoute, extractBusStopsForRoute]);
+
+  // Perform geocode and route fetch ONLY when user explicitly clicks "Search & Draw Route"
   const handleSearchAndDrawRoute = useCallback(async () => {
     if (!fromQuery || !fromQuery.trim() || !toQuery || !toQuery.trim()) {
-      setStatusMessage("Please enter both Starting Point (Origin) and Destination.");
+      setStatusMessage("Please enter both Starting Point and Destination.");
       return;
     }
 
     setLoadingRoute(true);
-    setStatusMessage(`Searching all road routes for ${fromQuery.trim()} ➔ ${toQuery.trim()}...`);
+    setStatusMessage(`Searching road route for ${fromQuery.trim()} ➔ ${toQuery.trim()}...`);
 
     let start = startPoint;
     let end = destPoint;
@@ -808,7 +786,7 @@ const KERALA_ALL_PLACES = [
         start = { name: res[0].name, lat: res[0].lat, lng: res[0].lng };
         setStartPoint(start);
       } else {
-        setStatusMessage(`Could not locate origin place "${fromQuery}". Try selecting from dropdown.`);
+        setStatusMessage(`Could not locate origin place "${fromQuery}". Please pick from suggestions.`);
         setLoadingRoute(false);
         return;
       }
@@ -820,7 +798,7 @@ const KERALA_ALL_PLACES = [
         end = { name: res[0].name, lat: res[0].lat, lng: res[0].lng };
         setDestPoint(end);
       } else {
-        setStatusMessage(`Could not locate destination place "${toQuery}". Try selecting from dropdown.`);
+        setStatusMessage(`Could not locate destination place "${toQuery}". Please pick from suggestions.`);
         setLoadingRoute(false);
         return;
       }
@@ -829,61 +807,113 @@ const KERALA_ALL_PLACES = [
     fetchOSRMAlternativeRoutes(start, end);
   }, [fromQuery, toQuery, startPoint, destPoint, fetchOSRMAlternativeRoutes]);
 
-  // Initial route search trigger for initial locations
-  useEffect(() => {
-    if (fromQuery && toQuery && routesList.length === 0) {
-      handleSearchAndDrawRoute();
-    }
-  }, [fromQuery, toQuery, routesList.length, handleSearchAndDrawRoute]);
-
   // Switch selected candidate route option
   const handleSelectRouteOption = (routeId) => {
     setSelectedRouteId(routeId);
     const selectedObj = routesList.find((r) => r.id === routeId);
     if (selectedObj && startPoint && destPoint) {
+      setSelectedRoute(selectedObj);
       extractBusStopsForRoute(selectedObj, startPoint, destPoint);
     }
   };
 
-  // Handle map click when in "+ Add Stop Mode"
+  // Handle interactive map clicks (Set Start, Set Destination, or Add Stop)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
     const handleMapClick = async (e) => {
-      if (!isAddingStopMode) return;
-
       const clickLat = e.latlng.lat;
       const clickLng = e.latlng.lng;
 
-      // Reverse geocode clicked location
-      let placeName = `Stop at ${clickLat.toFixed(4)}, ${clickLng.toFixed(4)}`;
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${clickLat}&lon=${clickLng}`);
-        const data = await res.json();
-        if (data.display_name) {
-          const parts = data.display_name.split(",");
-          placeName = parts[0] || parts[1] || placeName;
+      // 1. Check for closest known Kerala place within 2.5km
+      let placeName = "";
+      let minPlaceDist = 999;
+      KERALA_ALL_PLACES.forEach((p) => {
+        const d = haversineDistance(clickLat, clickLng, p.lat, p.lng);
+        if (d < 2.5 && d < minPlaceDist) {
+          minPlaceDist = d;
+          placeName = p.name;
         }
-      } catch (err) {
-        console.warn("Reverse geocode failed:", err);
+      });
+
+      // 2. If not in catalog, reverse geocode via Nominatim
+      if (!placeName) {
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${clickLat}&lon=${clickLng}`);
+          const data = await res.json();
+          if (data.display_name) {
+            const parts = data.display_name.split(",");
+            placeName = (parts[0] || parts[1] || "").trim();
+          }
+        } catch {
+          // fallback
+        }
       }
 
-      setPendingNewStop({
-        lat: Number(clickLat.toFixed(5)),
-        lng: Number(clickLng.toFixed(5)),
-        defaultName: placeName,
-      });
-      setModalStopName(placeName);
-      setNewStopModalOpen(true);
-      setIsAddingStopMode(false);
+      if (!placeName) {
+        placeName = `Location (${clickLat.toFixed(4)}, ${clickLng.toFixed(4)})`;
+      }
+
+      // If user is specifically in "+ Add Missing Stop Mode"
+      if (isAddingStopMode) {
+        setPendingNewStop({
+          lat: Number(clickLat.toFixed(5)),
+          lng: Number(clickLng.toFixed(5)),
+          defaultName: placeName,
+        });
+        setModalStopName(placeName);
+        setNewStopModalOpen(true);
+        setIsAddingStopMode(false);
+        return;
+      }
+
+      // Otherwise show clean Action Popup at clicked position
+      const popupContent = `
+        <div style="font-family: system-ui, sans-serif; padding: 6px 4px; min-width: 190px;">
+          <div style="font-size: 10px; font-weight: 800; color: #0284c7; text-transform: uppercase; margin-bottom: 2px;">
+            📍 Selected Location
+          </div>
+          <h4 style="margin: 2px 0 6px 0; font-size: 13px; font-weight: 800; color: #0f172a;">${placeName}</h4>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 10px;">
+            Coords: ${clickLat.toFixed(4)}, ${clickLng.toFixed(4)}
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <button
+              onclick="window.setMapLocationAsStart(${clickLat}, ${clickLng}, '${placeName.replace(/'/g, "\\'")}')"
+              style="background: #10b981; color: white; border: none; padding: 7px 10px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;"
+            >
+              🚩 Set as Starting Point
+            </button>
+            <button
+              onclick="window.setMapLocationAsDest(${clickLat}, ${clickLng}, '${placeName.replace(/'/g, "\\'")}')"
+              style="background: #ef4444; color: white; border: none; padding: 7px 10px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;"
+            >
+              🏁 Set as Destination
+            </button>
+            ${routesList.length > 0 ? `
+              <button
+                onclick="window.addMapLocationAsStop(${clickLat}, ${clickLng}, '${placeName.replace(/'/g, "\\'")}')"
+                style="background: #8b5cf6; color: white; border: none; padding: 7px 10px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;"
+              >
+                ➕ Add as Bus Stop
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+
+      L.popup()
+        .setLatLng([clickLat, clickLng])
+        .setContent(popupContent)
+        .openOn(map);
     };
 
     map.on("click", handleMapClick);
     return () => {
       map.off("click", handleMapClick);
     };
-  }, [isAddingStopMode]);
+  }, [isAddingStopMode, routesList]);
 
   // Confirm manual stop addition
   const handleConfirmAddStopModal = () => {
@@ -903,7 +933,7 @@ const KERALA_ALL_PLACES = [
       source: "admin",
     };
 
-    // Combine with current stops and re-sort by pathDistance / projection
+    // Combine with current stops and re-sort by pathDistance
     const updatedRaw = [...stops.map((st) => ({
       ...st,
       pathDistance: projectPointOntoPolyline(st.latitude, st.longitude, coords).pathDistance,
@@ -914,7 +944,7 @@ const KERALA_ALL_PLACES = [
     // Recalculate order and distances
     let totalCum = 0;
     const finalStopsList = updatedRaw.map((st, idx) => {
-      const prevDist = idx === 0 ? 0 : haversineDistance(updatedRaw[idx - 1].latitude, updatedRaw[idx - 1].longitude, st.latitude, st.longitude);
+      const prevDist = idx === 0 ? 0 : Number(haversineDistance(updatedRaw[idx - 1].latitude, updatedRaw[idx - 1].longitude, st.latitude, st.longitude).toFixed(1));
       totalCum += prevDist;
 
       return {
@@ -923,7 +953,7 @@ const KERALA_ALL_PLACES = [
         name: st.stopName || st.name,
         latitude: st.latitude,
         longitude: st.longitude,
-        distanceFromPreviousStop: Number(prevDist.toFixed(1)),
+        distanceFromPreviousStop: prevDist,
         cumulativeDistance: Number(totalCum.toFixed(1)),
         travel_time_from_prev: Math.round(prevDist * 1.8),
         offset_minutes: Math.round(totalCum * 1.8),
@@ -934,18 +964,75 @@ const KERALA_ALL_PLACES = [
     onStopsChange(finalStopsList);
     setNewStopModalOpen(false);
     setPendingNewStop(null);
-    setStatusMessage(`Added custom stop "${modalStopName.trim()}" to route at position ${finalStopsList.findIndex(s => s.latitude === pendingNewStop.lat) + 1}!`);
+    setStatusMessage(`Added custom stop "${modalStopName.trim()}"!`);
   };
 
-  // Expose global window handler for route selection inside Leaflet HTML popups
+  // Reset and clear map selections & markers
+  const handleResetMap = useCallback(() => {
+    setFromQuery("");
+    setToQuery("");
+    setStartPoint(null);
+    setDestPoint(null);
+    setRoutesList([]);
+    setSelectedRouteId(null);
+    setSelectedRoute(null);
+    setIsAddingStopMode(false);
+    setStatusMessage("Map search refreshed.");
+    onLocationsChange("", "");
+    onStopsChange([]);
+    onRouteSelected({
+      selectedRouteId: null,
+      routeName: "",
+      startingPoint: { name: "", latitude: null, longitude: null },
+      destination: { name: "", latitude: null, longitude: null },
+      totalDistance: 0,
+      estimatedTravelTime: "",
+      routeGeometry: [],
+    });
+
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([9.5916, 76.6500], 10, { animate: true });
+    }
+    if (markersGroupRef.current) markersGroupRef.current.clearLayers();
+    if (polylineGroupRef.current) polylineGroupRef.current.clearLayers();
+  }, [onLocationsChange, onStopsChange, onRouteSelected]);
+
+  // Expose global window handlers for actions triggered inside Leaflet HTML popups
   useEffect(() => {
+    window.setMapLocationAsStart = (lat, lng, name) => {
+      setFromQuery(name);
+      setStartPoint({ name, lat, lng });
+      onLocationsChange(name, toQuery);
+      setStatusMessage(`Selected Starting Point: ${name}`);
+      if (mapInstanceRef.current) mapInstanceRef.current.closePopup();
+    };
+
+    window.setMapLocationAsDest = (lat, lng, name) => {
+      setToQuery(name);
+      setDestPoint({ name, lat, lng });
+      onLocationsChange(fromQuery, name);
+      setStatusMessage(`Selected Destination: ${name}`);
+      if (mapInstanceRef.current) mapInstanceRef.current.closePopup();
+    };
+
+    window.addMapLocationAsStop = (lat, lng, name) => {
+      setPendingNewStop({ lat, lng, defaultName: name });
+      setModalStopName(name);
+      setNewStopModalOpen(true);
+      if (mapInstanceRef.current) mapInstanceRef.current.closePopup();
+    };
+
     window.selectMapRouteOption = (id) => {
       handleSelectRouteOption(id);
     };
+
     return () => {
+      delete window.setMapLocationAsStart;
+      delete window.setMapLocationAsDest;
+      delete window.addMapLocationAsStop;
       delete window.selectMapRouteOption;
     };
-  }, [handleSelectRouteOption]);
+  }, [fromQuery, toQuery, onLocationsChange, handleSelectRouteOption]);
 
   // Render Polylines and Markers on Leaflet Map
   useEffect(() => {
@@ -955,101 +1042,121 @@ const KERALA_ALL_PLACES = [
     markersGroupRef.current.clearLayers();
     polylineGroupRef.current.clearLayers();
 
-    if (routesList.length === 0) return;
+    // 1. Draw Polyline routes if available
+    if (routesList.length > 0) {
+      const routeColors = ["#2563eb", "#8b5cf6", "#f59e0b", "#10b981", "#06b6d4"];
 
-    const routeColors = ["#2563eb", "#8b5cf6", "#f59e0b", "#10b981", "#ec4899", "#06b6d4", "#6366f1", "#d97706"];
+      routesList.forEach((r, idx) => {
+        const isSelected = r.id === selectedRouteId;
+        const color = isSelected ? "#2563eb" : routeColors[(idx + 1) % routeColors.length];
 
-    // Draw Candidate Routes with Interactive Polyline Popups
-    routesList.forEach((r, idx) => {
-      const isSelected = r.id === selectedRouteId;
-      const color = isSelected ? "#2563eb" : routeColors[(idx + 1) % routeColors.length];
+        const polyline = L.polyline(r.geometry, {
+          color: color,
+          weight: isSelected ? 6 : 4,
+          opacity: isSelected ? 0.95 : 0.6,
+          dashArray: isSelected ? null : "6, 8",
+        });
 
-      const polyline = L.polyline(r.geometry, {
-        color: color,
-        weight: isSelected ? 7 : 5,
-        opacity: isSelected ? 0.95 : 0.65,
-        dashArray: isSelected ? null : "8, 10",
-      });
-
-      const routePopupHtml = `
-        <div style="font-family: system-ui, sans-serif; padding: 6px; text-align: center; min-width: 190px;">
-          <div style="font-size: 11px; font-weight: 800; color: ${isSelected ? '#2563eb' : '#8b5cf6'}; text-transform: uppercase; margin-bottom: 2px;">
-            ${isSelected ? '✅ Active Selected Route' : `🛣️ Candidate Route Option ${idx + 1}`}
+        const routePopupHtml = `
+          <div style="font-family: system-ui, sans-serif; padding: 6px; text-align: center; min-width: 180px;">
+            <div style="font-size: 11px; font-weight: 800; color: ${isSelected ? '#2563eb' : '#64748b'}; text-transform: uppercase; margin-bottom: 2px;">
+              ${isSelected ? '✅ Active Road Route' : `🛣️ Route Option ${idx + 1}`}
+            </div>
+            <h4 style="margin: 4px 0; font-size: 13px; font-weight: 800; color: #0f172a;">${r.name}</h4>
+            <p style="margin: 4px 0 10px 0; font-size: 12px; color: #475569;">
+              Distance: <b>${r.distanceKm} km</b> · Est: <b>${r.durationStr}</b>
+            </p>
+            ${!isSelected ? `
+              <button
+                onclick="window.selectMapRouteOption('${r.id}')"
+                style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: none; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;"
+              >
+                Select This Route ✓
+              </button>
+            ` : `
+              <span style="font-size: 12px; font-weight: 800; color: #10b981;">✓ Selected</span>
+            `}
           </div>
-          <h4 style="margin: 4px 0; font-size: 14px; font-weight: 800; color: #0f172a;">${r.name}</h4>
-          <p style="margin: 4px 0 10px 0; font-size: 12px; color: #475569;">
-            Distance: <b>${r.distanceKm} km</b> · Est. Time: <b>${r.durationStr}</b>
-          </p>
-          ${!isSelected ? `
-            <button
-              onclick="window.selectMapRouteOption('${r.id}')"
-              style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: none; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.2);"
-            >
-              Select This Road Route ✓
-            </button>
-          ` : `
-            <span style="font-size: 12px; font-weight: 800; color: #10b981;">✓ Selected &amp; Active</span>
-          `}
-        </div>
-      `;
+        `;
 
-      polyline.bindPopup(routePopupHtml);
-
-      polyline.on("click", () => {
-        handleSelectRouteOption(r.id);
+        polyline.bindPopup(routePopupHtml);
+        polyline.on("click", () => handleSelectRouteOption(r.id));
+        polyline.addTo(polylineGroupRef.current);
       });
 
-      polyline.addTo(polylineGroupRef.current);
-    });
-
-    // Fit map bounds to active polyline
-    const activeRoute = routesList.find((r) => r.id === selectedRouteId);
-    if (activeRoute && activeRoute.geometry.length > 0) {
-      map.fitBounds(activeRoute.geometry, { padding: [40, 40] });
+      // Fit map bounds to active polyline
+      const activeRoute = routesList.find((r) => r.id === selectedRouteId);
+      if (activeRoute && activeRoute.geometry.length > 0) {
+        map.fitBounds(activeRoute.geometry, { padding: [40, 40] });
+      }
     }
 
-    // Render Stop Markers
-    stops.forEach((st, idx) => {
-      const isStart = idx === 0;
-      const isEnd = idx === stops.length - 1;
+    // 2. Render Stop Markers (Clean, Collision-Free)
+    if (stops && stops.length > 0) {
+      stops.forEach((st, idx) => {
+        if (!st.latitude || !st.longitude) return;
 
-      let iconType = "number";
-      if (isStart) iconType = "start";
-      else if (isEnd) iconType = "end";
+        const isStart = idx === 0;
+        const isEnd = idx === stops.length - 1;
 
-      const icon = createCustomIcon(
-        st.order,
-        isStart ? "#10b981" : isEnd ? "#ef4444" : st.source === "admin" ? "#8b5cf6" : "#2563eb",
-        iconType,
-        st.source
-      );
+        let iconType = "number";
+        if (isStart) iconType = "start";
+        else if (isEnd) iconType = "end";
 
-      const marker = L.marker([st.latitude, st.longitude], { icon: icon });
+        const icon = createCustomIcon(
+          st.order || idx + 1,
+          isStart ? "#10b981" : isEnd ? "#ef4444" : st.source === "admin" ? "#8b5cf6" : "#2563eb",
+          iconType,
+          st.source
+        );
 
-      const popupHtml = `
-        <div style="font-family: system-ui, sans-serif; padding: 4px; min-width: 160px;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-            <span style="font-size: 11px; font-weight: 700; background: ${st.source === 'admin' ? '#8b5cf6' : '#2563eb'}; color: white; padding: 2px 6px; border-radius: 10px;">
-              Stop #${st.order} (${st.source === 'admin' ? 'Admin Added' : 'Auto Detected'})
-            </span>
+        const marker = L.marker([st.latitude, st.longitude], { icon: icon });
+
+        const popupHtml = `
+          <div style="font-family: system-ui, sans-serif; padding: 4px; min-width: 150px;">
+            <div style="margin-bottom: 4px;">
+              <span style="font-size: 10px; font-weight: 800; background: ${isStart ? '#10b981' : isEnd ? '#ef4444' : st.source === 'admin' ? '#8b5cf6' : '#2563eb'}; color: white; padding: 2px 6px; border-radius: 10px;">
+                ${isStart ? '🚩 Origin' : isEnd ? '🏁 Destination' : `Stop #${st.order || idx + 1}`}
+              </span>
+            </div>
+            <h4 style="margin: 4px 0; font-size: 13px; font-weight: 800; color: #1e293b;">${st.stopName || st.name}</h4>
+            <p style="margin: 2px 0; font-size: 11px; color: #64748b;">
+              Dist from Prev: <b>${st.distanceFromPreviousStop || 0} km</b><br/>
+              Cumulative: <b>${st.cumulativeDistance || 0} km</b>
+            </p>
           </div>
-          <h4 style="margin: 4px 0; font-size: 14px; font-weight: 700; color: #1e293b;">${st.stopName || st.name}</h4>
-          <p style="margin: 2px 0; font-size: 12px; color: #64748b;">
-            Dist from Prev: <b>${st.distanceFromPreviousStop} km</b><br/>
-            Cumulative: <b>${st.cumulativeDistance} km</b>
-          </p>
-        </div>
-      `;
+        `;
 
-      marker.bindPopup(popupHtml);
-
-      marker.on("click", () => {
-        onSelectStopIndex(idx);
+        marker.bindPopup(popupHtml);
+        marker.on("click", () => onSelectStopIndex(idx));
+        marker.addTo(markersGroupRef.current);
       });
-
-      marker.addTo(markersGroupRef.current);
-    });
-  }, [routesList, selectedRouteId, stops, onSelectStopIndex]);
+    } else {
+      // If no full route is loaded yet, render individual start / destination pins when selected from map click
+      if (startPoint && startPoint.lat && startPoint.lng) {
+        const startIcon = createCustomIcon("🚩", "#10b981", "start", "automatic");
+        const startMarker = L.marker([startPoint.lat, startPoint.lng], { icon: startIcon });
+        startMarker.bindPopup(`
+          <div style="font-family: system-ui, sans-serif; padding: 4px;">
+            <span style="font-size: 10px; font-weight: 800; background: #10b981; color: white; padding: 2px 6px; borderRadius: 8px;">🚩 Starting Point</span>
+            <h4 style="margin: 4px 0 0 0; font-size: 13px; font-weight: 800; color: #0f172a;">${startPoint.name}</h4>
+          </div>
+        `).openPopup();
+        startMarker.addTo(markersGroupRef.current);
+      }
+      if (destPoint && destPoint.lat && destPoint.lng) {
+        const destIcon = createCustomIcon("🏁", "#ef4444", "end", "automatic");
+        const destMarker = L.marker([destPoint.lat, destPoint.lng], { icon: destIcon });
+        destMarker.bindPopup(`
+          <div style="font-family: system-ui, sans-serif; padding: 4px;">
+            <span style="font-size: 10px; font-weight: 800; background: #ef4444; color: white; padding: 2px 6px; borderRadius: 8px;">🏁 Destination</span>
+            <h4 style="margin: 4px 0 0 0; font-size: 13px; font-weight: 800; color: #0f172a;">${destPoint.name}</h4>
+          </div>
+        `);
+        destMarker.addTo(markersGroupRef.current);
+      }
+    }
+  }, [routesList, selectedRouteId, stops, startPoint, destPoint, onSelectStopIndex]);
 
   // Pan & Zoom to selected stop when clicked from table
   useEffect(() => {
@@ -1057,17 +1164,21 @@ const KERALA_ALL_PLACES = [
     if (!map || selectedStopIndex === null || !stops[selectedStopIndex]) return;
 
     const targetStop = stops[selectedStopIndex];
-    map.setView([targetStop.latitude, targetStop.longitude], 15, { animate: true });
+    if (targetStop.latitude && targetStop.longitude) {
+      map.setView([targetStop.latitude, targetStop.longitude], 15, { animate: true });
 
-    markersGroupRef.current.eachLayer((layer) => {
-      const latlng = layer.getLatLng();
-      if (
-        Math.abs(latlng.lat - targetStop.latitude) < 0.0001 &&
-        Math.abs(latlng.lng - targetStop.longitude) < 0.0001
-      ) {
-        layer.openPopup();
-      }
-    });
+      markersGroupRef.current.eachLayer((layer) => {
+        if (layer.getLatLng) {
+          const latlng = layer.getLatLng();
+          if (
+            Math.abs(latlng.lat - targetStop.latitude) < 0.0001 &&
+            Math.abs(latlng.lng - targetStop.longitude) < 0.0001
+          ) {
+            layer.openPopup();
+          }
+        }
+      });
+    }
   }, [selectedStopIndex, stops]);
 
   return (
@@ -1078,12 +1189,35 @@ const KERALA_ALL_PLACES = [
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Navigation size={22} style={{ color: "#38bdf8" }} />
             <div>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Interactive Bus Route & Stop Selector</h3>
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Search locations, select road routes & auto-detect all Kerala passenger bus stops</p>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Interactive Bus Route &amp; Stop Selector</h3>
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Search locations, select road routes &amp; detect Kerala passenger bus stops</p>
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              onClick={handleResetMap}
+              title="Reset origin, destination and clear drawn routes on map"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                background: "rgba(255, 255, 255, 0.12)",
+                color: "#ffffff",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <RefreshCw size={15} />
+              <span>Refresh Map</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setIsAddingStopMode(!isAddingStopMode)}
@@ -1110,7 +1244,7 @@ const KERALA_ALL_PLACES = [
         </div>
 
         {/* Inputs Form */}
-        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, alignItems: "end" }}>
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, alignItems: "end" }}>
           {/* Starting Point Input */}
           <div style={{ position: "relative" }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: "#cbd5e1", textTransform: "uppercase", display: "block", marginBottom: 4 }}>
@@ -1127,14 +1261,14 @@ const KERALA_ALL_PLACES = [
                   setFromSuggestions(results);
                   setShowFromDrop(true);
                 }}
-                placeholder="e.g. Kanjirappally"
+                placeholder="e.g. Kottayam"
                 style={{ background: "transparent", border: "none", outline: "none", color: "#ffffff", padding: "8px 0", fontSize: 13, width: "100%" }}
               />
             </div>
             {showFromDrop && fromSuggestions.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 240, overflowY: "auto", border: "1px solid #cbd5e1" }}>
                 <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#64748b", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase" }}>
-                  🌴 All Kerala Places & Transit Hubs
+                  🌴 Kerala Places &amp; Transit Hubs
                 </div>
                 {fromSuggestions.map((item, idx) => (
                   <div
@@ -1180,7 +1314,7 @@ const KERALA_ALL_PLACES = [
             {showToDrop && toSuggestions.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 240, overflowY: "auto", border: "1px solid #cbd5e1" }}>
                 <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#64748b", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase" }}>
-                  🌴 All Kerala Places & Transit Hubs
+                  🌴 Kerala Places &amp; Transit Hubs
                 </div>
                 {toSuggestions.map((item, idx) => (
                   <div
@@ -1203,14 +1337,14 @@ const KERALA_ALL_PLACES = [
             )}
           </div>
 
-          {/* Search Button */}
-          <div>
+          {/* Action Buttons: Search + Refresh */}
+          <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"
               onClick={handleSearchAndDrawRoute}
-              disabled={loadingRoute || loadingStops}
+              disabled={loadingRoute}
               style={{
-                width: "100%",
+                flex: 1,
                 padding: "9px 16px",
                 background: "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)",
                 color: "#ffffff",
@@ -1223,41 +1357,85 @@ const KERALA_ALL_PLACES = [
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 6,
+                boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
               }}
             >
               <Search size={16} />
-              <span>{loadingRoute ? "Searching Route..." : "Search & Draw Route"}</span>
+              <span>{loadingRoute ? "Searching..." : "Search & Draw Route"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleResetMap}
+              title="Reset Search"
+              style={{
+                padding: "9px 12px",
+                background: "#475569",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <RotateCcw size={16} />
             </button>
           </div>
+        </div>
+
+        {/* Map Click Helper Banner */}
+        <div style={{ marginTop: 10, fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+          <span>💡 <b>Map Selection:</b> You can search locations above, OR <b>click anywhere directly on the map</b> to set your Starting Point (🚩) or Destination (🏁).</span>
         </div>
       </div>
 
       {/* Alternative Routes Selector Bar */}
       {routesList.length > 0 && (
-        <div style={{ padding: "10px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
-            <Layers size={14} /> Available Road Routes:
+        <div style={{ padding: "12px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "#334155", display: "flex", alignItems: "center", gap: 5, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <Layers size={15} style={{ color: "#0284c7" }} /> All Available Routes ({routesList.length}):
           </span>
           {routesList.map((r, idx) => {
             const isSelected = r.id === selectedRouteId;
+            const routeColors = ["#2563eb", "#8b5cf6", "#f59e0b", "#10b981", "#06b6d4"];
+            const dotColor = isSelected ? "#2563eb" : routeColors[(idx + 1) % routeColors.length];
+
             return (
               <button
                 key={r.id}
                 type="button"
                 onClick={() => handleSelectRouteOption(r.id)}
                 style={{
-                  padding: "6px 12px",
-                  borderRadius: 20,
+                  padding: "7px 14px",
+                  borderRadius: 12,
                   fontSize: 12,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   cursor: "pointer",
                   border: isSelected ? "2px solid #2563eb" : "1px solid #cbd5e1",
                   background: isSelected ? "#eff6ff" : "#ffffff",
                   color: isSelected ? "#1d4ed8" : "#475569",
-                  transition: "all 0.2s ease",
+                  boxShadow: isSelected ? "0 2px 8px rgba(37, 99, 235, 0.2)" : "0 1px 3px rgba(0,0,0,0.05)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  transition: "all 0.15s ease",
                 }}
               >
-                Route {idx + 1}: {r.name} ({r.distanceKm} km, {r.durationStr})
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    backgroundColor: dotColor,
+                    display: "inline-block",
+                  }}
+                />
+                <span>
+                  <b>Option {idx + 1}:</b> {r.name} · <span style={{ color: isSelected ? "#2563eb" : "#64748b" }}>{r.distanceKm} km ({r.durationStr})</span>
+                </span>
+                {isSelected && <span style={{ color: "#16a34a", fontWeight: 800 }}>✓ Active</span>}
               </button>
             );
           })}
@@ -1310,7 +1488,7 @@ const KERALA_ALL_PLACES = [
                 type="text"
                 value={modalStopName}
                 onChange={(e) => setModalStopName(e.target.value)}
-                placeholder="Enter bus stop name (e.g. Manimala Junction)"
+                placeholder="Enter bus stop name"
                 style={{ width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14, outline: "none" }}
                 autoFocus
               />
@@ -1340,7 +1518,7 @@ const KERALA_ALL_PLACES = [
                 onClick={handleConfirmAddStopModal}
                 style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#8b5cf6", color: "#ffffff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
               >
-                Confirm & Insert Stop
+                Confirm &amp; Insert Stop
               </button>
             </div>
           </div>

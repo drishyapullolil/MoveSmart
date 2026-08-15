@@ -302,7 +302,7 @@ router.get("/my-cards", async (req, res) => {
 router.get("/balance/:tagOrCard", async (req, res) => {
   try {
     const param = req.params.tagOrCard.toUpperCase();
-    
+
     // Check by tag or card number
     let card = await RfidCard.findOne({
       $or: [{ rfidTag: param }, { cardNumber: param }]
@@ -563,7 +563,7 @@ router.post("/tap", async (req, res) => {
 
     if (activeJourney) {
       // Tap-Out logic (or Expired Check)
-      
+
       // Double tap prevention (tapped at same stop within 10 seconds)
       const secondsSinceTapIn = (Date.now() - new Date(activeJourney.tapInTime).getTime()) / 1000;
       if (activeJourney.tapInStop.toString() === stop._id.toString() && secondsSinceTapIn < 10) {
@@ -585,7 +585,7 @@ router.post("/tap", async (req, res) => {
         // Expire the active journey, deduct penalty, and process this tap as a new TAP_IN
         activeJourney.status = "Expired";
         activeJourney.fare = MAX_FARE * getMultiplier(card.cardType);
-        
+
         card.balance -= activeJourney.fare;
         await activeJourney.save();
         await card.save();
@@ -644,7 +644,7 @@ router.post("/tap", async (req, res) => {
       // Calculate Fare
       const multiplier = getMultiplier(card.cardType);
       let calculatedFare = (BASE_FARE + (distanceKm * RATE_PER_KM)) * multiplier;
-      
+
       // Cap fare at max
       if (calculatedFare > (MAX_FARE * multiplier)) {
         calculatedFare = MAX_FARE * multiplier;

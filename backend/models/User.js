@@ -41,7 +41,7 @@ const userSchema = new mongoose.Schema({
     },
     experienceYears: {
         type: Number,
-        default: 5
+        default: 0
     },
     verificationStatus: {
         type: String,
@@ -51,6 +51,16 @@ const userSchema = new mongoose.Schema({
     verificationNote: {
         type: String,
         default: ""
+    },
+    faceProfile: {
+        encoding: {
+            type: [Number],
+            default: undefined
+        },
+        enrolledAt: {
+            type: Date,
+            default: null
+        }
     }
 }, { timestamps: true });
 

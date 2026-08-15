@@ -68,6 +68,15 @@ app.use((req, res, next) => {
     next();
 });
 
+const http = require("http");
+const { initSocketService } = require("./services/socketService");
+
+const server = http.createServer(app);
+initSocketService(server);
+
+// Driver Safety & Real-Time Monitoring Routes
+app.use("/api/monitoring", require("./routes/monitoringRoutes"));
+
 // Authentication Routes
 app.use("/api/auth", require("./routes/authRoutes"));
 
@@ -100,10 +109,10 @@ const printRoutes = () => {
 
 // Start Server
 if (require.main === module) {
-    app.listen(5000, "0.0.0.0", () => {
+    server.listen(5000, "0.0.0.0", () => {
         printRoutes();
-        console.log("Server running on port 5000");
+        console.log("Server running with Socket.IO on port 5000 🚀");
     });
 }
 
-module.exports = app;
+module.exports = { app, server };

@@ -58,6 +58,20 @@ function isWithin2Hours(departureTimeStr, targetDateStr) {
 // ----------------------------------------------------
 const { protect, approvedDriverOnly, adminOnly } = require("../middleware/authMiddleware");
 
+// Open driver listing route for fleet management — only returns users with role: 'driver'
+router.get("/admin/drivers", async (req, res) => {
+  try {
+    const drivers = await User.find({
+      role: { $regex: /^driver$/i }
+    }).select("-password").sort({ createdAt: -1 });
+
+    res.json({ success: true, count: drivers.length, drivers });
+  } catch (error) {
+    console.error("Error fetching drivers for admin verification:", error);
+    res.status(500).json({ message: "Failed to fetch drivers list", error: error.message });
+  }
+});
+
 // Apply middleware to all /driver and /admin routes in this file
 router.use("/driver", protect, approvedDriverOnly);
 router.use("/admin", protect, adminOnly);
@@ -79,7 +93,7 @@ router.get("/driver/buses", async (req, res) => {
 router.post("/driver/request-bus", async (req, res) => {
   try {
     const { busId, driverId, driverName, driverEmail, driverPhone, driverLicense, driverPhoto } = req.body;
-    
+
     if (!busId) {
       return res.status(400).json({ message: "Bus ID is required" });
     }
@@ -384,7 +398,7 @@ router.post("/driver/profile-verification", async (req, res) => {
     if (userId && userId.match(/^[0-9a-fA-F]{24}$/)) {
       user = await User.findById(userId);
     }
-    
+
     if (!user && email) {
       user = await User.findOne({ email: new RegExp(`^${email.trim()}$`, "i") });
     }
@@ -495,59 +509,6 @@ router.get("/driver/profile-status", async (req, res) => {
 // ----------------------------------------------------
 // 6. ADMIN - DRIVER VERIFICATION (ACCEPT / REJECT)
 // ----------------------------------------------------
-router.get("/admin/drivers", async (req, res) => {
-  try {
-    let drivers = await User.find({ 
-      $or: [
-        { role: /^driver$/i }, 
-        { verificationStatus: /^approved$/i },
-        { verificationStatus: /^pending$/i }
-      ] 
-    }).select("-password").sort({ createdAt: -1 });
-
-    if (drivers.length === 0) {
-      const bcrypt = require("bcrypt");
-      const pass = await bcrypt.hash("DriverPass@123", 10);
-      drivers = await User.insertMany([
-        {
-          name: "Suresh Menon",
-          email: "suresh.driver@movesmart.in",
-          password: pass,
-          role: "driver",
-          phone: "+91 98471 22334",
-          licenseNumber: "KL-07-2019-88120",
-          experienceYears: 8,
-          verificationStatus: "Approved",
-        },
-        {
-          name: "Anil Kumar",
-          email: "anil.driver@movesmart.in",
-          password: pass,
-          role: "driver",
-          phone: "+91 98472 55667",
-          licenseNumber: "KL-14-2017-44321",
-          experienceYears: 10,
-          verificationStatus: "Approved",
-        },
-        {
-          name: "Ramesh Pillai",
-          email: "ramesh.driver@movesmart.in",
-          password: pass,
-          role: "driver",
-          phone: "+91 98473 88990",
-          licenseNumber: "KL-11-2016-11223",
-          experienceYears: 12,
-          verificationStatus: "Approved",
-        },
-      ]);
-    }
-
-    res.json({ success: true, count: drivers.length, drivers });
-  } catch (error) {
-    console.error("Error fetching drivers for admin verification:", error);
-    res.status(500).json({ message: "Failed to fetch drivers list", error: error.message });
-  }
-});
 
 router.put("/admin/driver/:id/verification", async (req, res) => {
   try {
@@ -563,9 +524,20 @@ router.put("/admin/driver/:id/verification", async (req, res) => {
       return res.status(404).json({ message: "Driver not found." });
     }
 
+    if (status === "Rejected") {
+      const assignedBus = await Bus.findOne({
+        $or: [{ driverId: driver._id }, { driverId: String(driver._id) }],
+      });
+      if (assignedBus) {
+        return res.status(400).json({
+          message: `Cannot reject/deactivate driver "${driver.name}" because they are currently assigned to Bus ${assignedBus.busNumber}. Please unassign the driver from the bus first.`,
+        });
+      }
+    }
+
     driver.verificationStatus = status;
     driver.verificationNote = note || (status === "Approved" ? "Driving license and profile picture verified & approved by Admin." : "Verification rejected by Admin.");
-    
+
     if (status === "Approved") {
       driver.role = "driver";
     }
@@ -573,12 +545,13 @@ router.put("/admin/driver/:id/verification", async (req, res) => {
     await driver.save();
 
     await Bus.updateMany(
-      { driverName: driver.name },
+      { $or: [{ driverId: driver._id }, { driverId: String(driver._id) }] },
       {
         $set: {
           driverVerified: status === "Approved",
-          driverLicense: driver.licenseNumber || "KL-07-2018-99210",
-          driverPhoto: driver.profilePic || "",
+          driverPhone: driver.phone || "N/A",
+          driverLicense: driver.licenseNumber || "N/A",
+          driverPhoto: driver.profilePic || driver.licenseImage || "",
         },
       }
     );

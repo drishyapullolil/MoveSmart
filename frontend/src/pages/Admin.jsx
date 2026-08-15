@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
+import { io } from "socket.io-client";
 import { getStoredUser, clearStoredSession, getStoredToken } from "../utils/session";
 import AdminHeader from "../components/AdminHeader";
 import AdminFooter from "../components/AdminFooter";
 import AdminAddBusRoute from "./AdminAddBusRoute";
+import DriverSafetyMonitoring from "../components/admin/DriverSafetyMonitoring";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
   LayoutDashboard,
@@ -32,6 +34,7 @@ import {
   Trash2,
   Edit2,
   ShieldCheck,
+  ShieldAlert,
   Award,
   Phone,
   FileText,
@@ -41,7 +44,8 @@ import {
   Navigation,
   Menu,
   Sliders,
-  Calendar
+  Calendar,
+  AlertTriangle
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -63,6 +67,9 @@ export default function Admin({ defaultTab = "overview" }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
+
+  // Live Emergency Safety Alert Banner State
+  const [activeEmergencyAlert, setActiveEmergencyAlert] = useState(null);
 
   // Toast Notification State
   const [toast, setToast] = useState(null);
@@ -117,6 +124,19 @@ export default function Admin({ defaultTab = "overview" }) {
   const [selectedBusReqModal, setSelectedBusReqModal] = useState(null);
   const [busReqModalStatus, setBusReqModalStatus] = useState("Approved");
   const [busReqModalComment, setBusReqModalComment] = useState("");
+
+  // Safety Alerts State
+  const [safetyAlertsCount, setSafetyAlertsCount] = useState(0);
+  const fetchSafetyAlertsCount = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/monitoring/stats");
+      if (res.data?.stats?.activeAlertsCount !== undefined) {
+        setSafetyAlertsCount(res.data.stats.activeAlertsCount);
+      }
+    } catch (err) {
+      // Non-blocking
+    }
+  }, []);
 
   // Passengers & Wallet Page States
   const [passengerSearchQuery, setPassengerSearchQuery] = useState("");
@@ -200,7 +220,69 @@ export default function Admin({ defaultTab = "overview" }) {
     fetchAdminLeaves();
     fetchAdminDrivers();
     fetchAdminBusRequests();
-  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests]);
+    fetchSafetyAlertsCount();
+  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests, fetchSafetyAlertsCount]);
+
+  // Real-Time Socket.IO Safety Alert Ingestion for Global Admin Dashboard
+  useEffect(() => {
+    const socket = io({
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 10,
+    });
+
+    socket.on("connect", () => {
+      socket.emit("join-admin-safety");
+    });
+
+    const handleSafetyAlert = (alertDoc) => {
+      // Increment unread badge in real time
+      setSafetyAlertsCount((prev) => prev + 1);
+
+      // Play alert audio chime
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          if (alertDoc.severity === "Critical") {
+            osc.type = "sawtooth";
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.frequency.setValueAtTime(440, ctx.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.5);
+          } else {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.25);
+          }
+        }
+      } catch (e) {}
+
+      // Show top emergency alert banner on screen
+      if (alertDoc.severity === "Critical" || alertDoc.severity === "High") {
+        setActiveEmergencyAlert(alertDoc);
+        showToast(`🚨 ${alertDoc.title} on Bus ${alertDoc.busNumber || "KL-07-MS-1008"}!`, "error");
+      } else if (alertDoc.status === "Active") {
+        showToast(`⚠️ ${alertDoc.title} (Bus ${alertDoc.busNumber || "KL-07-MS-1008"})`, "warning");
+      }
+    };
+
+    socket.on("safety:alert", handleSafetyAlert);
+    socket.on("admin:safety-alert", handleSafetyAlert);
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   // Handler: Update Bus Request Status
   const handleUpdateBusRequestSubmit = async (e) => {
@@ -499,7 +581,7 @@ export default function Admin({ defaultTab = "overview" }) {
   const pendingAppsCount = adminApplications.filter(a => a.status === "Pending").length;
   const pendingBusReqsCount = adminBusRequests.filter(r => r.status === "Pending").length;
   const pendingDriversCount = adminDrivers.filter(d => d.verificationStatus === "Pending").length;
-  const totalNotificationCount = pendingAppsCount + pendingBusReqsCount + pendingDriversCount;
+  const totalNotificationCount = pendingAppsCount + pendingBusReqsCount + pendingDriversCount + safetyAlertsCount;
 
   // Background Theme Colors
   const bgMain = darkMode ? "#0f172a" : "#f8fafc";
@@ -510,7 +592,7 @@ export default function Admin({ defaultTab = "overview" }) {
 
   return (
     <div style={{ minHeight: "100vh", background: bgMain, color: textPrimary, fontFamily: "'Inter', 'Segoe UI', sans-serif", display: "flex", flexDirection: "column" }}>
-      
+
       {/* Toast Notification Container */}
       {toast && (
         <div style={{
@@ -530,7 +612,7 @@ export default function Admin({ defaultTab = "overview" }) {
           alignItems: "center",
           gap: "10px",
           animation: "slideIn 0.3s ease",
-            }}>
+        }}>
           <span>{toast.type === "error" ? <AlertCircle size={18} /> : <CheckCircle size={18} />}</span>
           {toast.message}
         </div>
@@ -551,8 +633,8 @@ export default function Admin({ defaultTab = "overview" }) {
         boxShadow: "0 4px 12px rgba(0,0,0,0.03)"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <button 
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             style={{ background: "none", border: "none", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center" }}
           >
             <Menu size={20} />
@@ -584,10 +666,10 @@ export default function Admin({ defaultTab = "overview" }) {
 
         {/* Header Right Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          
+
           {/* Notifications Bell */}
           <div style={{ position: "relative" }}>
-            <button 
+            <button
               onClick={() => setNotificationOpen(!notificationOpen)}
               style={{ background: "none", border: `1px solid ${borderCol}`, width: "40px", height: "40px", borderRadius: "12px", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
             >
@@ -606,6 +688,11 @@ export default function Admin({ defaultTab = "overview" }) {
                   System Notifications
                 </h4>
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "12.5px" }}>
+                  {safetyAlertsCount > 0 && (
+                    <div onClick={() => { setActiveTab("driverSafety"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: "rgba(239, 68, 68, 0.15)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", color: "#dc2626" }}>
+                      <ShieldAlert size={14} style={{ color: "#ef4444" }} /> <strong>{safetyAlertsCount} Driver Safety Alerts</strong> active
+                    </div>
+                  )}
                   <div onClick={() => { setActiveTab("applications"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
                     <FileCheck size={14} style={{ color: "#0ea5e9" }} /> <strong>{pendingAppsCount} Card Applications</strong> pending
                   </div>
@@ -621,8 +708,8 @@ export default function Admin({ defaultTab = "overview" }) {
           </div>
 
           {/* Dark Mode Toggle */}
-          <button 
-            onClick={() => setDarkMode(!darkMode)} 
+          <button
+            onClick={() => setDarkMode(!darkMode)}
             style={{ background: "none", border: `1px solid ${borderCol}`, padding: "8px 14px", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "700", color: textPrimary, display: "flex", alignItems: "center", gap: "6px" }}
           >
             {darkMode ? <Sun size={14} /> : <Moon size={14} />} {darkMode ? "Light" : "Dark"}
@@ -634,7 +721,7 @@ export default function Admin({ defaultTab = "overview" }) {
               <div style={{ fontSize: "13.5px", fontWeight: "800", color: textPrimary }}>{user?.fullName || user?.name || "System Admin"}</div>
               <div style={{ fontSize: "11px", color: textSecondary }}>{user?.email || "admin@movesmart.com"}</div>
             </div>
-            <button 
+            <button
               onClick={() => { clearStoredSession(); setUser(null); navigate("/"); }}
               style={{ background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", padding: "8px 14px", borderRadius: "10px", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}
             >
@@ -647,7 +734,7 @@ export default function Admin({ defaultTab = "overview" }) {
 
       {/* BODY LAYOUT: SIDEBAR + MAIN CONTENT */}
       <div style={{ display: "flex", flex: 1 }}>
-        
+
         {/* LEFT SIDEBAR NAVIGATION */}
         <aside style={{
           width: sidebarCollapsed ? "72px" : "260px",
@@ -662,6 +749,7 @@ export default function Admin({ defaultTab = "overview" }) {
         }}>
           {[
             { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
+            { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
             { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
             { id: "applications", label: "Card Applications", Icon: FileCheck, badge: pendingAppsCount },
             { id: "cards", label: "RFID Card Portal", Icon: CreditCard },
@@ -712,7 +800,95 @@ export default function Admin({ defaultTab = "overview" }) {
 
         {/* MAIN DASHBOARD CONTENT AREA */}
         <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
-          
+
+          {/* CRITICAL LIVE EMERGENCY SAFETY BANNER */}
+          {activeEmergencyAlert && (
+            <div style={{
+              background: "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)",
+              color: "#ffffff",
+              padding: "18px 24px",
+              borderRadius: "18px",
+              marginBottom: "24px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "16px",
+              boxShadow: "0 10px 30px rgba(220, 38, 38, 0.4)",
+              border: "2px solid #ef4444",
+              animation: "pulse 2s infinite ease-in-out",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                <div style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "14px",
+                  background: "rgba(255, 255, 255, 0.15)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "24px",
+                  flexShrink: 0,
+                }}>
+                  🚨
+                </div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "900", letterSpacing: "0.5px" }}>
+                      LIVE SAFETY ALERT
+                    </span>
+                    <strong style={{ fontSize: "16.5px" }}>
+                      Bus {activeEmergencyAlert.busNumber || "KL-07-MS-1008"} — {activeEmergencyAlert.driverName || "Driver"}
+                    </strong>
+                  </div>
+                  <div style={{ fontSize: "13.5px", color: "#fecaca", marginTop: "4px", fontWeight: "600" }}>
+                    {activeEmergencyAlert.title || "AI Drowsiness Warning Detected"} • {activeEmergencyAlert.description}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <button
+                  onClick={() => {
+                    setActiveTab("driverSafety");
+                    setActiveEmergencyAlert(null);
+                  }}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: "12px",
+                    background: "#ffffff",
+                    color: "#991b1b",
+                    fontSize: "13px",
+                    fontWeight: "900",
+                    border: "none",
+                    cursor: "pointer",
+                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  📹 Inspect Live Stream &amp; Driver →
+                </button>
+                <button
+                  onClick={() => setActiveEmergencyAlert(null)}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "12px",
+                    background: "rgba(255, 255, 255, 0.15)",
+                    color: "#ffffff",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  Dismiss ✕
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* SECTION 1: DASHBOARD OVERVIEW */}
           {activeTab === "overview" && (
             <div className="fade-in-section">
@@ -790,12 +966,12 @@ export default function Admin({ defaultTab = "overview" }) {
 
               {/* Analytics & Graphs Section */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "24px", marginBottom: "32px" }}>
-                
+
                 {/* 1. Daily Transactions Volume Visual Bar */}
                 <div style={{ background: bgCard, borderRadius: "24px", padding: "24px", border: `1px solid ${borderCol}` }}>
                   <h3 style={{ fontSize: "17px", fontWeight: "900", margin: "0 0 4px 0", color: textPrimary }}>📈 Daily Passenger Tap Volume</h3>
                   <p style={{ fontSize: "12.5px", color: textSecondary, margin: "0 0 20px 0" }}>Weekly breakdown of bus tap-ins across express &amp; feeder routes.</p>
-                  
+
                   <div style={{ display: "flex", alignItems: "flex-end", justifyBetween: "space-between", gap: "14px", height: "180px", paddingTop: "20px" }}>
                     {[
                       { day: "Mon", height: "65%", val: "1,240" },
@@ -939,7 +1115,7 @@ export default function Admin({ defaultTab = "overview" }) {
                           >
                             👁️ View Details
                           </button>
-                          
+
                           {app.status === "Pending" && (
                             <>
                               <button
@@ -975,12 +1151,12 @@ export default function Admin({ defaultTab = "overview" }) {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "28px" }}>
-                
+
                 {/* Left: Card Directory */}
                 <div>
                   <div style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}` }}>
                     <h3 style={{ fontSize: "16.5px", fontWeight: "900", margin: "0 0 14px 0", color: textPrimary }}>Issued Smart Cards</h3>
-                    
+
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                       {dbCards.map((c) => (
                         <div key={c._id} style={{ padding: "14px", borderRadius: "14px", background: darkMode ? "#334155" : "#f8fafc", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
@@ -1081,7 +1257,7 @@ export default function Admin({ defaultTab = "overview" }) {
                           {card.status}
                         </span>
                       </div>
-                      
+
                       <strong style={{ fontSize: "16px", color: textPrimary, display: "block" }}>Card: {card.cardNumber}</strong>
                       <div style={{ fontSize: "12.5px", color: textSecondary, marginTop: "2px" }}>User: {card.user?.email || "Passenger"}</div>
                       <div style={{ fontSize: "24px", fontWeight: "900", color: textPrimary, margin: "10px 0" }}>₹ {card.balance.toFixed(2)}</div>
@@ -1282,6 +1458,13 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
           )}
 
+          {/* SECTION 11: DRIVER SAFETY MONITORING */}
+          {activeTab === "driverSafety" && (
+            <div className="fade-in-section">
+              <DriverSafetyMonitoring darkMode={darkMode} showToast={showToast} />
+            </div>
+          )}
+
         </main>
       </div>
 
@@ -1360,7 +1543,7 @@ export default function Admin({ defaultTab = "overview" }) {
       {actionApp && actionType === "details" && (
         <div className="modal-overlay" style={{ zIndex: 9999 }}>
           <div className="modal-content" style={{ maxWidth: "760px", width: "95%", borderRadius: "24px", padding: "28px", background: bgCard, color: textPrimary, maxHeight: "90vh", overflowY: "auto" }}>
-            
+
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "14px" }}>
               <div>
                 <h3 style={{ fontSize: "20px", fontWeight: "900", margin: 0 }}>
@@ -1375,7 +1558,7 @@ export default function Admin({ defaultTab = "overview" }) {
 
             {/* Application Overview Grid */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "20px", marginBottom: "20px" }}>
-              
+
               {/* Left Column: Personal & Contact Info */}
               <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "18px", borderRadius: "18px", border: `1px solid ${borderCol}` }}>
                 <h4 style={{ fontSize: "14px", fontWeight: "900", color: "#6d28d9", margin: "0 0 10px 0", textTransform: "uppercase" }}>👤 Applicant Profile</h4>

@@ -37,13 +37,16 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
     price = bus?.price,
     rating = bus?.rating,
     amenities = bus?.amenities || [],
-    driverName = bus?.driverName,
+    driverName: rawDriverName = bus?.driverName,
     driverPhone = bus?.driverPhone,
     driverLicense = bus?.driverLicense,
     driverPhoto = bus?.driverPhoto,
     driverVerified = bus?.driverVerified,
     driverExperience = bus?.driverExperience,
   } = bus || {};
+
+  const isGenericDriver = !rawDriverName || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(rawDriverName).toLowerCase().trim());
+  const driverName = !isGenericDriver ? rawDriverName : "Unassigned";
 
   const isLowSeat = availableSeats > 0 && availableSeats <= 8;
 

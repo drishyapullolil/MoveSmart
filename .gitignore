@@ -7,3 +7,6 @@ frontend/.env
 dist/
 build/
 .vscode/
+__pycache__/
+*.py[cod]
+*$py.class
