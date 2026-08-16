@@ -36,6 +36,7 @@ if _current_dir not in sys.path:
 
 try:
     # pyrefly: ignore [missing-import]
+    # pyright: ignore [reportMissingImports]
     from ai_monitoring_service import (
         FaceProfileManager,
         MoveSmartMonitoringClient,
@@ -45,6 +46,8 @@ try:
         calculate_ear,
     )
 except ImportError:
+    # pyrefly: ignore [missing-import]
+    # pyright: ignore [reportMissingImports]
     from backend.ai_monitoring.ai_monitoring_service import (
         FaceProfileManager,
         MoveSmartMonitoringClient,

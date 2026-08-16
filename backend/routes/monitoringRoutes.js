@@ -198,8 +198,11 @@ router.post("/verify-driver-identity", async (req, res) => {
     }
 
     // 1. Direct Target Driver Verification
-    if (targetDriver && targetDriver.faceProfile?.encoding?.length === 128) {
-      const distance = computeDistance(candidateVec, targetDriver.faceProfile.encoding);
+    const targetEnc = (targetDriver?.faceProfile?.encoding?.length === 128 ? targetDriver.faceProfile.encoding : null) ||
+                      (targetDriver?.faceEncoding?.length === 128 ? targetDriver.faceEncoding : null);
+
+    if (targetDriver && targetEnc) {
+      const distance = computeDistance(candidateVec, targetEnc);
       const isMatch = distance <= 0.50;
       const matchScore = Math.max(0, Math.min(100, Math.round((1 - distance / 1.414) * 100)));
       const isApproved = targetDriver.verificationStatus === "Approved";
@@ -215,6 +218,7 @@ router.post("/verify-driver-identity", async (req, res) => {
         verificationStatus: targetDriver.verificationStatus || "Unverified",
         distance,
         matchConfidence: matchScore,
+        enrolledAt: targetDriver.faceProfile?.enrolledAt || targetDriver.faceEnrolledAt,
         message: isMatch
           ? (isApproved ? `Driver ${targetDriver.name} biometrically verified & approved.` : `Driver biometric matches, but license status is '${targetDriver.verificationStatus}'.`)
           : `Face biometric does not match assigned driver ${targetDriver.name}.`,
@@ -223,16 +227,21 @@ router.post("/verify-driver-identity", async (req, res) => {
 
     // 2. Automated Fleet-Wide Biometric Driver Identification
     const enrolledDrivers = await User.find({
-      role: "driver",
-      "faceProfile.encoding": { $exists: true, $ne: [] },
+      role: { $regex: /^driver$/i },
+      $or: [
+        { "faceProfile.encoding": { $exists: true, $ne: [] } },
+        { faceEncoding: { $exists: true, $ne: [] } },
+      ],
     });
 
     let bestDriver = null;
     let minDistance = 999.0;
 
     for (const drv of enrolledDrivers) {
-      if (drv.faceProfile?.encoding?.length === 128) {
-        const dist = computeDistance(candidateVec, drv.faceProfile.encoding);
+      const drvEnc = (drv.faceProfile?.encoding?.length === 128 ? drv.faceProfile.encoding : null) ||
+                     (drv.faceEncoding?.length === 128 ? drv.faceEncoding : null);
+      if (drvEnc) {
+        const dist = computeDistance(candidateVec, drvEnc);
         if (dist < minDistance) {
           minDistance = dist;
           bestDriver = drv;

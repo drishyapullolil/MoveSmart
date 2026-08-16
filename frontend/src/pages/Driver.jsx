@@ -388,6 +388,11 @@ function Driver() {
   const [isEnrollingWeb, setIsEnrollingWeb] = useState(false);
   const [enrollProgress, setEnrollProgress] = useState(0);
 
+  // 3-Minute (180s) Periodic Driver Face Verification State
+  const [periodicCountdown, setPeriodicCountdown] = useState(180);
+  const [lastPeriodicCheck, setLastPeriodicCheck] = useState(null);
+  const [isPeriodicChecking, setIsPeriodicChecking] = useState(false);
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -1083,6 +1088,99 @@ function Driver() {
     }
   }, [cameraActive, user, assignedBus, triggerDriverSafetyEvent]);
 
+  // 3-Minute (180s) Periodic Driver Face Re-Verification Function
+  const runPeriodicFaceCheck = useCallback(async () => {
+    if (!videoRef.current || !cameraActive || videoRef.current.readyState < 2) return;
+    setIsPeriodicChecking(true);
+
+    try {
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = 320;
+      tempCanvas.height = 240;
+      const tCtx = tempCanvas.getContext("2d");
+      tCtx.save();
+      tCtx.translate(320, 0);
+      tCtx.scale(-1, 1);
+      tCtx.drawImage(videoRef.current, 0, 0, 320, 240);
+      tCtx.restore();
+
+      const candidateVec = extract128DVector(tempCanvas);
+      const driverId = user?._id || user?.id || user?.email || "drv-sample-01";
+      const busNumber = assignedBus?.busNumber || "KL-07-MS-1008";
+
+      if (!candidateVec) {
+        triggerDriverSafetyEvent("DRIVER_NOT_DETECTED", smoothedEarRef.current || 0.28, 5, 0, {
+          is3MinPeriodicCheck: true,
+        });
+        showToast("⏱️ 3-Min Periodic Check: Driver face not detected in lens!", "error");
+        setLastPeriodicCheck({
+          status: "NOT_DETECTED",
+          time: new Date(),
+          message: "Driver face not detected",
+        });
+        return;
+      }
+
+      const res = await axios.post("/api/monitoring/verify-driver-identity", {
+        encoding: candidateVec,
+        driverId,
+        busNumber,
+      });
+
+      if (res.data?.success) {
+        const d = res.data;
+        const now = new Date();
+        setLastPeriodicCheck({
+          status: d.verified ? "VERIFIED" : "MISMATCH",
+          time: now,
+          matchConfidence: d.matchConfidence,
+          driverName: d.driverName,
+          message: d.message,
+        });
+
+        if (d.verified) {
+          triggerDriverSafetyEvent("DRIVER_VERIFIED", smoothedEarRef.current || 0.29, 0, d.matchConfidence / 100, {
+            distance: d.distance,
+            is3MinPeriodicCheck: true,
+          });
+          showToast(`⏱️ 3-Min Safety Check: Driver Verified ✓ (${d.matchConfidence}% Match)`);
+        } else {
+          triggerDriverSafetyEvent("DRIVER_MISMATCH", smoothedEarRef.current || 0.29, 0, d.matchConfidence / 100, {
+            distance: d.distance,
+            is3MinPeriodicCheck: true,
+          });
+          playVoiceAlert("Warning! Driver identity mismatch detected during 3-minute periodic check!");
+          playAlarmSound("critical");
+          showToast(`🔴 3-Min Periodic Check: Identity Mismatch! (${d.message})`, "error");
+        }
+      }
+    } catch (err) {
+      console.warn("3-min periodic check notice:", err.message);
+    } finally {
+      setIsPeriodicChecking(false);
+    }
+  }, [cameraActive, user, assignedBus, triggerDriverSafetyEvent]);
+
+  // 3-Minute (180s) Automated Periodic Re-Verification Interval Timer
+  useEffect(() => {
+    if (!cameraActive) {
+      setPeriodicCountdown(180);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setPeriodicCountdown((prev) => {
+        if (prev <= 1) {
+          runPeriodicFaceCheck();
+          return 180;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [cameraActive, runPeriodicFaceCheck]);
+
   const startWebcam = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1099,6 +1197,7 @@ function Driver() {
         videoRef.current.play().catch(() => {});
       }
       setCameraActive(true);
+      setPeriodicCountdown(180);
       showToast("Driver camera online. Live AI facial landmark & eye tracking active.");
 
       // Automatically trigger self-detection & verification after 1s
@@ -1133,6 +1232,7 @@ function Driver() {
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
+    setPeriodicCountdown(180);
     setMonitoringState((prev) => ({ ...prev, driverStatus: "STANDBY", alertness: "NORMAL" }));
     setAutoVerificationResult((prev) => ({ ...prev, verified: false, autoDetected: false }));
     showToast("Driver camera stopped.");
@@ -3154,6 +3254,65 @@ function Driver() {
                         }}>
                           License: {autoVerificationResult.verificationStatus || user?.verificationStatus || "Approved"} ✓
                         </span>
+                      </div>
+                    </div>
+
+                    {/* 3-Minute Periodic Re-Verification Card */}
+                    <div style={{ background: "#ffffff", padding: "12px 14px", borderRadius: "10px", border: "1.5px solid #c4b5fd", background: "linear-gradient(135deg, #ffffff 0%, #faf5ff 100%)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                        <span style={{ fontSize: "11.5px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "4px" }}>
+                          ⏱️ 3-Min Periodic Re-Verification
+                        </span>
+                        <span style={{
+                          fontSize: "12px",
+                          fontWeight: "900",
+                          fontFamily: "monospace",
+                          color: cameraActive ? "#7c3aed" : "#94a3b8",
+                          background: cameraActive ? "#ede9fe" : "#f1f5f9",
+                          padding: "2px 8px",
+                          borderRadius: "6px",
+                        }}>
+                          {cameraActive
+                            ? `${Math.floor(periodicCountdown / 60)}:${String(periodicCountdown % 60).padStart(2, "0")}`
+                            : "Paused"}
+                        </span>
+                      </div>
+
+                      {/* 3-Min Progress Bar */}
+                      <div style={{ width: "100%", height: "6px", borderRadius: "3px", background: "#ede9fe", overflow: "hidden", marginBottom: "6px" }}>
+                        <div
+                          style={{
+                            width: `${((180 - periodicCountdown) / 180) * 100}%`,
+                            height: "100%",
+                            background: "linear-gradient(90deg, #8b5cf6, #6366f1)",
+                            transition: "width 0.5s linear",
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#64748b" }}>
+                        <span>
+                          {lastPeriodicCheck
+                            ? `Last Check: ${lastPeriodicCheck.status === "VERIFIED" ? "✓ Verified" : "❌ Mismatch"} (${lastPeriodicCheck.matchConfidence || 95}%)`
+                            : "Initial Check: Pending"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={runPeriodicFaceCheck}
+                          disabled={!cameraActive || isPeriodicChecking}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#7c3aed",
+                            fontWeight: "800",
+                            fontSize: "11px",
+                            cursor: cameraActive ? "pointer" : "not-allowed",
+                            textDecoration: "underline",
+                            padding: 0,
+                          }}
+                        >
+                          {isPeriodicChecking ? "Checking..." : "Re-Verify Now"}
+                        </button>
                       </div>
                     </div>
 

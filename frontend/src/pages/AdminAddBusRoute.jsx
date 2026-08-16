@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import AdminHeader from "../components/AdminHeader";
@@ -37,6 +37,14 @@ import {
   Wifi,
   Zap,
   RotateCcw,
+  Camera,
+  UserCheck,
+  Scan,
+  ShieldCheck,
+  Eye,
+  Video,
+  VideoOff,
+  Sparkles,
 } from "lucide-react";
 
 // Major Kottayam & Neighbouring District Transit Hubs Catalog
@@ -231,6 +239,22 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   // Custom Stop Adding State
   const [showCustomStopInput, setShowCustomStopInput] = useState(false);
   const [newCustomStopName, setNewCustomStopName] = useState("");
+
+  // ---------------- DRIVER FACE ENROLLMENT (TAB 4) STATE ----------------
+  const [selectedEnrollDriverId, setSelectedEnrollDriverId] = useState("");
+  const [confirmReEnroll, setConfirmReEnroll] = useState(false);
+  const [captureState, setCaptureState] = useState("idle"); // "idle" | "capturing" | "processing" | "success" | "error"
+  const [capturedCount, setCapturedCount] = useState(0);
+  const [capturedSamples, setCapturedSamples] = useState([]);
+  const [captureError, setCaptureError] = useState(null);
+  const [successFeedback, setSuccessFeedback] = useState(null);
+  const [isWebcamActive, setIsWebcamActive] = useState(false);
+  const [driverSearchQuery, setDriverSearchQuery] = useState("");
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const captureIntervalRef = useRef(null);
 
   // ---------------- ROUTE & TIMING FORM STATE ----------------
   const [routeEditingId, setRouteEditingId] = useState(null);
@@ -536,17 +560,27 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
         const dbDrivers = res.data.drivers
           // Safety filter: only show users whose role is strictly 'driver'
           .filter((d) => String(d.role || "").toLowerCase().trim() === "driver")
-          .map((d) => ({
-            id: d._id || d.id,
-            _id: d._id || d.id,
-            name: d.name || "Driver User",
-            phone: d.phone || "N/A",
-            licenseNumber: d.licenseNumber || "N/A",
-            experienceYears: d.experienceYears || 0,
-            verificationStatus: d.verificationStatus || "Approved",
-            profilePic: d.profilePic || "",
-            isDbDriver: true,
-          }));
+          .map((d) => {
+            const hasEncoding =
+              (Array.isArray(d.faceEncoding) && d.faceEncoding.length > 0) ||
+              (Array.isArray(d.faceProfile?.encoding) && d.faceProfile.encoding.length > 0);
+            const enrolledAt = d.faceEnrolledAt || d.faceProfile?.enrolledAt || null;
+            return {
+              id: d._id || d.id,
+              _id: d._id || d.id,
+              name: d.name || "Driver User",
+              phone: d.phone || "N/A",
+              licenseNumber: d.licenseNumber || "N/A",
+              experienceYears: d.experienceYears || 0,
+              verificationStatus: d.verificationStatus || "Approved",
+              profilePic: d.profilePic || "",
+              isDbDriver: true,
+              faceProfile: d.faceProfile || null,
+              faceEncoding: d.faceEncoding || d.faceProfile?.encoding || null,
+              faceEnrolledAt: enrolledAt,
+              isEnrolled: hasEncoding,
+            };
+          });
         setDriversList(dbDrivers);
       } else {
         setDriversList([]);
@@ -556,6 +590,185 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       setDriversList([]);
     }
   };
+
+  // ---------------- FACE ENROLLMENT WEBCAM & PIPELINE ----------------
+  const startWebcam = async () => {
+    setCaptureError(null);
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch((err) => console.warn("Webcam play notice:", err));
+      }
+      setIsWebcamActive(true);
+    } catch (err) {
+      console.error("Webcam access error:", err);
+      setIsWebcamActive(false);
+      setCaptureError("Camera access denied or not available. Please allow camera permissions in your browser.");
+    }
+  };
+
+  const stopWebcam = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsWebcamActive(false);
+  };
+
+  const resetEnrollmentState = () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
+    setCaptureState("idle");
+    setCapturedCount(0);
+    setCapturedSamples([]);
+    setCaptureError(null);
+    setSuccessFeedback(null);
+    setConfirmReEnroll(false);
+    startWebcam();
+  };
+
+  const handleStartEnrollment = () => {
+    if (!selectedEnrollDriverId) {
+      setCaptureError("Please select a driver from the dropdown first.");
+      return;
+    }
+
+    if (!isWebcamActive || !videoRef.current) {
+      setCaptureError("Camera is not active. Please ensure webcam permissions are enabled.");
+      return;
+    }
+
+    setCaptureState("capturing");
+    setCapturedCount(0);
+    setCapturedSamples([]);
+    setCaptureError(null);
+    setSuccessFeedback(null);
+
+    const samplesBuffer = [];
+    let count = 0;
+
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+    }
+
+    captureIntervalRef.current = setInterval(() => {
+      try {
+        if (!videoRef.current || !canvasRef.current) return;
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        const width = video.videoWidth || 640;
+        const height = video.videoHeight || 480;
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        const base64Sample = dataUrl.replace(/^data:image\/[a-z]+;base64,/, "");
+
+        samplesBuffer.push(base64Sample);
+        count += 1;
+        setCapturedCount(count);
+        setCapturedSamples([...samplesBuffer]);
+
+        if (count >= 20) {
+          clearInterval(captureIntervalRef.current);
+          captureIntervalRef.current = null;
+          stopWebcam();
+          setCaptureState("processing");
+          submitEnrollment(selectedEnrollDriverId, samplesBuffer);
+        }
+      } catch (err) {
+        console.error("Frame capture error:", err);
+        if (captureIntervalRef.current) {
+          clearInterval(captureIntervalRef.current);
+          captureIntervalRef.current = null;
+        }
+        stopWebcam();
+        setCaptureState("error");
+        setCaptureError("Error capturing webcam frame. Please retry.");
+      }
+    }, 400);
+  };
+
+  const submitEnrollment = async (driverId, samples) => {
+    try {
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const res = await axios.post(
+        `/api/drivers/${driverId}/face-enroll`,
+        { samples },
+        { headers, timeout: 35000 }
+      );
+
+      if (res.data && res.data.success) {
+        setCaptureState("success");
+        setSuccessFeedback(res.data.message || `Face profile enrolled successfully.`);
+        fetchDrivers(); // Refresh badge statuses in state
+      } else {
+        setCaptureState("error");
+        setCaptureError(res.data?.message || "Biometric enrollment failed.");
+      }
+    } catch (err) {
+      console.error("Enrollment submission error:", err);
+      setCaptureState("error");
+      const errDetail =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        "Face not detected in enough samples — please retry with better lighting.";
+      setCaptureError(errDetail);
+    }
+  };
+
+  // Stop webcam on unmount
+  useEffect(() => {
+    return () => {
+      if (captureIntervalRef.current) {
+        clearInterval(captureIntervalRef.current);
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+  // Control webcam stream lifecycle when switching tabs or selecting driver
+  useEffect(() => {
+    if (activeTab === "faceEnrollment") {
+      if (selectedEnrollDriverId) {
+        const drv = driversList.find((d) => String(d._id || d.id) === String(selectedEnrollDriverId));
+        if (drv && drv.isEnrolled && !confirmReEnroll) {
+          stopWebcam();
+        } else {
+          startWebcam();
+        }
+      } else {
+        stopWebcam();
+      }
+    } else {
+      if (captureIntervalRef.current) {
+        clearInterval(captureIntervalRef.current);
+        captureIntervalRef.current = null;
+      }
+      stopWebcam();
+    }
+  }, [activeTab, selectedEnrollDriverId, confirmReEnroll, driversList]);
 
   const fetchBuses = async () => {
     try {
@@ -1520,6 +1733,32 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
           }}
         >
           <Bus size={18} /> 3. Bus Fleet Management ({buses.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("faceEnrollment");
+            setCaptureError(null);
+            setSuccessFeedback(null);
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "12px 22px",
+            borderRadius: "12px",
+            fontSize: "14px",
+            fontWeight: "800",
+            border: "none",
+            cursor: "pointer",
+            background: activeTab === "faceEnrollment" ? "linear-gradient(135deg, #8b5cf6, #6366f1)" : "#ffffff",
+            color: activeTab === "faceEnrollment" ? "#ffffff" : "#64748b",
+            boxShadow: activeTab === "faceEnrollment" ? "0 4px 12px rgba(139, 92, 246, 0.3)" : "none",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <UserCheck size={18} /> 4. Driver Face Enrollment ({driversList.filter((d) => d.isEnrolled).length}/{driversList.length})
         </button>
       </div>
 
@@ -2681,6 +2920,774 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* TAB 4: DRIVER FACE ENROLLMENT */}
+      {/* ==================================================== */}
+      {activeTab === "faceEnrollment" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          
+          {/* Header Banner Card */}
+          <div
+            style={{
+              background: "linear-gradient(135deg, #1e1b4b 0%, #311042 50%, #1e1b4b 100%)",
+              borderRadius: "20px",
+              padding: "24px 28px",
+              color: "#ffffff",
+              boxShadow: "0 8px 30px rgba(49, 16, 66, 0.2)",
+              border: "1px solid rgba(196, 181, 253, 0.15)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "18px",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  background: "rgba(168, 85, 247, 0.2)",
+                  color: "#c084fc",
+                  padding: "5px 14px",
+                  borderRadius: "20px",
+                  fontSize: "12px",
+                  fontWeight: "800",
+                  marginBottom: "8px",
+                  border: "1px solid rgba(168, 85, 247, 0.3)",
+                }}
+              >
+                <Sparkles size={14} /> Edge AI Driver Verification &amp; Biometric Gate
+              </div>
+              <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: "#ffffff", letterSpacing: "-0.3px" }}>
+                Driver Biometric Face Profile Enrollment
+              </h2>
+              <p style={{ color: "#c4b5fd", fontSize: "13px", margin: "6px 0 0 0", maxWidth: "700px" }}>
+                Capture 20 high-fidelity samples to generate 128-dimensional biometric embeddings. Profiles are saved to MongoDB and synchronized to edge bus hardware for real-time safety &amp; drowsiness monitoring.
+              </p>
+            </div>
+
+            {/* Quick Stats Pill */}
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+              <div
+                style={{
+                  background: "rgba(255, 255, 255, 0.08)",
+                  backdropFilter: "blur(8px)",
+                  padding: "10px 18px",
+                  borderRadius: "14px",
+                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "18px", fontWeight: "900", color: "#4ade80" }}>
+                  {driversList.filter((d) => d.isEnrolled).length}
+                </div>
+                <div style={{ fontSize: "11px", color: "#c4b5fd", fontWeight: "700" }}>Enrolled</div>
+              </div>
+
+              <div
+                style={{
+                  background: "rgba(255, 255, 255, 0.08)",
+                  backdropFilter: "blur(8px)",
+                  padding: "10px 18px",
+                  borderRadius: "14px",
+                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "18px", fontWeight: "900", color: "#fbbf24" }}>
+                  {driversList.filter((d) => !d.isEnrolled).length}
+                </div>
+                <div style={{ fontSize: "11px", color: "#c4b5fd", fontWeight: "700" }}>Pending</div>
+              </div>
+
+              <div
+                style={{
+                  background: "rgba(255, 255, 255, 0.08)",
+                  backdropFilter: "blur(8px)",
+                  padding: "10px 18px",
+                  borderRadius: "14px",
+                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "18px", fontWeight: "900", color: "#ffffff" }}>
+                  {driversList.length}
+                </div>
+                <div style={{ fontSize: "11px", color: "#c4b5fd", fontWeight: "700" }}>Total Drivers</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Main 2-Column Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.3fr", gap: "28px", alignItems: "start" }}>
+            
+            {/* LEFT COLUMN: DRIVER SELECTOR & PROFILE CARD */}
+            <div
+              style={{
+                background: "#ffffff",
+                padding: "24px",
+                borderRadius: "20px",
+                border: "1px solid #e2e8f0",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "18px",
+              }}
+            >
+              <div>
+                <h3 style={{ fontSize: "17px", fontWeight: "800", margin: 0, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <User size={18} style={{ color: "#8b5cf6" }} /> 1. Select Driver for Enrollment
+                </h3>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "4px 0 0 0" }}>
+                  Choose a verified driver to enroll or update their facial biometric vector.
+                </p>
+              </div>
+
+              {/* Search input for drivers */}
+              <div style={{ position: "relative" }}>
+                <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                <input
+                  type="text"
+                  placeholder="Search by driver name, phone, or license..."
+                  value={driverSearchQuery}
+                  onChange={(e) => setDriverSearchQuery(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px 9px 36px",
+                    borderRadius: "10px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    outline: "none",
+                  }}
+                />
+                {driverSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setDriverSearchQuery("")}
+                    style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "12px" }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
+              {/* Driver Dropdown Selector */}
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
+                  Driver Account *
+                </label>
+                <select
+                  value={selectedEnrollDriverId}
+                  onChange={(e) => {
+                    setSelectedEnrollDriverId(e.target.value);
+                    setConfirmReEnroll(false);
+                    setCaptureState("idle");
+                    setCapturedCount(0);
+                    setCapturedSamples([]);
+                    setCaptureError(null);
+                    setSuccessFeedback(null);
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "11px 14px",
+                    borderRadius: "12px",
+                    border: "1.5px solid #8b5cf6",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    outline: "none",
+                    boxShadow: "0 2px 8px rgba(139, 92, 246, 0.1)",
+                  }}
+                >
+                  <option value="">-- Choose Driver to Enroll --</option>
+                  {driversList
+                    .filter((d) => {
+                      if (!driverSearchQuery) return true;
+                      const q = driverSearchQuery.toLowerCase();
+                      return (
+                        (d.name && d.name.toLowerCase().includes(q)) ||
+                        (d.phone && d.phone.toLowerCase().includes(q)) ||
+                        (d.licenseNumber && d.licenseNumber.toLowerCase().includes(q))
+                      );
+                    })
+                    .map((d) => {
+                      const dId = String(d._id || d.id);
+                      return (
+                        <option key={dId} value={dId}>
+                          {d.isEnrolled ? "🟢 [Enrolled]" : "⚪ [Not Enrolled]"} {d.name} · {d.phone} (Lic: {d.licenseNumber})
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+
+              {/* Selected Driver Profile Card */}
+              {selectedEnrollDriverId ? (
+                (() => {
+                  const selectedDriver = driversList.find(
+                    (d) => String(d._id || d.id) === String(selectedEnrollDriverId)
+                  );
+                  if (!selectedDriver) return null;
+
+                  return (
+                    <div
+                      style={{
+                        background: "linear-gradient(135deg, #fbfbfe 0%, #f5f3ff 100%)",
+                        borderRadius: "16px",
+                        padding: "18px",
+                        border: "1.5px solid #e9d5ff",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "14px",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                        {selectedDriver.profilePic ? (
+                          <img
+                            src={selectedDriver.profilePic}
+                            alt={selectedDriver.name}
+                            style={{ width: "52px", height: "52px", borderRadius: "14px", objectFit: "cover", border: "2px solid #8b5cf6" }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: "52px",
+                              height: "52px",
+                              borderRadius: "14px",
+                              background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                              color: "#ffffff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: "900",
+                              fontSize: "18px",
+                              boxShadow: "0 4px 12px rgba(139, 92, 246, 0.3)",
+                            }}
+                          >
+                            {selectedDriver.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <h4 style={{ fontSize: "16px", fontWeight: "800", margin: 0, color: "#0f172a" }}>
+                              {selectedDriver.name}
+                            </h4>
+                            {selectedDriver.isEnrolled ? (
+                              <span
+                                title={selectedDriver.faceEnrolledAt ? `Enrolled on ${new Date(selectedDriver.faceEnrolledAt).toLocaleString()}` : "Face profile enrolled"}
+                                style={{
+                                  background: "#dcfce7",
+                                  color: "#15803d",
+                                  fontSize: "11px",
+                                  fontWeight: "800",
+                                  padding: "3px 10px",
+                                  borderRadius: "12px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                  border: "1px solid #bbf7d0",
+                                }}
+                              >
+                                <CheckCircle size={12} /> Enrolled
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  background: "#f1f5f9",
+                                  color: "#64748b",
+                                  fontSize: "11px",
+                                  fontWeight: "800",
+                                  padding: "3px 10px",
+                                  borderRadius: "12px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                  border: "1px solid #e2e8f0",
+                                }}
+                              >
+                                <AlertCircle size={12} /> Not Enrolled
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                            📞 {selectedDriver.phone} · 🪪 {selectedDriver.licenseNumber}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Enrollment status detail */}
+                      <div style={{ fontSize: "12px", color: "#475569", background: "#ffffff", padding: "10px 14px", borderRadius: "10px", border: "1px solid #f1f5f9" }}>
+                        {selectedDriver.isEnrolled ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#16a34a", fontWeight: "700" }}>
+                              <ShieldCheck size={14} /> Biometric 128-d Face Profile Active
+                            </div>
+                            <div style={{ fontSize: "11px", color: "#64748b" }}>
+                              Enrolled: {selectedDriver.faceEnrolledAt ? new Date(selectedDriver.faceEnrolledAt).toLocaleString() : "Active in database"}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#d97706", fontWeight: "700" }}>
+                            <AlertTriangle size={14} /> Driver cannot start monitored bus shifts until face profile is enrolled.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Re-enrollment Warning Banner if already enrolled */}
+                      {selectedDriver.isEnrolled && !confirmReEnroll && captureState === "idle" && (
+                        <div
+                          style={{
+                            background: "#fef3c7",
+                            border: "1.5px solid #fde68a",
+                            borderRadius: "12px",
+                            padding: "14px",
+                            color: "#92400e",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "10px",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "start", gap: "8px" }}>
+                            <AlertTriangle size={18} style={{ color: "#d97706", flexShrink: 0, marginTop: "2px" }} />
+                            <div>
+                              <strong style={{ fontSize: "13px", display: "block", color: "#78350f" }}>
+                                Existing Face Profile Found
+                              </strong>
+                              <span style={{ fontSize: "12px", color: "#92400e" }}>
+                                This driver already has an active biometric profile. Starting a new capture will overwrite the previous vector.
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmReEnroll(true);
+                              startWebcam();
+                            }}
+                            style={{
+                              alignSelf: "flex-start",
+                              padding: "8px 16px",
+                              borderRadius: "8px",
+                              background: "linear-gradient(135deg, #d97706, #b45309)",
+                              color: "#ffffff",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              border: "none",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              boxShadow: "0 2px 8px rgba(217, 119, 6, 0.3)",
+                            }}
+                          >
+                            <RefreshCw size={13} /> Proceed to Re-enroll
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()
+              ) : (
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    borderRadius: "14px",
+                    padding: "24px",
+                    textAlign: "center",
+                    color: "#94a3b8",
+                    border: "1px dashed #cbd5e1",
+                  }}
+                >
+                  <UserCheck size={32} style={{ margin: "0 auto 8px auto", opacity: 0.5 }} />
+                  <p style={{ fontSize: "13px", fontWeight: "700", margin: 0, color: "#64748b" }}>
+                    No Driver Selected
+                  </p>
+                  <p style={{ fontSize: "11px", margin: "4px 0 0 0" }}>
+                    Select a driver from the dropdown above to load their profile and activate webcam capture.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT COLUMN: WEBCAM CAPTURE PANEL & PROGRESS */}
+            <div
+              style={{
+                background: "#ffffff",
+                padding: "24px",
+                borderRadius: "20px",
+                border: "1px solid #e2e8f0",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "18px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h3 style={{ fontSize: "17px", fontWeight: "800", margin: 0, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Camera size={18} style={{ color: "#8b5cf6" }} /> 2. Live Webcam Capture Panel
+                  </h3>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: "4px 0 0 0" }}>
+                    20 sequential face frames @ 400ms interval for robust 128-d feature averaging.
+                  </p>
+                </div>
+
+                {isWebcamActive && (
+                  <span
+                    style={{
+                      background: "#fdf2f8",
+                      color: "#db2777",
+                      border: "1px solid #fbcfe8",
+                      padding: "4px 10px",
+                      borderRadius: "10px",
+                      fontSize: "11px",
+                      fontWeight: "800",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                    }}
+                  >
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#ec4899", display: "inline-block", animation: "pulse 1.5s infinite" }}></span>
+                    Live Camera Stream
+                  </span>
+                )}
+              </div>
+
+              {/* Video Viewport Container with CSS Oval Guide */}
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  aspectRatio: "4/3",
+                  background: "#0f172a",
+                  borderRadius: "18px",
+                  overflow: "hidden",
+                  boxShadow: "0 10px 25px rgba(15, 23, 42, 0.15)",
+                  border: isWebcamActive ? "2.5px solid #8b5cf6" : "2px solid #334155",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {/* Hidden canvas for taking snapshot frames */}
+                <canvas ref={canvasRef} style={{ display: "none" }} />
+
+                {/* Video Element */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    transform: "scaleX(-1)", // Mirror camera for intuitive driver alignment
+                    display: isWebcamActive ? "block" : "none",
+                  }}
+                />
+
+                {/* Inactive Camera Placeholder */}
+                {!isWebcamActive && (
+                  <div style={{ textAlign: "center", color: "#94a3b8", padding: "20px" }}>
+                    <VideoOff size={44} style={{ margin: "0 auto 12px auto", opacity: 0.6 }} />
+                    <p style={{ fontSize: "14px", fontWeight: "700", margin: 0, color: "#cbd5e1" }}>
+                      Webcam is Inactive
+                    </p>
+                    <p style={{ fontSize: "12px", color: "#64748b", margin: "4px 0 14px 0" }}>
+                      {selectedEnrollDriverId
+                        ? "Click below to activate the camera for face capture."
+                        : "Select a driver from the left column to activate."}
+                    </p>
+                    {selectedEnrollDriverId && (
+                      <button
+                        type="button"
+                        onClick={startWebcam}
+                        style={{
+                          padding: "8px 18px",
+                          borderRadius: "10px",
+                          background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                          color: "#ffffff",
+                          fontSize: "12px",
+                          fontWeight: "800",
+                          border: "none",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        }}
+                      >
+                        <Video size={14} /> Start Camera
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* CSS Face Alignment Oval Overlay (Visible during live feed) */}
+                {isWebcamActive && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {/* Oval Outline */}
+                    <div
+                      style={{
+                        width: "210px",
+                        height: "280px",
+                        borderRadius: "50%",
+                        border: captureState === "capturing" ? "3px solid #10b981" : "2.5px dashed rgba(196, 181, 253, 0.8)",
+                        boxShadow: captureState === "capturing" ? "0 0 20px rgba(16, 185, 129, 0.4)" : "0 0 15px rgba(139, 92, 246, 0.2)",
+                        transition: "all 0.3s ease",
+                        position: "relative",
+                      }}
+                    >
+                      {/* Top indicator notch */}
+                      <div style={{ position: "absolute", top: "-10px", left: "50%", transform: "translateX(-50%)", width: "20px", height: "3px", background: "#a855f7", borderRadius: "2px" }}></div>
+                      {/* Bottom indicator notch */}
+                      <div style={{ position: "absolute", bottom: "-10px", left: "50%", transform: "translateX(-50%)", width: "20px", height: "3px", background: "#a855f7", borderRadius: "2px" }}></div>
+                    </div>
+
+                    {/* Guide label */}
+                    <div
+                      style={{
+                        marginTop: "12px",
+                        background: "rgba(15, 23, 42, 0.75)",
+                        backdropFilter: "blur(6px)",
+                        color: "#ffffff",
+                        padding: "5px 14px",
+                        borderRadius: "20px",
+                        fontSize: "11px",
+                        fontWeight: "700",
+                        letterSpacing: "0.2px",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                      }}
+                    >
+                      {captureState === "capturing"
+                        ? `Capturing Samples... (${capturedCount}/20)`
+                        : "Position driver's face inside the oval"}
+                    </div>
+                  </div>
+                )}
+
+                {/* Processing Overlay with Spinner */}
+                {captureState === "processing" && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: "rgba(15, 23, 42, 0.88)",
+                      backdropFilter: "blur(8px)",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#ffffff",
+                      gap: "14px",
+                      padding: "24px",
+                      textAlign: "center",
+                      zIndex: 20,
+                    }}
+                  >
+                    <RefreshCw size={42} className="spin" style={{ color: "#a855f7" }} />
+                    <div>
+                      <h4 style={{ fontSize: "16px", fontWeight: "800", margin: "0 0 6px 0", color: "#ffffff" }}>
+                        Processing Face Profile
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "#c4b5fd", margin: 0, maxWidth: "340px" }}>
+                        Computing 128-dimensional biometric embeddings and validating face detection. Do not navigate away...
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* LIVE CAPTURE PROGRESS BAR (When Capturing) */}
+              {captureState === "capturing" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: "800", color: "#475569" }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <Camera size={14} style={{ color: "#8b5cf6" }} /> Capturing sample {capturedCount} / 20
+                    </span>
+                    <span style={{ color: "#8b5cf6" }}>{Math.round((capturedCount / 20) * 100)}%</span>
+                  </div>
+
+                  <div style={{ width: "100%", height: "10px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+                    <div
+                      style={{
+                        width: `${(capturedCount / 20) * 100}%`,
+                        height: "100%",
+                        background: "linear-gradient(90deg, #8b5cf6, #10b981)",
+                        borderRadius: "10px",
+                        transition: "width 0.3s ease",
+                        boxShadow: "0 0 10px rgba(139, 92, 246, 0.5)",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* SUCCESS FEEDBACK CARD */}
+              {captureState === "success" && (
+                <div
+                  style={{
+                    background: "#ecfdf5",
+                    border: "1.5px solid #a7f3d0",
+                    borderRadius: "14px",
+                    padding: "16px",
+                    color: "#065f46",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <CheckCircle size={22} style={{ color: "#10b981", flexShrink: 0 }} />
+                    <div>
+                      <strong style={{ fontSize: "14px", display: "block" }}>
+                        {successFeedback || "Face profile enrolled successfully."}
+                      </strong>
+                      <span style={{ fontSize: "12px", color: "#047857" }}>
+                        128-d biometric vector saved to database and synced to edge cache for vehicle shift gating.
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={resetEnrollmentState}
+                    style={{
+                      alignSelf: "flex-start",
+                      padding: "8px 16px",
+                      borderRadius: "10px",
+                      background: "linear-gradient(135deg, #10b981, #059669)",
+                      color: "#ffffff",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <Plus size={13} /> Enroll Another Driver
+                  </button>
+                </div>
+              )}
+
+              {/* ERROR FEEDBACK CARD */}
+              {captureState === "error" && (
+                <div
+                  style={{
+                    background: "#fef2f2",
+                    border: "1.5px solid #fecaca",
+                    borderRadius: "14px",
+                    padding: "16px",
+                    color: "#991b1b",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "start", gap: "10px" }}>
+                    <AlertCircle size={22} style={{ color: "#ef4444", flexShrink: 0, marginTop: "2px" }} />
+                    <div>
+                      <strong style={{ fontSize: "14px", display: "block" }}>
+                        Face Enrollment Unsuccessful
+                      </strong>
+                      <span style={{ fontSize: "12px", color: "#b91c1c" }}>
+                        {captureError || "Face not detected in enough samples — please retry with better lighting."}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={resetEnrollmentState}
+                    style={{
+                      alignSelf: "flex-start",
+                      padding: "8px 16px",
+                      borderRadius: "10px",
+                      background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                      color: "#ffffff",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <RotateCcw size={13} /> Retry Face Enrollment
+                  </button>
+                </div>
+              )}
+
+              {/* PRIMARY ACTION BUTTON */}
+              {captureState === "idle" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <button
+                    type="button"
+                    disabled={!selectedEnrollDriverId || !isWebcamActive}
+                    onClick={handleStartEnrollment}
+                    style={{
+                      width: "100%",
+                      padding: "14px 20px",
+                      borderRadius: "14px",
+                      background:
+                        !selectedEnrollDriverId || !isWebcamActive
+                          ? "#cbd5e1"
+                          : "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                      color: "#ffffff",
+                      fontSize: "14px",
+                      fontWeight: "800",
+                      border: "none",
+                      cursor: !selectedEnrollDriverId || !isWebcamActive ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "10px",
+                      boxShadow:
+                        !selectedEnrollDriverId || !isWebcamActive
+                          ? "none"
+                          : "0 6px 20px rgba(139, 92, 246, 0.35)",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <Camera size={18} /> Start Enrollment (20 samples)
+                  </button>
+
+                  <div style={{ fontSize: "11px", color: "#64748b", textAlign: "center", lineHeight: "1.4" }}>
+                    💡 Admin Tip: Ensure the driver looks directly at the camera in a brightly lit environment with no other faces in the background.
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

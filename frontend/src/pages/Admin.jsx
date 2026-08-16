@@ -7,6 +7,7 @@ import AdminHeader from "../components/AdminHeader";
 import AdminFooter from "../components/AdminFooter";
 import AdminAddBusRoute from "./AdminAddBusRoute";
 import DriverSafetyMonitoring from "../components/admin/DriverSafetyMonitoring";
+import DriverBiometricsManager from "../components/admin/DriverBiometricsManager";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
   LayoutDashboard,
@@ -45,7 +46,8 @@ import {
   Menu,
   Sliders,
   Calendar,
-  AlertTriangle
+  AlertTriangle,
+  Scan
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -749,6 +751,7 @@ export default function Admin({ defaultTab = "overview" }) {
         }}>
           {[
             { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
+            { id: "driverBiometrics", label: "Driver Face Biometrics", Icon: Scan },
             { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
             { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
             { id: "applications", label: "Card Applications", Icon: FileCheck, badge: pendingAppsCount },
@@ -1462,6 +1465,13 @@ export default function Admin({ defaultTab = "overview" }) {
           {activeTab === "driverSafety" && (
             <div className="fade-in-section">
               <DriverSafetyMonitoring darkMode={darkMode} showToast={showToast} />
+            </div>
+          )}
+
+          {/* SECTION 12: DRIVER FACE BIOMETRICS REGISTRY */}
+          {activeTab === "driverBiometrics" && (
+            <div className="fade-in-section">
+              <DriverBiometricsManager darkMode={darkMode} showToast={showToast} />
             </div>
           )}
 

@@ -27,6 +27,9 @@
       ]
     }
   ],
+  "stubPath": "typings",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
   "pythonVersion": "3.11",
   "pythonPlatform": "Windows"
 }

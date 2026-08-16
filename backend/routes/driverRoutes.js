@@ -1,5 +1,9 @@
 const express = require("express");
 const router = express.Router();
+const path = require("path");
+const fs = require("fs");
+const { spawn } = require("child_process");
+const mongoose = require("mongoose");
 const Bus = require("../models/Bus");
 const User = require("../models/User");
 const DriverLeave = require("../models/DriverLeave");
@@ -566,6 +570,302 @@ router.put("/admin/driver/:id/verification", async (req, res) => {
     res.status(500).json({ message: "Failed to update driver verification", error: error.message });
   }
 });
+
+// ----------------------------------------------------
+// 7. DRIVER BIOMETRIC FACE ENROLLMENT & PROFILE (ADMIN)
+// ----------------------------------------------------
+
+/**
+ * Spawns the Python face encoding bridge process to compute 128-d vector
+ * and enforce >= 10 detections out of 20 samples.
+ */
+function runPythonFaceEncoder(samples) {
+  return new Promise((resolve, reject) => {
+    const pythonScript = path.resolve(__dirname, "../ai_monitoring/encode_face_samples.py");
+    const pyProcess = spawn("python", [pythonScript]);
+
+    let stdoutData = "";
+    let stderrData = "";
+
+    pyProcess.stdout.on("data", (data) => {
+      stdoutData += data.toString();
+    });
+
+    pyProcess.stderr.on("data", (data) => {
+      stderrData += data.toString();
+    });
+
+    pyProcess.on("error", (err) => {
+      reject(new Error(`Failed to start Python face encoder: ${err.message}`));
+    });
+
+    pyProcess.on("close", (code) => {
+      const lines = stdoutData.trim().split("\n");
+      let jsonResult = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith("{") && line.endsWith("}")) {
+          try {
+            jsonResult = JSON.parse(line);
+            break;
+          } catch (e) {
+            // continue searching
+          }
+        }
+      }
+
+      if (!jsonResult) {
+        return reject(new Error(stderrData || "Python face encoder produced no valid output."));
+      }
+
+      resolve(jsonResult);
+    });
+
+    try {
+      pyProcess.stdin.write(JSON.stringify({ samples }));
+      pyProcess.stdin.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Saves 128-d face profile to local disk for offline bus edge monitoring.
+ */
+function saveLocalProfileCache(driverId, encoding, enrolledAt) {
+  const profileData = {
+    driverId: String(driverId),
+    enrolledAt: enrolledAt ? new Date(enrolledAt).toISOString() : new Date().toISOString(),
+    samplesCount: 20,
+    encoding: encoding.map(Number),
+  };
+
+  const safeId = String(driverId).replace(/[^a-zA-Z0-9_-]/g, "");
+  const paths = [
+    path.resolve(__dirname, "../../enrolled_faces", `${safeId}.json`),
+    path.resolve(__dirname, "../ai_monitoring/enrolled_faces", `${safeId}.json`),
+  ];
+
+  paths.forEach((p) => {
+    try {
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(p, JSON.stringify(profileData, null, 2), "utf-8");
+    } catch (e) {
+      console.warn(`[WARN] Could not write local cache file ${p}:`, e.message);
+    }
+  });
+}
+
+/**
+ * Common handler for POST face enrollment
+ */
+async function handleFaceEnroll(req, res) {
+  try {
+    const { driverId } = req.params;
+    const { samples } = req.body;
+
+    if (!samples || !Array.isArray(samples) || samples.length !== 20) {
+      return res.status(400).json({
+        success: false,
+        message: `Expected exactly 20 image samples, received ${Array.isArray(samples) ? samples.length : 0}.`,
+      });
+    }
+
+    let driver = null;
+    if (mongoose.Types.ObjectId.isValid(driverId)) {
+      driver = await User.findById(driverId);
+    } else {
+      driver = await User.findOne({
+        $or: [
+          { email: driverId },
+          { name: new RegExp(`^${driverId}$`, "i") },
+          { licenseNumber: new RegExp(`^${driverId}$`, "i") },
+        ],
+      });
+    }
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: `Driver not found for ID / Identifier: ${driverId}`,
+      });
+    }
+
+    // Call Python face encoder bridge
+    let pyResult;
+    try {
+      pyResult = await runPythonFaceEncoder(samples);
+    } catch (err) {
+      console.error("Python face encoder error:", err);
+      return res.status(500).json({
+        success: false,
+        message: `Biometric encoding service error: ${err.message}`,
+      });
+    }
+
+    if (!pyResult.success || !pyResult.encoding || pyResult.encoding.length !== 128) {
+      return res.status(pyResult.statusCode || 422).json({
+        success: false,
+        validCount: pyResult.validCount || 0,
+        totalCount: pyResult.totalCount || 20,
+        message: pyResult.message || "Face not detected in enough samples — please retry with better lighting.",
+      });
+    }
+
+    const enrolledAtDate = new Date();
+    driver.faceProfile = {
+      encoding: pyResult.encoding,
+      enrolledAt: enrolledAtDate,
+    };
+    driver.faceEncoding = pyResult.encoding;
+    driver.faceEnrolledAt = enrolledAtDate;
+
+    await driver.save();
+
+    // Write through to local JSON cache
+    saveLocalProfileCache(driver._id, pyResult.encoding, enrolledAtDate);
+
+    res.json({
+      success: true,
+      message: `✅ Face profile enrolled successfully for driver ${driver.name}.`,
+      driverId: driver._id,
+      driverName: driver.name,
+      faceEnrolledAt: enrolledAtDate,
+      validCount: pyResult.validCount,
+    });
+  } catch (error) {
+    console.error("Error in face enrollment endpoint:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error during face enrollment.",
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Common handler for GET face profile
+ */
+async function handleGetFaceProfile(req, res) {
+  try {
+    const { driverId } = req.params;
+
+    let driver = null;
+    if (mongoose.Types.ObjectId.isValid(driverId)) {
+      driver = await User.findById(driverId);
+    } else {
+      driver = await User.findOne({
+        $or: [
+          { email: driverId },
+          { name: new RegExp(`^${driverId}$`, "i") },
+          { licenseNumber: new RegExp(`^${driverId}$`, "i") },
+        ],
+      });
+    }
+
+    const encoding = driver?.faceProfile?.encoding || driver?.faceEncoding;
+    const enrolledAt = driver?.faceProfile?.enrolledAt || driver?.faceEnrolledAt;
+
+    if (!driver || !encoding || encoding.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No enrolled face profile found for driver: ${driverId}`,
+      });
+    }
+
+    res.json({
+      success: true,
+      driverId: driver._id,
+      driverName: driver.name,
+      encoding,
+      faceEnrolledAt: enrolledAt,
+      enrolledAt,
+    });
+  } catch (error) {
+    console.error("Error fetching face profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch driver face profile.",
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Handle Deleting / Resetting Driver Face Profile
+ */
+async function handleDeleteFaceProfile(req, res) {
+  try {
+    const { driverId } = req.params;
+    let driver = null;
+
+    if (mongoose.Types.ObjectId.isValid(driverId)) {
+      driver = await User.findById(driverId);
+    } else {
+      driver = await User.findOne({
+        $or: [
+          { email: driverId },
+          { name: new RegExp(`^${driverId}$`, "i") },
+          { licenseNumber: new RegExp(`^${driverId}$`, "i") },
+        ],
+      });
+    }
+
+    if (!driver) {
+      return res.status(404).json({ success: false, message: "Driver not found." });
+    }
+
+    // Reset MongoDB fields
+    driver.faceEncoding = [];
+    driver.faceEnrolledAt = null;
+    if (driver.faceProfile) {
+      driver.faceProfile.encoding = [];
+      driver.faceProfile.enrolledAt = null;
+    }
+    await driver.save();
+
+    // Remove local cache file if present
+    const idKey = driver._id.toString();
+    const cachePaths = [
+      path.join(process.cwd(), "enrolled_faces", `${idKey}.json`),
+      path.join(process.cwd(), "backend", "ai_monitoring", "enrolled_faces", `${idKey}.json`),
+    ];
+    for (const cp of cachePaths) {
+      try {
+        if (fs.existsSync(cp)) fs.unlinkSync(cp);
+      } catch {}
+    }
+
+    res.json({
+      success: true,
+      message: `Biometric face profile for driver ${driver.name} reset successfully.`,
+      driverId: driver._id,
+    });
+  } catch (error) {
+    console.error("Error deleting face profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete driver face profile.",
+      error: error.message,
+    });
+  }
+}
+
+// POST /api/drivers/:driverId/face-enroll & /api/admin/drivers/:driverId/face-enroll
+router.post("/drivers/:driverId/face-enroll", protect, adminOnly, handleFaceEnroll);
+router.post("/admin/drivers/:driverId/face-enroll", protect, adminOnly, handleFaceEnroll);
+
+// GET /api/drivers/:driverId/face-profile & /api/admin/drivers/:driverId/face-profile
+router.get("/drivers/:driverId/face-profile", handleGetFaceProfile);
+router.get("/admin/drivers/:driverId/face-profile", protect, adminOnly, handleGetFaceProfile);
+
+// DELETE /api/drivers/:driverId/face-profile & /api/admin/drivers/:driverId/face-profile
+router.delete("/drivers/:driverId/face-profile", protect, adminOnly, handleDeleteFaceProfile);
+router.delete("/admin/drivers/:driverId/face-profile", protect, adminOnly, handleDeleteFaceProfile);
 
 module.exports = router;
 

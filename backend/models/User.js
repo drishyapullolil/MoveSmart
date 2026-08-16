@@ -61,6 +61,14 @@ const userSchema = new mongoose.Schema({
             type: Date,
             default: null
         }
+    },
+    faceEncoding: {
+        type: [Number],
+        default: undefined
+    },
+    faceEnrolledAt: {
+        type: Date,
+        default: null
     }
 }, { timestamps: true });
 
