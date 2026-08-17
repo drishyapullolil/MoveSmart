@@ -1,41 +1,47 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import axios from "axios";
-import { processRazorpayPayment } from "../utils/razorpay";
 import { getStoredUser, setStoredUser, clearStoredSession } from "../utils/session";
+import { validateName } from "../utils/nameValidator";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 
 function Profile() {
   const navigate = useNavigate();
 
-  // 1. User State from localStorage or default demo user
+  // 1. User State loaded purely from authenticated session
   const [user, setUser] = useState(() => {
     const savedUser = getStoredUser();
-    if (savedUser) return savedUser;
-    return {
-      name: "Drishya Jose",
-      email: "drishyajose03@gmail.com",
-      phone: "+91 98765 43210",
-      role: "User",
-      dob: "2000-08-15",
-      gender: "Female",
-      address: "House 42, Green Park, Ernakulam, Kerala - 682001",
-      rfidCardId: "RFID-MS-8839201",
-      isGoogleConnected: true,
+    return savedUser || {
+      name: "Guest Passenger",
+      email: "",
+      phone: "",
+      role: "Passenger",
+      dob: "",
+      gender: "",
+      address: "",
       avatarUrl: "",
     };
   });
 
-  // 2. Active Tab State ('info', 'activity', 'payments', 'security', 'settings')
+  // 2. RFID Card State loaded purely from database
+  const [cardInfo, setCardInfo] = useState({
+    hasCard: false,
+    cardNumber: "",
+    lastFour: "",
+    cardType: "",
+    balance: 0,
+    status: "Not Issued",
+  });
+
+  // 3. Active Tab State ('info', 'activity', 'security', 'settings')
   const [activeTab, setActiveTab] = useState("info");
 
-  // 3. Modals State
+  // 4. Modals State
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [showRechargeModal, setShowRechargeModal] = useState(false);
 
-  // 4. Edit Profile Form State
+  // 5. Edit Profile Form State
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -44,20 +50,17 @@ function Profile() {
   const [editAddress, setEditAddress] = useState("");
   const [toastMessage, setToastMessage] = useState("");
 
-  // 5. Change Password Form State
+  // 6. Change Password Form State
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
-  // 6. Wallet & Transactions State
-  const [walletBalance, setWalletBalance] = useState(250.0);
-  const [rechargeAmount, setRechargeAmount] = useState(100);
-  const [paymentMethod, setPaymentMethod] = useState("UPI");
-  const [transactions, setTransactions] = useState([]);
+  // 7. Travel Activity State
+  const [travelHistory, setTravelHistory] = useState([]);
 
-  // Fetch Live Wallet Balance & Transactions from Database
-  const fetchProfileWalletData = useCallback(async () => {
+  // Fetch Live RFID Card & Travel Activity from Database
+  const fetchProfileCardAndActivityData = useCallback(async () => {
     try {
       const u = getStoredUser();
       const params = {};
@@ -69,66 +72,42 @@ function Profile() {
         axios.get("/api/wallet/transactions", { params, withCredentials: true }),
       ]);
 
-      if (balRes.data && balRes.data.balance !== undefined) {
-        setWalletBalance(balRes.data.balance);
+      if (balRes.data) {
+        const hasActive = Boolean(balRes.data.hasCard && balRes.data.cardNumber);
+        setCardInfo({
+          hasCard: hasActive,
+          cardNumber: balRes.data.cardNumber || "",
+          lastFour: balRes.data.lastFour || "",
+          cardType: balRes.data.cardType || "Regular Pass",
+          balance: Number(balRes.data.balance || 0),
+          status: hasActive ? "Active" : "Not Issued",
+        });
       }
-      if (txnRes.data && Array.isArray(txnRes.data) && txnRes.data.length > 0) {
-        const formattedTxns = txnRes.data.map((t) => ({
-          id: t.transactionId || t._id,
-          title: t.description || (t.isDebit ? "Transit Deduction" : "Wallet Top-Up"),
-          date: t.createdAt ? new Date(t.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Recent",
-          amount: t.isDebit ? `- ₹ ${t.amount}` : `+ ₹ ${t.amount}`,
-          isDebit: t.isDebit || t.type === "Travel" || t.type === "Card Application",
-        }));
-        setTransactions(formattedTxns);
+
+      if (txnRes.data && Array.isArray(txnRes.data)) {
+        // Derive travel history purely from actual recorded travel transactions
+        const travels = txnRes.data
+          .filter((t) => t.type === "Travel" || t.type === "Bus Booking")
+          .map((t) => ({
+            id: t.transactionId || t._id,
+            busNumber: "MoveSmart Bus",
+            routeName: t.description || "Transit Trip",
+            dateTime: t.createdAt ? new Date(t.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Recent",
+            seat: "Standard",
+            status: "Completed",
+            fare: `₹ ${Number(t.amount || 0).toFixed(2)}`,
+          }));
+        setTravelHistory(travels);
       }
     } catch (err) {
-      console.error("Failed to fetch profile wallet data:", err);
+      console.error("Failed to fetch profile card and activity data:", err);
     }
   }, []);
 
-  // 7. Travel History & Activity State
+  // 8. Travel History Filter
   const [activityFilter, setActivityFilter] = useState("all");
-  const [travelHistory, setTravelHistory] = useState([
-    {
-      id: "BKG-8841",
-      busNumber: "Bus 102",
-      routeName: "Kochi Fort ➔ Aluva Terminal",
-      dateTime: "26 Jul 2026, 09:30 AM",
-      seat: "A12",
-      status: "Upcoming",
-      fare: "₹ 35.00",
-    },
-    {
-      id: "BKG-7629",
-      busNumber: "Express Line 4",
-      routeName: "Thiruvananthapuram ➔ Ernakulam",
-      dateTime: "24 Jul 2026, 08:00 AM",
-      seat: "B04",
-      status: "Completed",
-      fare: "₹ 120.00",
-    },
-    {
-      id: "BKG-6510",
-      busNumber: "Feeder Bus 8",
-      routeName: "Kaloor Metro ➔ InfoPark Tech",
-      dateTime: "22 Jul 2026, 05:45 PM",
-      seat: "Standing",
-      status: "Completed",
-      fare: "₹ 15.00",
-    },
-    {
-      id: "BKG-5412",
-      busNumber: "City Shuttle 14",
-      routeName: "Vytilla Mobility Hub ➔ Kakkanad",
-      dateTime: "20 Jul 2026, 10:15 AM",
-      seat: "A08",
-      status: "Completed",
-      fare: "₹ 20.00",
-    },
-  ]);
 
-  // 8. Notification & Settings State
+  // 9. Notification & Settings State
   const [notifications, setNotifications] = useState({
     smsAlerts: true,
     emailReceipts: true,
@@ -141,38 +120,30 @@ function Profile() {
     const saved = getStoredUser();
     if (saved) {
       setUser(saved);
-    } else {
-      const demoUser = {
-        name: "Ananya Ramesh",
-        email: "ananya.ramesh@movesmart.in",
-        phone: "+91 98765 43210",
-        role: "User",
-        dob: "2000-08-15",
-        gender: "Female",
-        address: "House 42, Green Park, Ernakulam, Kerala - 682001",
-        rfidCardId: "RFID-MS-8839201",
-        isGoogleConnected: true,
-      };
-      setStoredUser(demoUser, true);
-      setUser(demoUser);
     }
-    fetchProfileWalletData();
-  }, [fetchProfileWalletData]);
+    fetchProfileCardAndActivityData();
+  }, [fetchProfileCardAndActivityData]);
 
   // Sync edit form inputs when modal opens
   const handleOpenEditModal = () => {
-    setEditName(user.name || "");
+    setEditName(user.name || user.fullName || user.username || "");
     setEditEmail(user.email || "");
-    setEditPhone(user.phone || "+91 98765 43210");
-    setEditDob(user.dob || "2000-08-15");
-    setEditGender(user.gender || "Female");
-    setEditAddress(user.address || "House 42, Green Park, Ernakulam, Kerala");
+    setEditPhone(user.phone || "");
+    setEditDob(user.dob || "");
+    setEditGender(user.gender || "");
+    setEditAddress(user.address || "");
     setShowEditModal(true);
   };
 
   // Save Edit Profile
   const handleSaveProfile = (e) => {
     e.preventDefault();
+    const nameCheck = validateName(editName, "Full Name");
+    if (!nameCheck.valid) {
+      showToast(`⚠️ ${nameCheck.message}`);
+      return;
+    }
+
     const updatedUser = {
       ...user,
       name: editName.trim(),
@@ -213,43 +184,6 @@ function Profile() {
     setNewPassword("");
     setConfirmPassword("");
     showToast("Password updated successfully! 🔒");
-  };
-
-  // Handle Wallet Recharge via Razorpay
-  const handleRechargeWallet = (e) => {
-    e.preventDefault();
-    const amountNum = parseFloat(rechargeAmount);
-    if (isNaN(amountNum) || amountNum <= 0) return;
-
-    processRazorpayPayment({
-      amount: amountNum,
-      description: `MoveSmart Wallet Recharge`,
-      userEmail: user?.email || "",
-      userName: user?.name || "Transit Passenger",
-      userPhone: user?.phone || "",
-      paymentType: "wallet",
-      onSuccess: (res) => {
-        const newBalance = walletBalance + amountNum;
-        setWalletBalance(newBalance);
-
-        const newTxn = {
-          id: `TXN-${Math.floor(1000 + Math.random() * 9000)}`,
-          title: `Wallet Top-Up via Razorpay (${res.paymentId || "Success"})`,
-          date: "Just now",
-          amount: `+ ₹ ${amountNum.toFixed(2)}`,
-          isDebit: false,
-        };
-
-        setTransactions([newTxn, ...transactions]);
-        setShowRechargeModal(false);
-        showToast(`Successfully added ₹ ${amountNum.toFixed(2)} to your MoveSmart Wallet! 💳`);
-      },
-      onError: (err) => {
-        if (!err.message?.includes("cancelled")) {
-          showToast(`⚠️ Payment error: ${err.message}`);
-        }
-      },
-    });
   };
 
   // Handle Logout
@@ -525,17 +459,6 @@ function Profile() {
           </button>
 
           <button
-            className={`profile-tab-btn ${activeTab === "payments" ? "active" : ""}`}
-            onClick={() => setActiveTab("payments")}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="1" y="4" width="22" height="16" rx="2" />
-              <line x1="1" y1="10" x2="23" y2="10" />
-            </svg>
-            Wallet & Payments
-          </button>
-
-          <button
             className={`profile-tab-btn ${activeTab === "security" ? "active" : ""}`}
             onClick={() => setActiveTab("security")}
           >
@@ -572,61 +495,100 @@ function Profile() {
               <div style={styles.infoGrid}>
                 <div style={styles.infoBox}>
                   <span style={styles.infoLabel}>Date of Birth</span>
-                  <span style={styles.infoValue}>{user.dob ? new Date(user.dob).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : "15 Aug 2000"}</span>
+                  <span style={styles.infoValue}>{user.dob ? new Date(user.dob).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : "Not Set"}</span>
                 </div>
 
                 <div style={styles.infoBox}>
                   <span style={styles.infoLabel}>Gender</span>
-                  <span style={styles.infoValue}>{user.gender || "Female"}</span>
+                  <span style={styles.infoValue}>{user.gender || "Not Set"}</span>
                 </div>
 
                 <div style={styles.infoBox}>
                   <span style={styles.infoLabel}>Phone Number</span>
-                  <span style={styles.infoValue}>{user.phone || "+91 98765 43210"}</span>
+                  <span style={styles.infoValue}>{user.phone || "Not Set"}</span>
                 </div>
 
                 <div style={styles.infoBox}>
                   <span style={styles.infoLabel}>Primary Email</span>
-                  <span style={styles.infoValue}>{user.email}</span>
+                  <span style={styles.infoValue}>{user.email || "Not Set"}</span>
                 </div>
 
                 <div style={{ ...styles.infoBox, gridColumn: "1 / -1" }}>
                   <span style={styles.infoLabel}>Residential Address</span>
-                  <span style={styles.infoValue}>{user.address || "House 42, Green Park, Ernakulam, Kerala - 682001"}</span>
+                  <span style={styles.infoValue}>{user.address || "Not Set"}</span>
                 </div>
               </div>
             </div>
 
             {/* RFID Card Details */}
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-              <div style={styles.rfidCard}>
+              <div style={{
+                ...styles.rfidCard,
+                background: cardInfo.hasCard
+                  ? "linear-gradient(135deg, #1e1b4b 0%, #2e1065 100%)"
+                  : "linear-gradient(135deg, #334155 0%, #1e293b 100%)",
+                border: cardInfo.hasCard ? "1px solid rgba(167, 139, 250, 0.3)" : "1px dashed rgba(148, 163, 184, 0.4)",
+              }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontSize: "12px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.9 }}>
                     MoveSmart Transit Pass
                   </span>
-                  <span style={{ background: "rgba(255,255,255,0.25)", padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: "700" }}>
-                    Active
+                  <span style={{
+                    background: cardInfo.hasCard ? "rgba(74, 222, 128, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                    color: cardInfo.hasCard ? "#4ade80" : "#fda4af",
+                    border: `1px solid ${cardInfo.hasCard ? "rgba(74, 222, 128, 0.4)" : "rgba(239, 68, 68, 0.4)"}`,
+                    padding: "3px 10px",
+                    borderRadius: "12px",
+                    fontSize: "11px",
+                    fontWeight: "800"
+                  }}>
+                    {cardInfo.hasCard ? "Active" : "Not Issued (XXX)"}
                   </span>
                 </div>
 
                 <div style={{ margin: "24px 0 16px 0" }}>
                   <div style={{ fontSize: "11px", opacity: "0.8" }}>RFID Card Number</div>
                   <div style={{ fontSize: "20px", fontWeight: "800", letterSpacing: "2px", fontFamily: "monospace" }}>
-                    {user.rfidCardId || "RFID-MS-8839201"}
+                    {cardInfo.hasCard ? (cardInfo.lastFour ? `•••• •••• ${cardInfo.lastFour}` : cardInfo.cardNumber) : "XXXX-XXXX-XXXX"}
                   </div>
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.9 }}>
                   <div>
                     <span>Holder: </span>
-                    <strong>{user.name}</strong>
+                    <strong>{cardInfo.hasCard ? (user.name || user.fullName || "Active Passenger") : "XXX"}</strong>
                   </div>
                   <div>
                     <span>Class: </span>
-                    <strong>Silver Pass</strong>
+                    <strong>{cardInfo.hasCard ? (cardInfo.cardType || "Silver Pass") : "XXXX"}</strong>
                   </div>
                 </div>
               </div>
+
+              {/* Apply for Card CTA button if user does not have RFID */}
+              {!cardInfo.hasCard && (
+                <button
+                  onClick={() => navigate("/dashboard/card-application")}
+                  style={{
+                    width: "100%",
+                    padding: "12px 18px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%)",
+                    color: "#ffffff",
+                    border: "none",
+                    fontWeight: "800",
+                    fontSize: "13.5px",
+                    cursor: "pointer",
+                    boxShadow: "0 6px 18px rgba(109, 40, 217, 0.25)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                  }}
+                >
+                  🪪 Book / Apply for RFID Card →
+                </button>
+              )}
 
               {/* Quick Status Box */}
               <div style={styles.card}>
@@ -636,15 +598,21 @@ function Profile() {
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "#475569" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px dashed #e2e8f0", paddingBottom: "8px" }}>
                     <span>Aadhaar / ID Verification</span>
-                    <strong style={{ color: "#38a169" }}>✓ Verified</strong>
+                    <strong style={{ color: cardInfo.hasCard ? "#38a169" : "#94a3b8" }}>
+                      {cardInfo.hasCard ? "✓ Verified" : "Not Linked (XXX)"}
+                    </strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px dashed #e2e8f0", paddingBottom: "8px" }}>
                     <span>Emergency SOS Contacts</span>
-                    <strong style={{ color: "#38a169" }}>Configured (2 Contacts)</strong>
+                    <strong style={{ color: cardInfo.hasCard ? "#38a169" : "#94a3b8" }}>
+                      {cardInfo.hasCard ? "Configured" : "Not Linked (XXX)"}
+                    </strong>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span>Student Concession</span>
-                    <strong style={{ color: "#8b5cf6" }}>Standard Fare</strong>
+                    <strong style={{ color: cardInfo.hasCard ? "#8b5cf6" : "#94a3b8" }}>
+                      {cardInfo.hasCard ? (cardInfo.cardType?.includes("Student") ? "Student Concession (50% Off)" : "Standard Fare") : "Not Linked (XXX)"}
+                    </strong>
                   </div>
                 </div>
               </div>
@@ -717,117 +685,72 @@ function Profile() {
             </div>
 
             {/* Travel History Cards List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              {filteredHistory.map((item) => (
-                <div key={item.id} className="card-hover-effect" style={styles.activityItemCard}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                    <div style={{
-                      width: "48px",
-                      height: "48px",
-                      borderRadius: "12px",
-                      background: item.status === "Upcoming" ? "rgba(56, 161, 105, 0.12)" : "rgba(139, 92, 246, 0.12)",
-                      color: item.status === "Upcoming" ? "#38a169" : "#8b5cf6",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center"
-                    }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <rect x="1" y="3" width="15" height="13" rx="2" />
-                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
-                        <circle cx="5.5" cy="18.5" r="2.5" />
-                        <circle cx="18.5" cy="18.5" r="2.5" />
-                      </svg>
-                    </div>
-
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <span style={{ fontSize: "16px", fontWeight: "700", color: "#0f172a" }}>
-                          {item.routeName}
-                        </span>
-                        <span style={{
-                          padding: "3px 10px",
-                          borderRadius: "12px",
-                          fontSize: "11px",
-                          fontWeight: "800",
-                          background: item.status === "Upcoming" ? "#e6fffa" : "#f3e8ff",
-                          color: item.status === "Upcoming" ? "#2f855a" : "#7c3aed"
-                        }}>
-                          {item.status}
-                        </span>
-                      </div>
-
-                      <div style={{ display: "flex", gap: "16px", marginTop: "4px", fontSize: "13px", color: "#64748b" }}>
-                        <span>🚌 {item.busNumber}</span>
-                        <span>🪑 Seat: {item.seat}</span>
-                        <span>📅 {item.dateTime}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b" }}>
-                      {item.fare}
-                    </div>
-                    <span style={{ fontSize: "11px", color: "#94a3b8" }}>Ticket ID: {item.id}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 💳 TAB 3: WALLET & PAYMENTS */}
-        {activeTab === "payments" && (
-          <div className="profile-grid-layout" style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "24px" }}>
-            {/* Wallet Summary Card */}
-            <div style={styles.walletCard}>
-              <span style={{ fontSize: "12px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.9 }}>
-                MoveSmart Wallet Balance
-              </span>
-              <div style={{ fontSize: "36px", fontWeight: "800", margin: "12px 0 18px 0" }}>
-                ₹ {walletBalance.toFixed(2)}
+            {filteredHistory.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b", fontStyle: "italic" }}>
+                No travel history or bookings recorded yet in the database.
               </div>
-
-              <button
-                className="action-btn-primary"
-                onClick={() => setShowRechargeModal(true)}
-                style={{ width: "100%", justifyContent: "center", background: "#ffffff", color: "#2f855a", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}
-              >
-                + Top Up Wallet
-              </button>
-            </div>
-
-            {/* Recent Transactions List */}
-            <div style={styles.card}>
-              <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Recent Transactions</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                {transactions.map((tx) => (
-                  <div key={tx.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", borderRadius: "10px", background: "#f8fafc", border: "1px solid #f1f5f9" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {filteredHistory.map((item) => (
+                  <div key={item.id} className="card-hover-effect" style={styles.activityItemCard}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
                       <div style={{
-                        width: "38px", height: "38px", borderRadius: "10px",
-                        background: tx.isDebit ? "#fee2e2" : "#dcfce7",
-                        color: tx.isDebit ? "#ef4444" : "#16a34a",
-                        display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "800"
+                        width: "48px",
+                        height: "48px",
+                        borderRadius: "12px",
+                        background: item.status === "Upcoming" ? "rgba(56, 161, 105, 0.12)" : "rgba(139, 92, 246, 0.12)",
+                        color: item.status === "Upcoming" ? "#38a169" : "#8b5cf6",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
                       }}>
-                        {tx.isDebit ? "↓" : "↑"}
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="1" y="3" width="15" height="13" rx="2" />
+                          <polygon points="16 8 20 8 23 11 23 16 16 16 8" />
+                          <circle cx="5.5" cy="18.5" r="2.5" />
+                          <circle cx="18.5" cy="18.5" r="2.5" />
+                        </svg>
                       </div>
+
                       <div>
-                        <div style={{ fontSize: "13.5px", fontWeight: "700", color: "#0f172a" }}>{tx.title}</div>
-                        <div style={{ fontSize: "11.5px", color: "#64748b" }}>{tx.date} • ID: {tx.id}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ fontSize: "16px", fontWeight: "700", color: "#0f172a" }}>
+                            {item.routeName}
+                          </span>
+                          <span style={{
+                            padding: "3px 10px",
+                            borderRadius: "12px",
+                            fontSize: "11px",
+                            fontWeight: "800",
+                            background: item.status === "Upcoming" ? "#e6fffa" : "#f3e8ff",
+                            color: item.status === "Upcoming" ? "#2f855a" : "#7c3aed"
+                          }}>
+                            {item.status}
+                          </span>
+                        </div>
+
+                        <div style={{ display: "flex", gap: "16px", marginTop: "4px", fontSize: "13px", color: "#64748b" }}>
+                          <span>🚌 {item.busNumber}</span>
+                          <span>🪑 Seat: {item.seat}</span>
+                          <span>📅 {item.dateTime}</span>
+                        </div>
                       </div>
                     </div>
-                    <div style={{ fontSize: "14px", fontWeight: "800", color: tx.isDebit ? "#dc2626" : "#16a34a" }}>
-                      {tx.amount}
+
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b" }}>
+                        {item.fare}
+                      </div>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>Ticket ID: {item.id}</span>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* 🔐 TAB 4: SECURITY & ACCOUNTS */}
+        {/* 🔐 TAB 3: SECURITY & ACCOUNTS */}
         {activeTab === "security" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }} className="profile-grid-layout">
             {/* Password Security */}
@@ -1147,74 +1070,6 @@ function Profile() {
         </div>
       )}
 
-      {/* 💳 RECHARGE WALLET MODAL */}
-      {showRechargeModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowRechargeModal(false)}>
-          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px 0" }}>
-              Top Up MoveSmart Wallet
-            </h3>
-
-            <form onSubmit={handleRechargeWallet} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div>
-                <label style={styles.formLabel}>Recharge Amount (₹)</label>
-                <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-                  {[50, 100, 200, 500].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setRechargeAmount(amt)}
-                      style={{
-                        flex: 1,
-                        padding: "8px",
-                        borderRadius: "8px",
-                        border: "1px solid",
-                        borderColor: rechargeAmount === amt ? "#38a169" : "#cbd5e1",
-                        background: rechargeAmount === amt ? "#e6fffa" : "#ffffff",
-                        color: rechargeAmount === amt ? "#2f855a" : "#475569",
-                        fontWeight: "700",
-                        cursor: "pointer"
-                      }}
-                    >
-                      ₹ {amt}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="number"
-                  style={styles.formInput}
-                  value={rechargeAmount}
-                  onChange={(e) => setRechargeAmount(e.target.value)}
-                  placeholder="Enter custom amount"
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={styles.formLabel}>Payment Method</label>
-                <select
-                  style={styles.formInput}
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                >
-                  <option value="UPI">UPI / Google Pay / PhonePe</option>
-                  <option value="Credit / Debit Card">Credit / Debit Card</option>
-                  <option value="Net Banking">Net Banking</option>
-                </select>
-              </div>
-
-              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "10px" }}>
-                <button type="button" className="action-btn-secondary" onClick={() => setShowRechargeModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="action-btn-primary">
-                  Pay & Add Funds ✓
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
       <Footer />
     </div>
   );

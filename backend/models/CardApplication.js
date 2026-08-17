@@ -12,17 +12,19 @@ const cardApplicationSchema = new mongoose.Schema({
     default: null,
   },
   // 1. Personal Information
+  firstName: {
+    type: String,
+    trim: true,
+  },
+  secondName: {
+    type: String,
+    trim: true,
+  },
   fullName: {
     type: String,
     required: [true, "Full Name is required"],
     trim: true,
     minlength: [2, "Full Name must be at least 2 characters long"],
-    validate: {
-      validator: function (v) {
-        return typeof v === "string" && !/\d/.test(v);
-      },
-      message: "Full Name cannot contain numbers",
-    },
   },
   dob: { type: String, required: [true, "Date of Birth is required"] },
   gender: { type: String, required: [true, "Gender is required"] },
@@ -49,6 +51,8 @@ const cardApplicationSchema = new mongoose.Schema({
   frequentSource: { type: String, required: false, default: "N/A" },
   frequentDestination: { type: String, required: false, default: "N/A" },
   preferredTime: { type: String, required: false, default: "Morning" },
+  emergencyFirstName: { type: String, trim: true },
+  emergencySecondName: { type: String, trim: true },
   emergencyName: { type: String, required: [true, "Emergency Contact Name is required"] },
   emergencyRelation: { type: String, required: [true, "Emergency Contact Relation is required"] },
   emergencyPhone: { type: String, required: [true, "Emergency Phone is required"] },

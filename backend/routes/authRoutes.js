@@ -5,10 +5,12 @@ const User = require("../models/User");
 const { sendOtpEmail } = require("../utils/mailer");
 
 const {
+  validateName,
   validatePhoneNumber,
   validateDrivingLicense,
   validateExperienceYears,
 } = require("../utils/formValidators");
+const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
@@ -84,6 +86,14 @@ router.post("/signup", async (req, res) => {
             });
         }
 
+        // Validate name format (alphabets only, min 2 chars, no spaces/numbers/symbols)
+        const nameValidation = validateName(name, "Full Name");
+        if (!nameValidation.valid) {
+            return res.status(400).json({
+                message: nameValidation.message
+            });
+        }
+
 
         // Check existing user
         const existingUser = await User.findOne({ email });
@@ -131,14 +141,8 @@ router.post("/signup", async (req, res) => {
 
 // LOGIN API
 router.post("/login", async (req, res) => {
-
     try {
-
-        console.log("Login Data:", req.body);
-
-
         const { email, password } = req.body;
-
 
         if (!email || !password) {
             return res.status(400).json({
@@ -146,29 +150,33 @@ router.post("/login", async (req, res) => {
             });
         }
 
-
-        const user = await User.findOne({ email });
-
-
+        const cleanEmail = email.trim();
+        let user = await User.findOne({ email: cleanEmail.toLowerCase() });
         if (!user) {
-            return res.status(404).json({
-                message: "User not found"
+            user = await User.findOne({ email: cleanEmail });
+        }
+        if (!user) {
+            user = await User.findOne({
+                email: { $regex: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
             });
         }
 
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found with this email address"
+            });
+        }
 
         const passwordMatch = await bcrypt.compare(
             password,
             user.password
         );
 
-
         if (!passwordMatch) {
             return res.status(401).json({
                 message: "Invalid password"
             });
         }
-
 
         const token = jwt.sign(
             { id: user._id, role: user.role, email: user.email },
@@ -181,24 +189,47 @@ router.post("/login", async (req, res) => {
             token,
             user: {
                 id: user._id,
+                _id: user._id,
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                verificationStatus: user.verificationStatus
+                verificationStatus: user.verificationStatus,
+                phone: user.phone || "",
+                licenseNumber: user.licenseNumber || "",
+                profilePic: user.profilePic || ""
             }
         });
 
-
     } catch (error) {
-
-        console.log(error);
-
+        console.error("Login Error:", error);
         res.status(500).json({
-            message: error.message
+            message: error.message || "Internal server error during authentication"
         });
-
     }
+});
 
+
+// CURRENT LOGGED IN USER PROFILE (FAST /me)
+router.get("/me", protect, async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            user: {
+                id: req.user._id,
+                _id: req.user._id,
+                name: req.user.name,
+                email: req.user.email,
+                role: req.user.role,
+                verificationStatus: req.user.verificationStatus,
+                phone: req.user.phone || "",
+                licenseNumber: req.user.licenseNumber || "",
+                profilePic: req.user.profilePic || "",
+                experienceYears: req.user.experienceYears || 0
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
 
@@ -342,30 +373,6 @@ router.post("/reset-password", async (req, res) => {
     } catch (error) {
         console.error("Reset Password Error:", error);
         res.status(500).json({ message: error.message || "Failed to reset password" });
-    }
-});
-
-// GET /me API
-const { protect } = require("../middleware/authMiddleware");
-
-router.get("/me", protect, async (req, res) => {
-    try {
-        const user = await User.findById(req.user._id).select("-password");
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
-        res.json({
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                verificationStatus: user.verificationStatus
-            }
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
     }
 });
 

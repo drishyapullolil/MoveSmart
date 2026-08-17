@@ -142,9 +142,10 @@ function Login() {
       setStoredToken(authToken, rememberMe);
 
       // Navigate to the correct dashboard immediately
-      const role = loggedInUser?.role?.toLowerCase();
+      const role = (loggedInUser?.role || "").toLowerCase().trim();
       const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
-      navigate(targetPath);
+      setLoading(false);
+      navigate(targetPath, { replace: true });
     } catch (error) {
       console.error(error);
       const errMsg =
@@ -312,11 +313,10 @@ function Login() {
       setStoredUser(loggedInUser, true);
       setStoredToken(authToken, true);
 
-      setTimeout(() => {
-        const role = loggedInUser?.role?.toLowerCase();
-        const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
-        navigate(targetPath);
-      }, 1000);
+      setLoading(false);
+      const role = (loggedInUser?.role || "").toLowerCase().trim();
+      const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
+      navigate(targetPath, { replace: true });
     } catch (error) {
       setAlertInfo({
         message: error.response?.data?.message || "Google Sign-In failed",

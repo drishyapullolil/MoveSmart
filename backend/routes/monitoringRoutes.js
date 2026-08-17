@@ -164,6 +164,41 @@ router.get("/driver/:driverId/face-profile", async (req, res) => {
   }
 });
 
+// DELETE /api/monitoring/driver/:driverId/face-profile - Reset/Delete enrolled driver face profile
+router.delete("/driver/:driverId/face-profile", async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(driverId)) {
+      user = await User.findById(driverId);
+    } else {
+      user = await User.findOne({
+        $or: [
+          { email: driverId },
+          { name: new RegExp(`^${driverId}$`, "i") },
+          { licenseNumber: new RegExp(`^${driverId}$`, "i") },
+        ],
+      });
+    }
+
+    if (user) {
+      user.faceProfile = undefined;
+      user.faceEncoding = undefined;
+      user.faceEnrolledAt = undefined;
+      await user.save();
+    }
+
+    res.json({
+      success: true,
+      message: "Face profile deleted successfully.",
+      driverId,
+    });
+  } catch (error) {
+    console.error("Error deleting face profile:", error);
+    res.status(500).json({ success: false, message: "Failed to delete face profile", error: error.message });
+  }
+});
+
 // POST /api/monitoring/verify-driver-identity - Automated Biometric Driver Verification & Status Check
 router.post("/verify-driver-identity", async (req, res) => {
   try {

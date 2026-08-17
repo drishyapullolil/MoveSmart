@@ -11,6 +11,7 @@ import sys
 import os
 import json
 import base64
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 # Ensure UTF-8 output encoding on Windows consoles
@@ -43,7 +44,7 @@ finally:
     sys.stdout = _orig_stdout
 
 
-def decode_base64_image(b64_string):
+def decode_base64_image(b64_string: Optional[str]) -> Optional[np.ndarray]:
     """Decodes a base64 JPEG string into an RGB numpy image array."""
     if not b64_string:
         return None
@@ -64,7 +65,7 @@ def decode_base64_image(b64_string):
     return None
 
 
-def process_samples(samples):
+def process_samples(samples: Any) -> Tuple[bool, Dict[str, Any], int]:
     """
     Processes an array of base64 images.
     Returns (success, result_dict, status_code).

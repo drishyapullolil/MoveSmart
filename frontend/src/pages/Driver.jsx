@@ -769,22 +769,6 @@ function Driver() {
     }
   };
 
-  // Initialize Driver Socket Connection
-  useEffect(() => {
-    const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
-    const s = io(socketUrl, { transports: ["websocket", "polling"], reconnectionAttempts: 10 });
-    safetySocketRef.current = s;
-    s.on("connect", () => {
-      console.log("Connected to Safety Socket from Driver:", s.id);
-      if (user?._id || user?.id) {
-        s.emit("join-driver-room", { driverId: user?._id || user?.id });
-      }
-    });
-    return () => {
-      s.disconnect();
-    };
-  }, [user?._id, user?.id]);
-
   // Voice Alert Synthesizer
   const playVoiceAlert = (text) => {
     if (!voiceAlertsEnabled) return;
@@ -1925,6 +1909,24 @@ function Driver() {
     }
   }, [assignedBus]);
 
+  const getMinLeaveDate = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const y = tomorrow.getFullYear();
+    const m = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const d = String(tomorrow.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
+  const getMaxLeaveDate = () => {
+    const maxD = new Date();
+    maxD.setDate(maxD.getDate() + 90);
+    const y = maxD.getFullYear();
+    const m = String(maxD.getMonth() + 1).padStart(2, "0");
+    const d = String(maxD.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
   // ----------------------------------------------------
   // HANDLERS FOR DRIVER ACTIONS
   // ----------------------------------------------------
@@ -1932,6 +1934,12 @@ function Driver() {
     e.preventDefault();
     if (!leaveForm.leaveDate || !leaveForm.reason) {
       openAlert("Apply for Driver Leave", "Please provide both the leave date and reason for leave.");
+      return;
+    }
+
+    const minDateStr = getMinLeaveDate();
+    if (leaveForm.leaveDate < minDateStr) {
+      openAlert("Invalid Leave Date", "⚠️ Leave cannot be applied for today or past dates. Please select tomorrow onwards.");
       return;
     }
 
@@ -1947,7 +1955,7 @@ function Driver() {
         reason: leaveForm.reason,
       });
 
-      showToast(`Leave application (${leaveForm.leaveType}) submitted for admin review.`);
+      showToast(`✓ Leave application (${leaveForm.leaveType}) for ${leaveForm.leaveDate} submitted for admin review!`);
       setLeaveForm({ leaveDate: "", leaveType: "Full Day", halfDaySlot: "Forenoon (AM)", reason: "" });
       fetchDriverLeaves();
     } catch (err) {
@@ -3564,14 +3572,24 @@ function Driver() {
                 )}
 
                 <div>
-                  <label style={styles.formLabel}>Leave Date <span style={{ color: "#e11d48" }}>*</span></label>
+                  <label style={styles.formLabel}>
+                    Leave Date <span style={{ color: "#e11d48" }}>*</span>
+                    <span style={{ fontSize: "11.5px", fontWeight: "600", color: "#64748b", marginLeft: "6px" }}>
+                      (Tomorrow onwards, up to 90 days)
+                    </span>
+                  </label>
                   <input
                     type="date"
+                    min={getMinLeaveDate()}
+                    max={getMaxLeaveDate()}
                     value={leaveForm.leaveDate}
                     onChange={(e) => setLeaveForm({ ...leaveForm, leaveDate: e.target.value })}
                     style={styles.formInput}
                     required
                   />
+                  <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px" }}>
+                    ℹ️ Same-day leave is disabled. Please select tomorrow or an upcoming date.
+                  </div>
                 </div>
 
                 <div>
@@ -3678,71 +3696,37 @@ function Driver() {
                 </div>
 
                 <div>
-                  <label style={styles.formLabel}>Profile Photo &amp; Biometric Image</label>
-                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "8px" }}>
-                    <button
-                      type="button"
-                      onClick={handleTakeDriverPhoto}
-                      className="touch-target"
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: "10px",
-                        background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
-                        color: "#ffffff",
-                        border: "none",
-                        fontSize: "13px",
-                        fontWeight: "800",
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}
-                    >
-                      📷 Take Driver Photo with AI Camera
-                    </button>
-                    <label
-                      className="touch-target"
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: "10px",
-                        background: "#f1f5f9",
-                        color: "#475569",
-                        border: "1.5px solid #cbd5e1",
-                        fontSize: "13px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}
-                    >
-                      📁 Upload File
-                      <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ display: "none" }} />
-                    </label>
-                  </div>
+                  <label style={styles.formLabel}>
+                    Profile Photo <span style={{ color: "#e11d48" }}>*</span>
+                  </label>
+                  <label
+                    className="touch-target"
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: "10px",
+                      background: "#f1f5f9",
+                      color: "#475569",
+                      border: "1.5px solid #cbd5e1",
+                      fontSize: "13px",
+                      fontWeight: "700",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    📁 Upload Profile Photo
+                    <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ display: "none" }} />
+                  </label>
 
                   {verificationData?.profilePic && (
-                    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f0fdf4", padding: "8px 12px", borderRadius: "10px", border: "1px solid #bbf7d0", flexWrap: "wrap", gap: "8px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        <img src={verificationData?.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover", border: "2px solid #16a34a" }} />
-                        <div>
-                          <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "block" }}>Photo Attached ✓</span>
-                          <span style={{ fontSize: "11.5px", color: "#64748b" }}>Ready for verification</span>
-                        </div>
+                    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "12px", background: "#f0fdf4", padding: "10px 14px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                      <img src={verificationData?.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover", border: "2px solid #16a34a" }} />
+                      <div>
+                        <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "block" }}>Photo Attached ✓</span>
+                        <span style={{ fontSize: "11.5px", color: "#64748b" }}>Ready for profile verification</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (capturedFaceAnalysis) {
-                            setShowFaceDetailsModal(true);
-                          } else {
-                            handleTakeDriverPhoto();
-                          }
-                        }}
-                        style={{ background: "#ffffff", border: "1px solid #86efac", color: "#166534", padding: "4px 10px", borderRadius: "8px", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
-                      >
-                        🔍 Check Face Details
-                      </button>
                     </div>
                   )}
                 </div>
@@ -3766,7 +3750,7 @@ function Driver() {
 
             <div className="card-shadow" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
               <div>
-                <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Verification Status &amp; Biometrics</h2>
+                <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Verification &amp; Account Status</h2>
 
                 <div style={{ background: "rgba(248, 250, 252, 0.9)", padding: "20px", borderRadius: "16px", border: "1px solid #e2e8f0", textAlign: "center", marginBottom: "16px" }}>
                   <div style={{ width: "80px", height: "80px", borderRadius: "50%", margin: "0 auto 12px", overflow: "hidden", background: "#e2e8f0", border: "3px solid #16a34a" }}>
@@ -3797,69 +3781,16 @@ function Driver() {
                   )}
                 </div>
 
-                {/* 🛡️ Biometric Face Profile Status Box */}
-                <div style={{ background: faceProfileStatus.isEnrolled ? "linear-gradient(135deg, #f0fdf4, #ecfdf5)" : "linear-gradient(135deg, #fffbeb, #fef3c7)", padding: "16px", borderRadius: "14px", border: `1.5px solid ${faceProfileStatus.isEnrolled ? "#bbf7d0" : "#fde68a"}`, marginBottom: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "12px", fontWeight: "800", textTransform: "uppercase", color: faceProfileStatus.isEnrolled ? "#15803d" : "#92400e" }}>
-                      🛡️ AI Face-Lock Biometrics
-                    </span>
-                    <span style={{ fontSize: "11px", fontWeight: "800", padding: "2px 8px", borderRadius: "6px", background: faceProfileStatus.isEnrolled ? "#15803d" : "#d97706", color: "#fff" }}>
-                      {faceProfileStatus.isEnrolled ? "ENROLLED" : "ACTION REQUIRED"}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "13px", color: "#334155", fontWeight: "600", marginBottom: "10px" }}>
-                    {faceProfileStatus.isEnrolled ? (
-                      <>Biometric 128-d face vector synced on backend server. Face-lock verification is active during scheduled trips.</>
-                    ) : (
-                      <>No biometric face vector enrolled yet. Enroll your face profile to enable in-cabin verification.</>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      onClick={handleEnrollBiometricWeb}
-                      disabled={isEnrollingWeb}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "8px",
-                        background: "#6d28d9",
-                        color: "#fff",
-                        border: "none",
-                        fontSize: "12px",
-                        fontWeight: "800",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {isEnrollingWeb ? `Enrolling (${enrollProgress}/20)...` : "⚡ Enroll / Update Biometrics"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleTakeDriverPhoto}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "8px",
-                        background: "#fff",
-                        color: "#475569",
-                        border: "1px solid #cbd5e1",
-                        fontSize: "12px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                      }}
-                    >
-                      🔍 Inspect Live Face
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ fontSize: "13.5px", color: "#475569", lineHeight: "1.7", fontWeight: "600" }}>
+                <div style={{ fontSize: "13.5px", color: "#475569", lineHeight: "1.8", fontWeight: "600", background: "#f8fafc", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
                   <div><strong style={{ color: "#0f172a" }}>License Number:</strong> {verificationData?.licenseNumber || "Not Provided"}</div>
                   <div><strong style={{ color: "#0f172a" }}>Experience:</strong> {verificationData?.experienceYears || 0} Years</div>
+                  <div><strong style={{ color: "#0f172a" }}>Contact Phone:</strong> {verificationData?.phone || user?.phone || "Not Provided"}</div>
                   <div><strong style={{ color: "#0f172a" }}>Admin Note:</strong> {verificationData?.verificationNote || "No notes from admin yet."}</div>
                 </div>
               </div>
 
               <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#15803d", fontSize: "13px", fontWeight: "600", marginTop: "16px" }}>
-                Verified driver status is displayed to passengers on scheduled routes.
+                ℹ️ Driver identity and biometric verifications are managed through the Central Admin Portal.
               </div>
             </div>
           </div>

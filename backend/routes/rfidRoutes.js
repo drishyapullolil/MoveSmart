@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const mongoose = require("mongoose");
 const Stop = require("../models/Stop");
 const StopDistance = require("../models/StopDistance");
 const RfidCard = require("../models/RfidCard");
@@ -336,7 +337,7 @@ router.post("/topup", async (req, res) => {
 
     const numericAmount = Number(amount);
     if (isNaN(numericAmount) || numericAmount < 10) {
-      return res.status(400).json({ message: "Minimum top-up amount is 10 AED" });
+      return res.status(400).json({ message: "Minimum top-up amount is ₹10" });
     }
 
     const queryVal = tagId.toUpperCase();
@@ -352,7 +353,7 @@ router.post("/topup", async (req, res) => {
     await card.save();
 
     res.json({
-      message: `Successfully topped up ${numericAmount} AED. New balance: ${card.balance.toFixed(2)} AED ✅`,
+      message: `Successfully topped up ₹${numericAmount}. New balance: ₹${card.balance.toFixed(2)} ✅`,
       card
     });
   } catch (error) {
@@ -596,7 +597,7 @@ router.post("/tap", async (req, res) => {
             allowed: false,
             action: "REJECTED",
             reason: "Insufficient balance after penalty",
-            message: `Previous journey expired: -${activeJourney.fare.toFixed(2)} AED. Insufficient balance to tap-in: ${card.balance.toFixed(2)} AED.`,
+            message: `Previous journey expired: -₹${activeJourney.fare.toFixed(2)}. Insufficient balance to tap-in: ₹${card.balance.toFixed(2)}.`,
             card: {
               cardNumber: card.cardNumber,
               balance: card.balance.toFixed(2)
@@ -616,7 +617,7 @@ router.post("/tap", async (req, res) => {
         return res.status(200).json({
           allowed: true,
           action: "TAP_IN",
-          message: `Previous journey expired (-${activeJourney.fare.toFixed(2)} AED). Boarded at ${stop.name}.`,
+          message: `Previous journey expired (-₹${activeJourney.fare.toFixed(2)}). Boarded at ${stop.name}.`,
           card: {
             cardNumber: card.cardNumber,
             balance: card.balance.toFixed(2),
@@ -666,7 +667,7 @@ router.post("/tap", async (req, res) => {
       return res.status(200).json({
         allowed: true,
         action: "TAP_OUT",
-        message: `Tap-Out success. Charged: ${calculatedFare.toFixed(2)} AED for ${distanceKm.toFixed(1)} km.`,
+        message: `Tap-Out success. Charged: ₹${calculatedFare.toFixed(2)} for ${distanceKm.toFixed(1)} km.`,
         journey: {
           from: tapInStopObj ? tapInStopObj.name : "Unknown",
           to: stop.name,
@@ -691,7 +692,7 @@ router.post("/tap", async (req, res) => {
           allowed: false,
           action: "REJECTED",
           reason: "Insufficient balance",
-          message: `Card balance (${card.balance.toFixed(2)} AED) is below the minimum required balance of ${MIN_BALANCE.toFixed(2)} AED.`,
+          message: `Card balance (₹${card.balance.toFixed(2)}) is below the minimum required balance of ₹${MIN_BALANCE.toFixed(2)}.`,
           card: {
             cardNumber: card.cardNumber,
             balance: card.balance.toFixed(2)
@@ -740,10 +741,71 @@ router.post("/apply", async (req, res) => {
   try {
     const data = req.body;
 
-    // 1. Personal Info Validation
-    const nameCheck = validateName(data.fullName);
-    if (!nameCheck.valid) {
-      return res.status(400).json({ error: nameCheck.message, reason: nameCheck.reason });
+    const targetUserId = data.userId || (req.session && (req.session.userId || req.session.user?.id || req.session.user?._id));
+    const targetEmail = data.email?.toLowerCase().trim();
+    const targetPhone = data.phone?.trim();
+
+    // 0. Enforce STRICT ONE RFID CARD PER USER RULE
+    // Check if user already has an active RFID Card in MongoDB
+    if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) {
+      const activeCard = await RfidCard.findOne({ user: targetUserId, status: "Active" });
+      if (activeCard) {
+        return res.status(400).json({
+          error: `You already have an active MoveSmart RFID Card (${activeCard.cardNumber || "Active"}). Each user is permitted only one RFID card.`,
+          hasCard: true,
+          cardNumber: activeCard.cardNumber,
+        });
+      }
+    }
+
+    // Check if user already has an Approved card application
+    const appFilters = [];
+    if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) appFilters.push({ user: targetUserId });
+    if (targetEmail) appFilters.push({ email: targetEmail });
+    if (targetPhone) appFilters.push({ phone: targetPhone });
+
+    if (appFilters.length > 0) {
+      const existingApprovedApp = await CardApplication.findOne({
+        $or: appFilters,
+        status: "Approved",
+      });
+      if (existingApprovedApp) {
+        return res.status(400).json({
+          error: `You already have an approved RFID Card application (${existingApprovedApp.assignedCardNumber || existingApprovedApp.applicationId}). Each user is permitted only one RFID card.`,
+          hasCard: true,
+          cardNumber: existingApprovedApp.assignedCardNumber,
+        });
+      }
+
+      const existingPendingApp = await CardApplication.findOne({
+        $or: appFilters,
+        status: "Pending",
+      });
+      if (existingPendingApp) {
+        return res.status(400).json({
+          error: `You already have a pending RFID Card application (${existingPendingApp.applicationId}) under review. Each user is permitted only one application at a time.`,
+          hasPending: true,
+          applicationId: existingPendingApp.applicationId,
+        });
+      }
+    }
+
+    // 1. Personal Info Validation (First Name & Second Name)
+    if (data.firstName || data.secondName) {
+      const fCheck = validateName(data.firstName, "First Name");
+      if (!fCheck.valid) {
+        return res.status(400).json({ error: fCheck.message, reason: fCheck.reason });
+      }
+      const sCheck = validateName(data.secondName, "Second Name");
+      if (!sCheck.valid) {
+        return res.status(400).json({ error: sCheck.message, reason: sCheck.reason });
+      }
+      data.fullName = `${data.firstName.trim()} ${data.secondName.trim()}`;
+    } else {
+      const nameCheck = validateName(data.fullName, "Full Name");
+      if (!nameCheck.valid) {
+        return res.status(400).json({ error: nameCheck.message, reason: nameCheck.reason });
+      }
     }
 
     const dobCheck = validateDob(data.dob);
@@ -755,7 +817,7 @@ router.post("/apply", async (req, res) => {
       return res.status(400).json({ error: "Gender is required." });
     }
 
-    const phoneCheck = validatePhoneNumber(data.phone);
+    const phoneCheck = validatePhoneNumber(data.countryCode || "+91", data.phone);
     if (!phoneCheck.valid) {
       return res.status(400).json({ error: phoneCheck.message, reason: phoneCheck.reason });
     }
@@ -818,16 +880,28 @@ router.post("/apply", async (req, res) => {
     data.frequentSource = data.frequentSource || "N/A";
     data.frequentDestination = data.frequentDestination || "N/A";
 
-    const emergencyNameCheck = validateName(data.emergencyName);
-    if (!emergencyNameCheck.valid) {
-      return res.status(400).json({ error: `Emergency Contact Name error: ${emergencyNameCheck.message}` });
+    if (data.emergencyFirstName || data.emergencySecondName) {
+      const efCheck = validateName(data.emergencyFirstName, "Contact First Name");
+      if (!efCheck.valid) {
+        return res.status(400).json({ error: efCheck.message, reason: efCheck.reason });
+      }
+      const esCheck = validateName(data.emergencySecondName, "Contact Second Name");
+      if (!esCheck.valid) {
+        return res.status(400).json({ error: esCheck.message, reason: esCheck.reason });
+      }
+      data.emergencyName = `${data.emergencyFirstName.trim()} ${data.emergencySecondName.trim()}`;
+    } else {
+      const emergencyNameCheck = validateName(data.emergencyName, "Contact Name");
+      if (!emergencyNameCheck.valid) {
+        return res.status(400).json({ error: `Emergency Contact Name error: ${emergencyNameCheck.message}` });
+      }
     }
 
     if (!data.emergencyRelation || !data.emergencyRelation.trim() || data.emergencyRelation.trim().length < 2) {
       return res.status(400).json({ error: "Emergency Contact Relation is required." });
     }
 
-    const emergencyPhoneCheck = validatePhoneNumber(data.emergencyPhone);
+    const emergencyPhoneCheck = validatePhoneNumber(data.emergencyCountryCode || "+91", data.emergencyPhone);
     if (!emergencyPhoneCheck.valid) {
       return res.status(400).json({ error: `Emergency Phone error: ${emergencyPhoneCheck.message}` });
     }
@@ -843,6 +917,8 @@ router.post("/apply", async (req, res) => {
     const newApp = new CardApplication({
       applicationId,
       user: data.userId || (req.session && req.session.userId) || null,
+      firstName: data.firstName || "",
+      secondName: data.secondName || "",
       fullName: data.fullName || "Commuter",
       dob: data.dob,
       gender: data.gender,
@@ -866,6 +942,8 @@ router.post("/apply", async (req, res) => {
       frequentSource: data.frequentSource,
       frequentDestination: data.frequentDestination,
       preferredTime: data.preferredTime || "Morning",
+      emergencyFirstName: data.emergencyFirstName || "",
+      emergencySecondName: data.emergencySecondName || "",
       emergencyName: data.emergencyName,
       emergencyRelation: data.emergencyRelation,
       emergencyPhone: data.emergencyPhone,
@@ -946,15 +1024,31 @@ router.post("/applications/:id/approve", async (req, res) => {
     else if (safeCardType === "Student Pass") safeCardType = "Blue";
     else if (safeCardType === "Foreigner Tourist Pass" || safeCardType === "Foreigner") safeCardType = "Gold";
 
-    // Create & Activate RFID Card
+    // Create & Activate RFID Card with exact balance from application
     const newCard = new RfidCard({
       cardNumber: assignedCardNumber,
       rfidTag: tagUid.toUpperCase(),
-      balance: app.initialRecharge || 20,
+      user: app.user || null,
+      balance: app.initialRecharge || 0,
       cardType: safeCardType,
       status: "Active",
     });
     await newCard.save();
+
+    if (app.initialRecharge && app.initialRecharge > 0) {
+      const initialTxn = new Transaction({
+        transactionId: `TXN-INIT-${Math.floor(100000 + Math.random() * 900000)}`,
+        user: app.user || null,
+        cardNumber: assignedCardNumber.slice(-4),
+        amount: app.initialRecharge,
+        type: "Recharge",
+        isDebit: false,
+        status: "Success",
+        paymentMethod: "Initial Card Setup",
+        description: `Initial MoveSmart Wallet Balance (${assignedCardNumber})`,
+      });
+      await initialTxn.save().catch(err => console.error("Initial Txn Error:", err));
+    }
 
     // Update Application Status
     app.status = "Approved";

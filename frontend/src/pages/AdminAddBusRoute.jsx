@@ -509,19 +509,34 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
   // ---------------- VERIFY ADMIN ACCESS & INITIAL FETCH ----------------
   useEffect(() => {
-    if (!user || user.role?.toLowerCase() !== "admin") {
+    const currentUser = getStoredUser() || user;
+    const token = getStoredToken();
+    const role = (currentUser?.role || "").toLowerCase().trim();
+
+    if (!currentUser || !token) {
       localStorage.setItem(
         "moveSmart_loginWarning",
         "Admin access required. Please sign in with an administrator account."
       );
-      navigate("/login");
-    } else {
-      fetchBuses();
-      fetchRoutes();
-      fetchSchedules();
-      fetchDrivers();
-      fetchDriverLeaves();
+      navigate("/login", { replace: true });
+      return;
     }
+
+    if (role === "driver") {
+      navigate("/dashboard/driver", { replace: true });
+      return;
+    }
+
+    if (role !== "admin") {
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+
+    fetchBuses();
+    fetchRoutes();
+    fetchSchedules();
+    fetchDrivers();
+    fetchDriverLeaves();
   }, [user, navigate]);
 
   const showNotification = (msg, isError = false) => {
@@ -3810,6 +3825,11 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
     </div>
   );
+
+  const currentRole = (user?.role || getStoredUser()?.role || "").toLowerCase().trim();
+  if ((!user && !getStoredUser()) || currentRole !== "admin") {
+    return null;
+  }
 
   if (isEmbedded) {
     return mainContent;

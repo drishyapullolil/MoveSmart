@@ -40,6 +40,7 @@ export default function Wallet() {
   const [user, setUser] = useState(null);
 
   // Initial State — Zero/Empty defaults to avoid masking backend failures
+  const [hasCard, setHasCard] = useState(false);
   const [balance, setBalance] = useState(0);
   const [lastFour, setLastFour] = useState("");
   const [cardNumber, setCardNumber] = useState("");
@@ -100,11 +101,20 @@ export default function Wallet() {
       console.log("Wallet Balance API 200 Response:", res.data);
 
       if (res.data) {
-        const fetchedBalance = Number(res.data.balance ?? 0);
+        const hasActiveCard = Boolean(res.data.hasCard && res.data.cardNumber);
+        setHasCard(hasActiveCard);
+        // Strictly 0 if user has no approved RFID card
+        const fetchedBalance = hasActiveCard ? Number(res.data.balance ?? 0) : 0;
         setBalance(fetchedBalance);
-        setLastFour(res.data.lastFour || "");
-        setCardNumber(res.data.cardNumber || "");
-        setIsLowBalance(fetchedBalance < 30);
+        setLastFour(hasActiveCard ? (res.data.lastFour || "") : "");
+        setCardNumber(hasActiveCard ? (res.data.cardNumber || "") : "");
+        setIsLowBalance(hasActiveCard && fetchedBalance < 30);
+      } else {
+        setHasCard(false);
+        setBalance(0);
+        setLastFour("");
+        setCardNumber("");
+        setIsLowBalance(false);
       }
     } catch (err) {
       // Log err.message, err.code, and err.response separately to distinguish CORS/Network failure vs HTTP status error
@@ -206,6 +216,10 @@ export default function Wallet() {
   // Handle Add Money Submit via Razorpay Checkout
   const handleAddMoney = async (e) => {
     e.preventDefault();
+    if (!hasCard) {
+      showToast("⚠️ You must have an approved RFID Card to recharge your wallet.");
+      return;
+    }
     const finalAmount = customAmount ? parseFloat(customAmount) : selectedQuickAmount;
 
     if (!finalAmount || finalAmount <= 0) {
@@ -346,7 +360,7 @@ export default function Wallet() {
         </div>
 
         {/* LOW BALANCE ALERT WARNING BANNER */}
-        {isLowBalance && (
+        {isLowBalance && hasCard && (
           <div style={{
             background: "rgba(225, 29, 72, 0.08)",
             border: "1.5px solid rgba(225, 29, 72, 0.3)",
@@ -372,7 +386,7 @@ export default function Wallet() {
           </div>
         )}
 
-        {/* Top Grid: Balance Card & Quick Recharge Card */}
+        {/* Top Grid: Balance Card & Quick Recharge / Book Card */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", marginBottom: "32px" }}>
           
           {/* 1. WALLET DASHBOARD BALANCE CARD */}
@@ -385,7 +399,7 @@ export default function Wallet() {
             position: "relative",
             display: "flex",
             flexDirection: "column",
-            justifyBetween: "space-between",
+            justifyContent: "space-between",
             border: "1px solid rgba(167, 139, 250, 0.3)",
           }}>
             <div>
@@ -393,20 +407,28 @@ export default function Wallet() {
                 <span style={{ fontSize: "12.5px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px", color: "#a78bfa" }}>
                   💰 Current Balance
                 </span>
-                <span style={{ background: "rgba(74, 222, 128, 0.15)", color: "#4ade80", border: "1px solid rgba(74, 222, 128, 0.3)", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "800" }}>
-                  🟢 REAL-TIME MONGODB CONNECTED
+                <span style={{
+                  background: hasCard ? "rgba(74, 222, 128, 0.15)" : "rgba(244, 63, 94, 0.2)",
+                  color: hasCard ? "#4ade80" : "#fda4af",
+                  border: `1px solid ${hasCard ? "rgba(74, 222, 128, 0.3)" : "rgba(244, 63, 94, 0.4)"}`,
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  fontSize: "11px",
+                  fontWeight: "800"
+                }}>
+                  {hasCard ? "🟢 RFID CARD ACTIVE" : "❌ NO RFID CARD LINKED"}
                 </span>
               </div>
 
               <div style={{ fontSize: "40px", fontWeight: "900", color: "#ffffff", letterSpacing: "-1px", marginBottom: "14px" }}>
-                {loadingBalance ? "₹ ..." : `₹ ${Number(balance || 0).toFixed(2)}`}
+                {loadingBalance ? "₹ ..." : (hasCard ? `₹ ${Number(balance || 0).toFixed(2)}` : "₹ 0.00")}
               </div>
 
               <div style={{ background: "rgba(255, 255, 255, 0.06)", borderRadius: "14px", padding: "14px 16px", border: "1px solid rgba(255, 255, 255, 0.1)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700", textTransform: "uppercase" }}>Linked Smart Card</div>
-                  <div style={{ fontSize: "14px", fontFamily: "monospace", fontWeight: "800", color: "#e2e8f0", marginTop: "2px" }}>
-                    {lastFour ? `•••• •••• ${lastFour}` : (cardNumber || "No Active Card")}
+                  <div style={{ fontSize: "14px", fontFamily: "monospace", fontWeight: "800", color: hasCard ? "#e2e8f0" : "#fda4af", marginTop: "2px" }}>
+                    {hasCard ? (lastFour ? `•••• •••• ${lastFour}` : cardNumber) : "No Active Card"}
                   </div>
                 </div>
                 <span style={{ fontSize: "20px" }}>🪪</span>
@@ -414,125 +436,190 @@ export default function Wallet() {
             </div>
 
             <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px dashed rgba(255, 255, 255, 0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#cbd5e1" }}>
-              <span>Auto Tap-In Ready</span>
-              <span style={{ color: "#4ade80", fontWeight: "800" }}>✓ Instant Bus Fare Deduction</span>
+              <span>{hasCard ? "Auto Tap-In Ready" : "Transit Access"}</span>
+              <span style={{ color: hasCard ? "#4ade80" : "#fda4af", fontWeight: "800" }}>
+                {hasCard ? "✓ Instant Bus Fare Deduction" : "⚠️ Card Required to Travel"}
+              </span>
             </div>
           </div>
 
-          {/* 2. ADD MONEY (RAZORPAY RECHARGE HUB) */}
-          <div id="recharge-section" style={{ background: "#ffffff", borderRadius: "24px", padding: "28px", border: "1px solid #e2e8f0", boxShadow: "0 10px 25px rgba(0, 0, 0, 0.04)" }}>
-            <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1e293b", margin: "0 0 4px 0", display: "flex", alignItems: "center", gap: "8px" }}>
-              💳 Add Money via Razorpay
-            </h3>
-            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "0 0 18px 0" }}>
-              Select an amount to pay securely via UPI, Credit/Debit Card, Netbanking, or Wallet using Razorpay.
-            </p>
-
-            <form onSubmit={handleAddMoney}>
-              
-              {/* Quick Amount Buttons */}
-              <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
-                Quick Recharge Amount
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "16px" }}>
-                {[50, 100, 200, 500].map((amt) => {
-                  const isSelected = selectedQuickAmount === amt && !customAmount;
-                  return (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => handleSelectQuickAmount(amt)}
-                      style={{
-                        padding: "12px 6px",
-                        borderRadius: "12px",
-                        border: `2px solid ${isSelected ? "#6d28d9" : "#e2e8f0"}`,
-                        background: isSelected ? "rgba(109, 40, 217, 0.08)" : "#f8fafc",
-                        color: isSelected ? "#6d28d9" : "#334155",
-                        fontWeight: "800",
-                        fontSize: "14px",
-                        cursor: "pointer",
-                        transition: "all 0.2s ease",
-                      }}
-                    >
-                      ₹{amt}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Custom Amount Input */}
-              <div style={{ marginBottom: "18px" }}>
-                <label htmlFor="customAmount" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                  Or Enter Custom Amount (₹)
-                </label>
-                <input
-                  id="customAmount"
-                  type="number"
-                  min="1"
-                  max="10000"
-                  className="rta-input-field"
-                  placeholder="e.g. 150"
-                  value={customAmount}
-                  onChange={(e) => {
-                    setCustomAmount(e.target.value);
-                    setSelectedQuickAmount(null);
-                  }}
-                />
-              </div>
-
-              {/* Payment Method Badge */}
-              <div style={{ marginBottom: "20px" }}>
-                <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
-                  🔒 Payment Gateway
-                </label>
+          {/* 2. ADD MONEY (OR BOOK RFID CARD IF USER HAS NO CARD) */}
+          {!hasCard && !loadingBalance ? (
+            <div style={{
+              background: "linear-gradient(135deg, #ffffff 0%, #faf5ff 100%)",
+              borderRadius: "24px",
+              padding: "28px",
+              border: "2px dashed #c084fc",
+              boxShadow: "0 10px 25px rgba(109, 40, 217, 0.06)",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+              textAlign: "center",
+            }}>
+              <div>
                 <div style={{
-                  padding: "12px 16px",
-                  borderRadius: "14px",
-                  border: "1.5px solid #2e1065",
-                  background: "rgba(46, 16, 101, 0.04)",
-                  display: "flex",
+                  width: "58px",
+                  height: "58px",
+                  borderRadius: "18px",
+                  background: "rgba(109, 40, 217, 0.1)",
+                  color: "#6d28d9",
+                  display: "inline-flex",
                   alignItems: "center",
-                  justifyContent: "space-between"
+                  justifyContent: "center",
+                  fontSize: "28px",
+                  marginBottom: "14px"
                 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <span style={{ fontSize: "20px" }}>🔷</span>
-                    <div>
-                      <strong style={{ fontSize: "13px", color: "#2e1065", display: "block" }}>Razorpay Checkout</strong>
-                      <span style={{ fontSize: "11px", color: "#64748b" }}>UPI, GPay, PhonePe, Cards, NetBanking</span>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: "11px", fontWeight: "800", background: "#2e1065", color: "#ffffff", padding: "3px 8px", borderRadius: "6px" }}>
-                    SECURED
-                  </span>
+                  🪪
+                </div>
+                <h3 style={{ fontSize: "19px", fontWeight: "900", color: "#1e293b", margin: "0 0 6px 0" }}>
+                  Book an RFID Card
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", lineHeight: "1.5", margin: "0 auto 16px auto", maxWidth: "340px" }}>
+                  You don't have an active RFID Card linked to your account. Apply for an RFID Smart Card to unlock instant wallet recharges and contactless bus tap-in.
+                </p>
+                
+                <div style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.25)", borderRadius: "12px", padding: "10px 14px", fontSize: "12px", color: "#92400e", fontWeight: "600", marginBottom: "20px", textAlign: "left" }}>
+                  🔒 Adding funds to wallet is enabled immediately once your RFID card is issued &amp; active.
                 </div>
               </div>
 
-              {/* Submit Add Money Button */}
               <button
-                type="submit"
-                disabled={recharging}
+                onClick={() => navigate("/dashboard/card-application")}
                 style={{
                   width: "100%",
                   padding: "14px",
                   borderRadius: "14px",
-                  background: "linear-gradient(135deg, #2e1065 0%, #4c1d95 100%)",
+                  background: "linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%)",
                   color: "#ffffff",
                   border: "none",
                   fontWeight: "800",
                   fontSize: "15px",
-                  cursor: recharging ? "not-allowed" : "pointer",
-                  boxShadow: "0 8px 20px rgba(46, 16, 101, 0.25)",
+                  cursor: "pointer",
+                  boxShadow: "0 8px 20px rgba(109, 40, 217, 0.25)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "8px",
                 }}
               >
-                {recharging ? "Opening Razorpay..." : `Pay via Razorpay (₹${customAmount || selectedQuickAmount || 0}) →`}
+                Book / Apply RFID Card →
               </button>
+            </div>
+          ) : (
+            <div id="recharge-section" style={{ background: "#ffffff", borderRadius: "24px", padding: "28px", border: "1px solid #e2e8f0", boxShadow: "0 10px 25px rgba(0, 0, 0, 0.04)" }}>
+              <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1e293b", margin: "0 0 4px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+                💳 Add Money via Razorpay
+              </h3>
+              <p style={{ fontSize: "12.5px", color: "#64748b", margin: "0 0 18px 0" }}>
+                Select an amount to pay securely via UPI, Credit/Debit Card, Netbanking, or Wallet using Razorpay.
+              </p>
 
-            </form>
-          </div>
+              <form onSubmit={handleAddMoney}>
+                
+                {/* Quick Amount Buttons */}
+                <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
+                  Quick Recharge Amount
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "16px" }}>
+                  {[50, 100, 200, 500].map((amt) => {
+                    const isSelected = selectedQuickAmount === amt && !customAmount;
+                    return (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => handleSelectQuickAmount(amt)}
+                        style={{
+                          padding: "12px 6px",
+                          borderRadius: "12px",
+                          border: `2px solid ${isSelected ? "#6d28d9" : "#e2e8f0"}`,
+                          background: isSelected ? "rgba(109, 40, 217, 0.08)" : "#f8fafc",
+                          color: isSelected ? "#6d28d9" : "#334155",
+                          fontWeight: "800",
+                          fontSize: "14px",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        ₹{amt}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Amount Input */}
+                <div style={{ marginBottom: "18px" }}>
+                  <label htmlFor="customAmount" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                    Or Enter Custom Amount (₹)
+                  </label>
+                  <input
+                    id="customAmount"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    className="rta-input-field"
+                    placeholder="e.g. 150"
+                    value={customAmount}
+                    onChange={(e) => {
+                      setCustomAmount(e.target.value);
+                      setSelectedQuickAmount(null);
+                    }}
+                  />
+                </div>
+
+                {/* Payment Method Badge */}
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
+                    🔒 Payment Gateway
+                  </label>
+                  <div style={{
+                    padding: "12px 16px",
+                    borderRadius: "14px",
+                    border: "1.5px solid #2e1065",
+                    background: "rgba(46, 16, 101, 0.04)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between"
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <span style={{ fontSize: "20px" }}>🔷</span>
+                      <div>
+                        <strong style={{ fontSize: "13px", color: "#2e1065", display: "block" }}>Razorpay Checkout</strong>
+                        <span style={{ fontSize: "11px", color: "#64748b" }}>UPI, GPay, PhonePe, Cards, NetBanking</span>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: "11px", fontWeight: "800", background: "#2e1065", color: "#ffffff", padding: "3px 8px", borderRadius: "6px" }}>
+                      SECURED
+                    </span>
+                  </div>
+                </div>
+
+                {/* Submit Add Money Button */}
+                <button
+                  type="submit"
+                  disabled={recharging}
+                  style={{
+                    width: "100%",
+                    padding: "14px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #2e1065 0%, #4c1d95 100%)",
+                    color: "#ffffff",
+                    border: "none",
+                    fontWeight: "800",
+                    fontSize: "15px",
+                    cursor: recharging ? "not-allowed" : "pointer",
+                    boxShadow: "0 8px 20px rgba(46, 16, 101, 0.25)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                  }}
+                >
+                  {recharging ? "Opening Razorpay..." : `Pay via Razorpay (₹${customAmount || selectedQuickAmount || 0}) →`}
+                </button>
+
+              </form>
+            </div>
+          )}
 
         </div>
 
@@ -702,7 +789,7 @@ export default function Wallet() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#64748b" }}>Smart Card Last 4:</span>
-                <strong style={{ fontFamily: "monospace" }}>•••• {selectedTxn.cardNumber || lastFour || "4910"}</strong>
+                <strong style={{ fontFamily: "monospace" }}>{selectedTxn.cardNumber || lastFour ? `•••• ${selectedTxn.cardNumber || lastFour}` : "N/A"}</strong>
               </div>
             </div>
 

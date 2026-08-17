@@ -113,68 +113,96 @@ export default function Header() {
             border: "1px solid var(--border-color)",
           }}
         >
-          <Link
-            to="/dashboard"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "8px 16px",
-              borderRadius: "12px",
-              fontSize: "13px",
-              fontWeight: "700",
-              textDecoration: "none",
-              transition: "all 0.2s ease",
-              background: isActive("/dashboard") ? "linear-gradient(135deg, var(--primary), #2f855a)" : "transparent",
-              color: isActive("/dashboard") ? "#ffffff" : "var(--text-main)",
-              boxShadow: isActive("/dashboard") ? "0 4px 12px rgba(56, 161, 105, 0.3)" : "none",
-            }}
-          >
-            <LayoutDashboard size={15} />
-            <span>Dashboard</span>
-          </Link>
+          {/* Dashboard / Console Link */}
+          {user?.role?.toLowerCase() === "driver" ? (
+            <Link
+              to="/dashboard/driver"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "8px 16px",
+                borderRadius: "12px",
+                fontSize: "13px",
+                fontWeight: "700",
+                textDecoration: "none",
+                transition: "all 0.2s ease",
+                background: isActive("/dashboard/driver") || isActive("/driver") ? "linear-gradient(135deg, #eab308, #ca8a04)" : "transparent",
+                color: isActive("/dashboard/driver") || isActive("/driver") ? "#ffffff" : "var(--text-main)",
+                boxShadow: isActive("/dashboard/driver") || isActive("/driver") ? "0 4px 12px rgba(234, 179, 8, 0.3)" : "none",
+              }}
+            >
+              <Navigation size={15} />
+              <span>Driver Console</span>
+            </Link>
+          ) : (
+            <Link
+              to="/dashboard"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "8px 16px",
+                borderRadius: "12px",
+                fontSize: "13px",
+                fontWeight: "700",
+                textDecoration: "none",
+                transition: "all 0.2s ease",
+                background: isActive("/dashboard") ? "linear-gradient(135deg, var(--primary), #2f855a)" : "transparent",
+                color: isActive("/dashboard") ? "#ffffff" : "var(--text-main)",
+                boxShadow: isActive("/dashboard") ? "0 4px 12px rgba(56, 161, 105, 0.3)" : "none",
+              }}
+            >
+              <LayoutDashboard size={15} />
+              <span>Dashboard</span>
+            </Link>
+          )}
 
-          <Link
-            to="/book-bus"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "8px 16px",
-              borderRadius: "12px",
-              fontSize: "13px",
-              fontWeight: "700",
-              textDecoration: "none",
-              transition: "all 0.2s ease",
-              background: isActive("/book-bus") ? "linear-gradient(135deg, var(--primary), var(--accent-purple))" : "transparent",
-              color: isActive("/book-bus") ? "#ffffff" : "var(--text-main)",
-              boxShadow: isActive("/book-bus") ? "0 4px 12px rgba(139, 92, 246, 0.3)" : "none",
-            }}
-          >
-            <Bus size={15} />
-            <span>Book Bus</span>
-          </Link>
+          {user?.role?.toLowerCase() !== "driver" && (
+            <>
+              <Link
+                to="/book-bus"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "8px 16px",
+                  borderRadius: "12px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  background: isActive("/book-bus") ? "linear-gradient(135deg, var(--primary), var(--accent-purple))" : "transparent",
+                  color: isActive("/book-bus") ? "#ffffff" : "var(--text-main)",
+                  boxShadow: isActive("/book-bus") ? "0 4px 12px rgba(139, 92, 246, 0.3)" : "none",
+                }}
+              >
+                <Bus size={15} />
+                <span>Book Bus</span>
+              </Link>
 
-          <Link
-            to="/dashboard/card-application"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "8px 16px",
-              borderRadius: "12px",
-              fontSize: "13px",
-              fontWeight: "700",
-              textDecoration: "none",
-              transition: "all 0.2s ease",
-              background: isActive("/dashboard/card-application") ? "linear-gradient(135deg, var(--accent-purple), #7c3aed)" : "transparent",
-              color: isActive("/dashboard/card-application") ? "#ffffff" : "var(--text-main)",
-              boxShadow: isActive("/dashboard/card-application") ? "0 4px 12px rgba(139, 92, 246, 0.3)" : "none",
-            }}
-          >
-            <CreditCard size={15} />
-            <span>RFID Pass</span>
-          </Link>
+              <Link
+                to="/dashboard/card-application"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "8px 16px",
+                  borderRadius: "12px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  background: isActive("/dashboard/card-application") ? "linear-gradient(135deg, var(--accent-purple), #7c3aed)" : "transparent",
+                  color: isActive("/dashboard/card-application") ? "#ffffff" : "var(--text-main)",
+                  boxShadow: isActive("/dashboard/card-application") ? "0 4px 12px rgba(139, 92, 246, 0.3)" : "none",
+                }}
+              >
+                <CreditCard size={15} />
+                <span>RFID Pass</span>
+              </Link>
+            </>
+          )}
 
           <Link
             to="/wallet"
@@ -197,30 +225,10 @@ export default function Header() {
             <span>Wallet</span>
           </Link>
 
-          <Link
-            to="/apply-driver"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "8px 16px",
-              borderRadius: "12px",
-              fontSize: "13px",
-              fontWeight: "700",
-              textDecoration: "none",
-              transition: "all 0.2s ease",
-              background: isActive("/apply-driver") ? "linear-gradient(135deg, #6d28d9, #4c1d95)" : "transparent",
-              color: isActive("/apply-driver") ? "#ffffff" : "var(--text-main)",
-              boxShadow: isActive("/apply-driver") ? "0 4px 12px rgba(109, 40, 217, 0.3)" : "none",
-            }}
-          >
-            <UserCheck size={15} />
-            <span>Apply Driver</span>
-          </Link>
-
-          {user?.role?.toLowerCase() === "driver" && (
+          {/* Apply Driver - ONLY shown to regular users/passengers, NOT drivers or admins */}
+          {user?.role?.toLowerCase() !== "driver" && user?.role?.toLowerCase() !== "admin" && (
             <Link
-              to="/driver"
+              to="/apply-driver"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -231,15 +239,17 @@ export default function Header() {
                 fontWeight: "700",
                 textDecoration: "none",
                 transition: "all 0.2s ease",
-                background: isActive("/driver") ? "linear-gradient(135deg, #eab308, #ca8a04)" : "transparent",
-                color: isActive("/driver") ? "#ffffff" : "var(--text-main)",
+                background: isActive("/apply-driver") ? "linear-gradient(135deg, #6d28d9, #4c1d95)" : "transparent",
+                color: isActive("/apply-driver") ? "#ffffff" : "var(--text-main)",
+                boxShadow: isActive("/apply-driver") ? "0 4px 12px rgba(109, 40, 217, 0.3)" : "none",
               }}
             >
-              <Navigation size={15} />
-              <span>Driver</span>
+              <UserCheck size={15} />
+              <span>Apply Driver</span>
             </Link>
           )}
 
+          {/* Admin link - ONLY shown to Admin */}
           {user?.role?.toLowerCase() === "admin" && (
             <Link
               to="/admin"
@@ -413,27 +423,52 @@ export default function Header() {
             gap: "10px",
           }}
         >
-          <Link
-            to="/dashboard"
-            onClick={() => setMobileMenuOpen(false)}
-            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <LayoutDashboard size={16} /> Dashboard
-          </Link>
-          <Link
-            to="/book-bus"
-            onClick={() => setMobileMenuOpen(false)}
-            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <Bus size={16} /> Book Bus
-          </Link>
-          <Link
-            to="/dashboard/card-application"
-            onClick={() => setMobileMenuOpen(false)}
-            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <CreditCard size={16} /> RFID Card Pass
-          </Link>
+          {user?.role?.toLowerCase() === "driver" ? (
+            <>
+              <Link
+                to="/dashboard/driver"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#ca8a04", background: "rgba(234, 179, 8, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <Navigation size={16} /> Driver Console
+              </Link>
+              <Link
+                to="/driver/notifications"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <Bell size={16} /> Notifications
+              </Link>
+            </>
+          ) : (
+            <Link
+              to="/dashboard"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <LayoutDashboard size={16} /> Dashboard
+            </Link>
+          )}
+
+          {user?.role?.toLowerCase() !== "driver" && (
+            <>
+              <Link
+                to="/book-bus"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <Bus size={16} /> Book Bus
+              </Link>
+              <Link
+                to="/dashboard/card-application"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "var(--text-main)", display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <CreditCard size={16} /> RFID Card Pass
+              </Link>
+            </>
+          )}
+
           <Link
             to="/wallet"
             onClick={() => setMobileMenuOpen(false)}
@@ -441,13 +476,27 @@ export default function Header() {
           >
             <Wallet size={16} /> MoveSmart Wallet
           </Link>
-          <Link
-            to="/apply-driver"
-            onClick={() => setMobileMenuOpen(false)}
-            style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#6d28d9", background: "rgba(109, 40, 217, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <UserCheck size={16} /> Apply Driver
-          </Link>
+
+          {user?.role?.toLowerCase() === "admin" && (
+            <Link
+              to="/admin"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#0284c7", background: "rgba(14, 165, 233, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <Shield size={16} /> Admin Console
+            </Link>
+          )}
+
+          {user?.role?.toLowerCase() !== "driver" && user?.role?.toLowerCase() !== "admin" && (
+            <Link
+              to="/apply-driver"
+              onClick={() => setMobileMenuOpen(false)}
+              style={{ padding: "10px", borderRadius: "10px", fontWeight: 700, fontSize: "14px", textDecoration: "none", color: "#6d28d9", background: "rgba(109, 40, 217, 0.08)", display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <UserCheck size={16} /> Apply Driver
+            </Link>
+          )}
+
           {user ? (
             <Link
               to="/profile"

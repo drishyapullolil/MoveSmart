@@ -45,13 +45,14 @@ function getStatusBadge(status) {
 
 const INITIAL_FORM = {
   // 1. Personal Information
+  firstName: "",
+  secondName: "",
   fullName: "",
   dob: "",
   gender: "Male",
   countryCode: "+91",
   phone: "",
   email: "",
-  phoneVerified: false,
 
   // 2. Address Details
   street: "",
@@ -64,14 +65,18 @@ const INITIAL_FORM = {
   idType: "Aadhaar",
   idNumber: "",
   idProofName: "",
+  idProofUrl: "",
   cardCategory: "Regular", // Regular / Student / Senior Citizen
   institutionName: "",
   studentIdName: "",
+  studentIdUrl: "",
 
   // 4. Emergency Contact
   frequentSource: "N/A",
   frequentDestination: "N/A",
   preferredTime: "Morning",
+  emergencyFirstName: "",
+  emergencySecondName: "",
   emergencyName: "",
   emergencyRelation: "",
   emergencyCountryCode: "+91",
@@ -94,23 +99,25 @@ export default function CardApplication() {
   const [formError, setFormError] = useState("");
   const [submittedAppInfo, setSubmittedAppInfo] = useState(null);
 
-  // OTP Simulation States
-  const [otpSent, setOtpSent] = useState(false);
-  const [enteredOtp, setEnteredOtp] = useState("");
-  const [otpMessage, setOtpMessage] = useState("");
-
   const [user] = useState(() => getStoredUser());
 
   // Pre-fill user details if available
   useEffect(() => {
     if (user) {
+      const parts = (user.name || "").trim().split(/\s+/);
+      const fName = parts[0] || "";
+      const sName = parts.slice(1).join(" ") || "";
       setFormData((prev) => ({
         ...prev,
+        firstName: prev.firstName || fName,
+        secondName: prev.secondName || sName,
         fullName: prev.fullName || user.name || "",
         email: prev.email || user.email || "",
       }));
     }
   }, [user]);
+
+  const [existingCard, setExistingCard] = useState(null);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -119,11 +126,26 @@ export default function CardApplication() {
       if (stored?.id || stored?._id) params.userId = stored.id || stored._id;
       if (stored?.email) params.email = stored.email;
 
-      const res = await axios.get(`${API_BASE}/my-applications`, {
-        params,
-        withCredentials: true,
-      });
-      setApplications(res.data || []);
+      const [appsRes, balRes] = await Promise.all([
+        axios.get(`${API_BASE}/my-applications`, { params, withCredentials: true }),
+        axios.get(`/api/wallet/balance`, { params, withCredentials: true }),
+      ]);
+
+      const apps = appsRes.data || [];
+      setApplications(apps);
+
+      if (balRes.data && balRes.data.hasCard && balRes.data.cardNumber) {
+        setExistingCard(balRes.data);
+      } else {
+        const approved = apps.find((a) => a.status === "Approved");
+        if (approved) {
+          setExistingCard({
+            hasCard: true,
+            cardNumber: approved.assignedCardNumber || "Issued",
+            cardType: approved.cardCategory ? `${approved.cardCategory} Pass` : "Regular Pass",
+          });
+        }
+      }
     } catch (err) {
       console.error("Failed to load applications:", err);
     } finally {
@@ -137,19 +159,42 @@ export default function CardApplication() {
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+    let val = type === "checkbox" ? checked : value;
+
+    if (name === "phone" || name === "emergencyPhone") {
+      val = typeof value === "string" ? value.replace(/[^\d\s-]/g, "") : value;
+    }
+
+    if (name === "idNumber" && formData.cardCategory !== "Foreigner") {
+      val = typeof value === "string" ? value.replace(/\D/g, "") : value;
+    }
+
+    if (name === "street") {
+      val = typeof value === "string" ? value.replace(/[^A-Za-z0-9(),]/g, "") : value;
+    }
+
     setFormData((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : value,
+      [name]: val,
     }));
   };
 
-  const handleFileUpload = (e, fieldName) => {
+  const handleFileUpload = (e, nameField, urlField) => {
     const file = e.target.files[0];
     if (file) {
-      setFormData((prev) => ({
-        ...prev,
-        [fieldName]: file.name,
-      }));
+      if (file.size > 5 * 1024 * 1024) {
+        setFormError("Uploaded document exceeds 5MB size limit. Please choose a smaller image.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData((prev) => ({
+          ...prev,
+          [nameField]: file.name,
+          [urlField]: reader.result,
+        }));
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -207,7 +252,9 @@ export default function CardApplication() {
   };
 
   // Real-time field validations for all form fields
-  const nameValidation = validateName(formData.fullName);
+  const firstNameValidation = validateName(formData.firstName, "First Name");
+  const secondNameValidation = validateName(formData.secondName, "Second Name");
+  const computedFullName = `${(formData.firstName || "").trim()} ${(formData.secondName || "").trim()}`.trim();
   const dobValidation = validateDob(formData.dob);
   const emailValidation = validateEmail(formData.email);
   const phoneValidation = validatePhoneNumber(formData.countryCode || "+91", formData.phone);
@@ -222,34 +269,14 @@ export default function CardApplication() {
 
   const frequentSourceValidation = validateLocationName(formData.frequentSource, "Frequent Starting Station");
   const frequentDestinationValidation = validateLocationName(formData.frequentDestination, "Frequent Destination");
-  const emergencyNameValidation = validateName(formData.emergencyName);
+  const emergencyFirstNameValidation = validateName(formData.emergencyFirstName, "Contact First Name");
+  const emergencySecondNameValidation = validateName(formData.emergencySecondName, "Contact Second Name");
+  const computedEmergencyFullName = `${(formData.emergencyFirstName || "").trim()} ${(formData.emergencySecondName || "").trim()}`.trim();
   const emergencyPhoneValidation = validatePhoneNumber(formData.emergencyCountryCode || "+91", formData.emergencyPhone);
-
-  // OTP Verification Handlers
-  const handleSendOtp = () => {
-    if (!phoneValidation.valid) {
-      setOtpMessage(phoneValidation.message || "Please enter a valid phone number");
-      return;
-    }
-    setOtpSent(true);
-    setOtpMessage(`📲 OTP code sent to ${phoneValidation.formatted}! Use simulation code: 4829`);
-  };
-
-  const handleVerifyOtp = () => {
-    if (enteredOtp === "4829" || enteredOtp.trim() === "1234") {
-      setFormData((prev) => ({ ...prev, phoneVerified: true }));
-      setOtpMessage("✅ Phone number verified successfully!");
-    } else {
-      setOtpMessage("❌ Invalid OTP. Try code: 4829");
-    }
-  };
 
   const handleReset = () => {
     setFormData(INITIAL_FORM);
     setStep(1);
-    setOtpSent(false);
-    setEnteredOtp("");
-    setOtpMessage("");
     setFormError("");
     setSubmittedAppInfo(null);
   };
@@ -257,12 +284,14 @@ export default function CardApplication() {
   const validateStep = (targetStep = step) => {
     setFormError("");
     if (targetStep === 1) {
-      if (!nameValidation.valid) return nameValidation.message;
+      if (!formData.firstName || !formData.firstName.trim()) return "First Name is required.";
+      if (!firstNameValidation.valid) return firstNameValidation.message;
+      if (!formData.secondName || !formData.secondName.trim()) return "Second Name / Last Name is required.";
+      if (!secondNameValidation.valid) return secondNameValidation.message;
       if (!dobValidation.valid) return dobValidation.message;
       if (!formData.gender) return "Gender selection is required.";
       if (!formData.phone.trim()) return "Phone Number is required.";
       if (!phoneValidation.valid) return phoneValidation.message;
-      if (!formData.phoneVerified) return "⚠️ Please verify your phone number via OTP before proceeding to Step 2.";
       if (!emailValidation.valid) return emailValidation.message;
     }
     if (targetStep === 2) {
@@ -287,8 +316,10 @@ export default function CardApplication() {
       }
     }
     if (targetStep === 4) {
-      if (!formData.emergencyName.trim()) return "Emergency Contact Name is required.";
-      if (!emergencyNameValidation.valid) return `Emergency Contact Name error: ${emergencyNameValidation.message}`;
+      if (!formData.emergencyFirstName || !formData.emergencyFirstName.trim()) return "Emergency Contact First Name is required.";
+      if (!emergencyFirstNameValidation.valid) return emergencyFirstNameValidation.message;
+      if (!formData.emergencySecondName || !formData.emergencySecondName.trim()) return "Emergency Contact Second Name is required.";
+      if (!emergencySecondNameValidation.valid) return emergencySecondNameValidation.message;
       if (!formData.emergencyRelation || !formData.emergencyRelation.trim() || formData.emergencyRelation.trim().length < 2) {
         return "Emergency Contact Relation is required (e.g. Parent, Spouse).";
       }
@@ -299,7 +330,13 @@ export default function CardApplication() {
       }
     }
     if (targetStep === 5) {
-      if (!formData.initialRecharge) return "Initial Wallet Recharge amount selection is required.";
+      const rechargeVal = Number(formData.initialRecharge);
+      if (!formData.initialRecharge || isNaN(rechargeVal) || rechargeVal < 10) {
+        return "Initial recharge amount must be at least ₹10.";
+      }
+      if (rechargeVal > 10000) {
+        return "Initial recharge amount cannot exceed ₹10,000.";
+      }
       if (!formData.termsAccepted) return "You must accept the Terms & Conditions to submit application.";
     }
     return null;
@@ -346,15 +383,21 @@ export default function CardApplication() {
 
     const executeSubmission = async (paymentId = "") => {
       try {
+        const full = computedFullName || formData.fullName || user?.name || "Card Applicant";
+        const emFull = computedEmergencyFullName || formData.emergencyName || "Emergency Contact";
         const payload = {
           ...formData,
+          fullName: full,
+          emergencyName: emFull,
+          emergencyFirstName: formData.emergencyFirstName,
+          emergencySecondName: formData.emergencySecondName,
           phone: phoneValidation.formatted || `${formData.countryCode} ${formData.phone}`,
           emergencyPhone: formData.emergencyPhone ? emergencyPhoneValidation.formatted || `${formData.emergencyCountryCode} ${formData.emergencyPhone}` : "",
           paymentId: paymentId || undefined,
           paymentMethod: "Razorpay",
           userId: user?.id || user?._id || null,
-          idProofUrl: formData.idProofName ? `uploads/id_${formData.idProofName}` : "",
-          studentIdUrl: formData.studentIdName ? `uploads/student_${formData.studentIdName}` : "",
+          idProofUrl: formData.idProofUrl || (formData.idProofName ? `uploads/id_${formData.idProofName}` : ""),
+          studentIdUrl: formData.studentIdUrl || (formData.studentIdName ? `uploads/student_${formData.studentIdName}` : ""),
         };
 
         const res = await axios.post(`${API_BASE}/apply`, payload, {
@@ -372,11 +415,13 @@ export default function CardApplication() {
       }
     };
 
+    const applicantDisplayName = computedFullName || formData.fullName || user?.name || "Card Applicant";
+
     processRazorpayPayment({
       amount: initialAmount,
       description: `MoveSmart Nol Card Application (${formData.cardCategory})`,
       userEmail: formData.email || user?.email || "",
-      userName: formData.fullName || user?.name || "Card Applicant",
+      userName: applicantDisplayName,
       userPhone: formData.phone || "",
       paymentType: "card_application",
       onSuccess: (data) => {
@@ -397,11 +442,33 @@ export default function CardApplication() {
       <Header />
 
       {/* Hero Banner Header */}
-      <header className="rta-hero" style={{ background: "linear-gradient(135deg, #132418 0%, #1f1938 100%)", padding: "50px 5% 90px", textAlign: "center", color: "#fff" }}>
-        <h1 className="rta-hero-title" style={{ fontSize: "36px", fontWeight: "800" }}>
+      <header className="rta-hero" style={{ background: "linear-gradient(135deg, #132418 0%, #1f1938 100%)", padding: "45px 5% 90px", textAlign: "center", color: "#fff" }}>
+        
+        {/* Top Notice Banner */}
+        <div style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "7px 20px",
+          borderRadius: "999px",
+          background: "rgba(234, 179, 8, 0.2)",
+          border: "1.5px solid rgba(234, 179, 8, 0.5)",
+          color: "#fef08a",
+          fontSize: "13px",
+          fontWeight: "800",
+          letterSpacing: "0.5px",
+          marginBottom: "18px",
+          backdropFilter: "blur(8px)",
+          boxShadow: "0 4px 15px rgba(0,0,0,0.25)",
+        }}>
+          <span>⚠️</span>
+          <span>ONE USER IS ONLY ALLOWED ONE RFID CARD</span>
+        </div>
+
+        <h1 className="rta-hero-title" style={{ fontSize: "36px", fontWeight: "800", margin: "0 0 10px 0" }}>
           MoveSmart <span>RFID Travel Card Application</span>
         </h1>
-        <p className="rta-hero-subtitle" style={{ fontSize: "15px", opacity: 0.85, maxWidth: "600px", margin: "10px auto 0" }}>
+        <p className="rta-hero-subtitle" style={{ fontSize: "15px", opacity: 0.85, maxWidth: "600px", margin: "0 auto" }}>
           Apply for your smart contactless RFID pass for buses, express routes, and seamless transit across Kerala.
         </p>
       </header>
@@ -409,46 +476,134 @@ export default function CardApplication() {
       {/* Main Form Container */}
       <main style={{ maxWidth: "950px", margin: "-50px auto 60px", width: "92%", position: "relative", zIndex: 10 }}>
 
-        {/* Step Progress Bar */}
-        <div style={{ background: "#ffffff", borderRadius: "20px", padding: "20px 24px", marginBottom: "24px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", overflowX: "auto" }}>
-          {[
-            { num: 1, title: "Personal" },
-            { num: 2, title: "Address" },
-            { num: 3, title: "ID & Category" },
-            { num: 4, title: "Preferences" },
-            { num: 5, title: "Payment & Safety" },
-          ].map((s) => {
-            const isActive = step === s.num;
-            const isCompleted = step > s.num;
-            return (
-              <div key={s.num} style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
-                <div
-                  style={{
-                    width: "34px",
-                    height: "34px",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: "800",
-                    fontSize: "13px",
-                    background: isCompleted ? "#38a169" : isActive ? "linear-gradient(135deg, #38a169, #8b5cf6)" : "#e2e8f0",
-                    color: isCompleted || isActive ? "#ffffff" : "#64748b",
-                    boxShadow: isActive ? "0 4px 12px rgba(56, 161, 105, 0.3)" : "none",
-                  }}
-                >
-                  {isCompleted ? "✓" : s.num}
-                </div>
-                <span style={{ fontSize: "13px", fontWeight: isActive ? "800" : "600", color: isActive ? "var(--primary)" : "#64748b" }}>
-                  {s.title}
-                </span>
-                {s.num < 5 && <div style={{ width: "24px", height: "2px", background: isCompleted ? "#38a169" : "#e2e8f0", margin: "0 6px" }} />}
-              </div>
-            );
-          })}
-        </div>
+        {/* 🔒 ACTIVE RFID CARD ALREADY LINKED (SINGLE CARD ENFORCEMENT) */}
+        {existingCard ? (
+          <div style={{
+            background: "linear-gradient(135deg, #1e1b4b 0%, #2e1065 100%)",
+            borderRadius: "24px",
+            padding: "36px 30px",
+            color: "#ffffff",
+            marginBottom: "28px",
+            boxShadow: "0 15px 35px rgba(30, 27, 75, 0.25)",
+            border: "1px solid rgba(167, 139, 250, 0.4)",
+            textAlign: "center",
+          }}>
+            <div style={{
+              width: "64px",
+              height: "64px",
+              borderRadius: "50%",
+              background: "rgba(74, 222, 128, 0.2)",
+              color: "#4ade80",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "32px",
+              marginBottom: "14px",
+              border: "1px solid rgba(74, 222, 128, 0.4)"
+            }}>
+              🪪
+            </div>
+            <h2 style={{ fontSize: "24px", fontWeight: "900", margin: "0 0 8px 0" }}>
+              Active RFID Card Already Linked
+            </h2>
+            <p style={{ fontSize: "14px", color: "#cbd5e1", maxWidth: "560px", margin: "0 auto 20px auto", lineHeight: "1.6" }}>
+              Each passenger is permitted strictly <strong>one RFID Smart Card</strong> per account. Since you already possess an active transit pass, you cannot apply for another card.
+            </p>
 
-        {/* Main Application Form Box */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.08)",
+              borderRadius: "16px",
+              padding: "16px 24px",
+              maxWidth: "460px",
+              margin: "0 auto 24px auto",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+            }}>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: "11px", color: "#a78bfa", textTransform: "uppercase", fontWeight: "800" }}>Linked Card Number</div>
+                <div style={{ fontSize: "16px", fontWeight: "900", fontFamily: "monospace", color: "#ffffff", marginTop: "2px" }}>
+                  {existingCard.cardNumber ? `•••• •••• ${existingCard.cardNumber.slice(-4)}` : "Approved RFID Pass"}
+                </div>
+              </div>
+              <span style={{ background: "rgba(74, 222, 128, 0.2)", color: "#4ade80", padding: "4px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: "800", border: "1px solid rgba(74, 222, 128, 0.3)" }}>
+                🟢 ACTIVE PASS
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
+              <Link to="/wallet" style={{
+                padding: "12px 24px",
+                borderRadius: "12px",
+                background: "linear-gradient(135deg, #38a169 0%, #2f855a 100%)",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontWeight: "800",
+                fontSize: "14px",
+                boxShadow: "0 4px 14px rgba(56, 161, 105, 0.3)",
+              }}>
+                Open MoveSmart Wallet 💳
+              </Link>
+              <Link to="/dashboard" style={{
+                padding: "12px 24px",
+                borderRadius: "12px",
+                background: "rgba(255, 255, 255, 0.15)",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontWeight: "700",
+                fontSize: "14px",
+                border: "1px solid rgba(255, 255, 255, 0.25)",
+              }}>
+                ← Back to Dashboard
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Step Progress Bar */}
+            <div style={{ background: "#ffffff", borderRadius: "20px", padding: "20px 24px", marginBottom: "24px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", overflowX: "auto" }}>
+              {[
+                { num: 1, title: "Personal" },
+                { num: 2, title: "Address" },
+                { num: 3, title: "ID & Category" },
+                { num: 4, title: "Preferences" },
+                { num: 5, title: "Payment & Safety" },
+              ].map((s) => {
+                const isActive = step === s.num;
+                const isCompleted = step > s.num;
+                return (
+                  <div key={s.num} style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+                    <div
+                      style={{
+                        width: "34px",
+                        height: "34px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: "800",
+                        fontSize: "13px",
+                        background: isCompleted ? "#38a169" : isActive ? "linear-gradient(135deg, #38a169, #8b5cf6)" : "#e2e8f0",
+                        color: isCompleted || isActive ? "#ffffff" : "#64748b",
+                        boxShadow: isActive ? "0 4px 12px rgba(56, 161, 105, 0.3)" : "none",
+                      }}
+                    >
+                      {isCompleted ? "✓" : s.num}
+                    </div>
+                    <span style={{ fontSize: "13px", fontWeight: isActive ? "800" : "600", color: isActive ? "var(--primary)" : "#64748b" }}>
+                      {s.title}
+                    </span>
+                    {s.num < 5 && <div style={{ width: "24px", height: "2px", background: isCompleted ? "#38a169" : "#e2e8f0", margin: "0 6px" }} />}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {!existingCard && (
+        /* Main Application Form Box */
         <div style={{ background: "#ffffff", borderRadius: "24px", padding: "36px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)" }}>
 
           {submittedAppInfo ? (
@@ -486,17 +641,38 @@ export default function CardApplication() {
                 📩 <strong>SMS & Email Confirmation Triggered:</strong> A notification has been dispatched to <strong>{submittedAppInfo.phone || submittedAppInfo.email || "your contact"}</strong> with your Application ID.
               </div>
 
-              <div style={{ display: "flex", gap: "14px", justifyContent: "center" }}>
-                <button type="button" onClick={handleReset} className="rta-btn-secondary" style={{ padding: "12px 24px" }}>
-                  Apply for Another Card
-                </button>
+              <div style={{ display: "flex", gap: "14px", justifyContent: "center", flexWrap: "wrap" }}>
+                <Link to="/wallet" className="rta-btn-secondary" style={{ padding: "12px 24px", textDecoration: "none" }}>
+                  Open MoveSmart Wallet 💳
+                </Link>
                 <Link to="/dashboard" className="btn-primary" style={{ padding: "12px 24px", width: "auto" }}>
-                  Go to Dashboard
+                  Go to Dashboard →
                 </Link>
               </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit}>
+
+              {/* ⚠️ One RFID Card Per User Policy Callout */}
+              <div style={{
+                background: "linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.05) 100%)",
+                border: "1.5px solid rgba(245, 158, 11, 0.35)",
+                borderRadius: "14px",
+                padding: "12px 18px",
+                marginBottom: "24px",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                color: "#92400e",
+              }}>
+                <span style={{ fontSize: "20px" }}>ℹ️</span>
+                <div style={{ fontSize: "13px", lineHeight: "1.5" }}>
+                  <strong style={{ display: "inline-block", color: "#78350f", marginRight: "6px" }}>
+                    Policy Rule:
+                  </strong>
+                  Each passenger is strictly allowed only <strong>1 RFID Smart Card</strong> per account. Multiple card bookings per user are not permitted.
+                </div>
+              </div>
 
               {/* STEP 1: Personal Information */}
               {step === 1 && (
@@ -509,50 +685,105 @@ export default function CardApplication() {
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-                    <div>
-                      <label htmlFor="fullName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Full Name <span style={{ color: "#e11d48" }}>*</span>
-                      </label>
-                      <input
-                        id="fullName"
-                        name="fullName"
-                        type="text"
-                        className="rta-input-field"
-                        placeholder="Enter full legal name"
-                        value={formData.fullName}
-                        onChange={handleChange}
-                        required
-                        style={{
-                          borderColor: formData.fullName.trim()
-                            ? nameValidation.valid
-                              ? "rgba(34, 197, 94, 0.5)"
-                              : "rgba(225, 29, 72, 0.5)"
-                            : undefined,
-                        }}
-                      />
-                      {formData.fullName.trim() && (
-                        <div
+                    {/* First Name & Second Name */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                      <div>
+                        <label htmlFor="firstName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          First Name <span style={{ color: "#e11d48" }}>*</span>
+                        </label>
+                        <input
+                          id="firstName"
+                          name="firstName"
+                          type="text"
+                          className="rta-input-field"
+                          placeholder="e.g. Rahul (alphabets only)"
+                          value={formData.firstName}
+                          onChange={handleChange}
+                          required
                           style={{
-                            marginTop: "6px",
-                            padding: "6px 12px",
-                            borderRadius: "8px",
-                            fontSize: "12px",
-                            fontWeight: "600",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            background: nameValidation.valid
-                              ? "rgba(34, 197, 94, 0.1)"
-                              : "rgba(225, 29, 72, 0.1)",
-                            color: nameValidation.valid ? "#15803d" : "#be123c",
-                            border: nameValidation.valid
-                              ? "1px solid rgba(34, 197, 94, 0.3)"
-                              : "1px solid rgba(225, 29, 72, 0.3)",
+                            borderColor: formData.firstName.length > 0
+                              ? firstNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
                           }}
-                        >
-                          <span>{nameValidation.valid ? "✓ Valid Name" : `⚠️ ${nameValidation.message}`}</span>
-                        </div>
-                      )}
+                        />
+                        <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                          Only alphabets, min 2 characters.
+                        </small>
+                        {formData.firstName.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: "6px",
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "600",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              background: firstNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.1)"
+                                : "rgba(225, 29, 72, 0.1)",
+                              color: firstNameValidation.valid ? "#15803d" : "#be123c",
+                              border: firstNameValidation.valid
+                                ? "1px solid rgba(34, 197, 94, 0.3)"
+                                : "1px solid rgba(225, 29, 72, 0.3)",
+                            }}
+                          >
+                            <span>{firstNameValidation.valid ? "✓ Valid First Name" : `⚠️ ${firstNameValidation.message}`}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label htmlFor="secondName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          Second Name / Last Name <span style={{ color: "#e11d48" }}>*</span>
+                        </label>
+                        <input
+                          id="secondName"
+                          name="secondName"
+                          type="text"
+                          className="rta-input-field"
+                          placeholder="e.g. Sharma (alphabets only)"
+                          value={formData.secondName}
+                          onChange={handleChange}
+                          required
+                          style={{
+                            borderColor: formData.secondName.length > 0
+                              ? secondNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
+                          }}
+                        />
+                        <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                          Only alphabets, min 2 characters.
+                        </small>
+                        {formData.secondName.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: "6px",
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "600",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              background: secondNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.1)"
+                                : "rgba(225, 29, 72, 0.1)",
+                              color: secondNameValidation.valid ? "#15803d" : "#be123c",
+                              border: secondNameValidation.valid
+                                ? "1px solid rgba(34, 197, 94, 0.3)"
+                                : "1px solid rgba(225, 29, 72, 0.3)",
+                            }}
+                          >
+                            <span>{secondNameValidation.valid ? "✓ Valid Second Name" : `⚠️ ${secondNameValidation.message}`}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
@@ -596,9 +827,9 @@ export default function CardApplication() {
 
                     <div>
                       <label htmlFor="phone" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Phone Number (OTP Verification) <span style={{ color: "#e11d48" }}>*</span>
+                        Phone Number <span style={{ color: "#e11d48" }}>*</span>
                       </label>
-                      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: "10px" }}>
                         <select
                           id="countryCode"
                           name="countryCode"
@@ -613,7 +844,7 @@ export default function CardApplication() {
                             </option>
                           ))}
                         </select>
-                        <div style={{ flex: 1, minWidth: "180px" }}>
+                        <div style={{ flex: 1 }}>
                           <input
                             id="phone"
                             name="phone"
@@ -623,20 +854,18 @@ export default function CardApplication() {
                             value={formData.phone}
                             onChange={handleChange}
                             required
+                            style={{
+                              borderColor: formData.phone
+                                ? phoneValidation.valid
+                                  ? "rgba(34, 197, 94, 0.5)"
+                                  : "rgba(225, 29, 72, 0.5)"
+                                : undefined,
+                            }}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleSendOtp}
-                          className="rta-btn-secondary"
-                          style={{ padding: "8px 16px", whiteSpace: "nowrap", fontSize: "13px" }}
-                          disabled={formData.phoneVerified}
-                        >
-                          {formData.phoneVerified ? "✓ Verified" : otpSent ? "Resend OTP" : "Send OTP"}
-                        </button>
                       </div>
 
-                      {/* Real-time ("ontime") Validation Badge Indicator */}
+                      {/* Real-time Validation Badge Indicator */}
                       {formData.phone && (
                         <div
                           style={{
@@ -669,29 +898,6 @@ export default function CardApplication() {
                           }}
                         >
                           <span>{phoneValidation.message}</span>
-                        </div>
-                      )}
-
-                      {/* OTP Input Box Simulation */}
-                      {otpSent && !formData.phoneVerified && (
-                        <div style={{ marginTop: "12px", padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid var(--border-color)", display: "flex", gap: "10px", alignItems: "center" }}>
-                          <input
-                            type="text"
-                            className="rta-input-field"
-                            placeholder="Enter 4-digit OTP"
-                            value={enteredOtp}
-                            onChange={(e) => setEnteredOtp(e.target.value)}
-                            style={{ maxWidth: "180px" }}
-                          />
-                          <button type="button" onClick={handleVerifyOtp} className="rta-btn-primary" style={{ padding: "8px 16px", width: "auto", fontSize: "13px" }}>
-                            Verify OTP
-                          </button>
-                        </div>
-                      )}
-
-                      {otpMessage && (
-                        <div style={{ fontSize: "12px", fontWeight: "600", marginTop: "6px", color: formData.phoneVerified ? "#16a34a" : "#b45309" }}>
-                          {otpMessage}
                         </div>
                       )}
                     </div>
@@ -747,7 +953,7 @@ export default function CardApplication() {
                         name="street"
                         type="text"
                         className="rta-input-field"
-                        placeholder="e.g. Green Valley Villa, MG Road"
+                        placeholder="e.g. House12(A),Block3 (no spaces)"
                         value={formData.street}
                         onChange={handleChange}
                         required
@@ -759,9 +965,12 @@ export default function CardApplication() {
                             : undefined,
                         }}
                       />
+                      <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                        Only letters, numbers, parentheses (), and commas (,). Must contain letters. No spaces allowed.
+                      </small>
                       {formData.street.trim() && (
                         <div style={{ marginTop: "6px", fontSize: "11px", color: streetValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
-                          {streetValidation.valid ? "✓ Valid Address" : `⚠️ ${streetValidation.message}`}
+                          {streetValidation.valid ? streetValidation.message : `⚠️ ${streetValidation.message}`}
                         </div>
                       )}
                     </div>
@@ -1001,7 +1210,7 @@ export default function CardApplication() {
                             name="idNumber"
                             type="text"
                             className="rta-input-field"
-                            placeholder={formData.cardCategory === "Foreigner" ? "e.g. Z1234567 or A9876543" : "Enter numeric Government / Aadhaar ID No (digits only)"}
+                            placeholder={formData.cardCategory === "Foreigner" ? "e.g. Z1234567 or AB123456" : "Enter numeric Government / Aadhaar ID No (digits only)"}
                             value={formData.idNumber}
                             onChange={handleChange}
                             required
@@ -1013,6 +1222,16 @@ export default function CardApplication() {
                                 : undefined,
                             }}
                           />
+                          {formData.cardCategory === "Foreigner" && (
+                            <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                              Format: 8 characters total — 1 letter + 7 digits (e.g. Z1234567) OR 2 letters + 6 digits (e.g. AB123456).
+                            </small>
+                          )}
+                          {formData.cardCategory !== "Foreigner" && formData.cardCategory !== "Student" && (
+                            <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                              Numbers only (0-9). Spaces and alphabets are strictly not allowed.
+                            </small>
+                          )}
                           {formData.idNumber.trim() && (
                             <div
                               style={{
@@ -1082,10 +1301,18 @@ export default function CardApplication() {
                           <input
                             type="file"
                             accept="image/*,.pdf"
-                            onChange={(e) => handleFileUpload(e, "studentIdName")}
+                            onChange={(e) => handleFileUpload(e, "studentIdName", "studentIdUrl")}
                             style={{ fontSize: "13px", color: "#64748b" }}
                           />
-                          {formData.studentIdName ? (
+                          {formData.studentIdUrl ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "12px", border: "1.5px solid #c084fc", fontSize: "12px", color: "#6d28d9", fontWeight: "700", display: "flex", alignItems: "center", gap: "12px" }}>
+                              <img src={formData.studentIdUrl} alt="Student ID Preview" style={{ width: "45px", height: "45px", objectFit: "cover", borderRadius: "8px", border: "1px solid #d8b4fe" }} />
+                              <div>
+                                <strong style={{ color: "#4c1d95", display: "block" }}>{formData.studentIdName}</strong>
+                                <span style={{ fontSize: "11px", color: "#16a34a" }}>✓ Image loaded &amp; ready for Admin verification</span>
+                              </div>
+                            </div>
+                          ) : formData.studentIdName ? (
                             <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #c084fc", fontSize: "12px", color: "#6d28d9", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
                               <span>📄 Document Attached:</span>
                               <strong style={{ color: "#4c1d95" }}>{formData.studentIdName}</strong>
@@ -1109,10 +1336,18 @@ export default function CardApplication() {
                           <input
                             type="file"
                             accept="image/*,.pdf"
-                            onChange={(e) => handleFileUpload(e, "idProofName")}
+                            onChange={(e) => handleFileUpload(e, "idProofName", "idProofUrl")}
                             style={{ fontSize: "13px", color: "#64748b" }}
                           />
-                          {formData.idProofName ? (
+                          {formData.idProofUrl ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "12px", border: "1.5px solid #93c5fd", fontSize: "12px", color: "#1d4ed8", fontWeight: "700", display: "flex", alignItems: "center", gap: "12px" }}>
+                              <img src={formData.idProofUrl} alt="Passport Preview" style={{ width: "45px", height: "45px", objectFit: "cover", borderRadius: "8px", border: "1px solid #bfdbfe" }} />
+                              <div>
+                                <strong style={{ color: "#1e3a8a", display: "block" }}>{formData.idProofName}</strong>
+                                <span style={{ fontSize: "11px", color: "#16a34a" }}>✓ Image loaded &amp; ready for Admin verification</span>
+                              </div>
+                            </div>
+                          ) : formData.idProofName ? (
                             <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #93c5fd", fontSize: "12px", color: "#1d4ed8", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
                               <span>✈️ Passport Attached:</span>
                               <strong style={{ color: "#1e3a8a" }}>{formData.idProofName}</strong>
@@ -1136,10 +1371,18 @@ export default function CardApplication() {
                           <input
                             type="file"
                             accept="image/*,.pdf"
-                            onChange={(e) => handleFileUpload(e, "idProofName")}
+                            onChange={(e) => handleFileUpload(e, "idProofName", "idProofUrl")}
                             style={{ fontSize: "13px", color: "#64748b" }}
                           />
-                          {formData.idProofName ? (
+                          {formData.idProofUrl ? (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "12px", border: "1.5px solid #86efac", fontSize: "12px", color: "#166534", fontWeight: "700", display: "flex", alignItems: "center", gap: "12px" }}>
+                              <img src={formData.idProofUrl} alt="Govt ID Preview" style={{ width: "45px", height: "45px", objectFit: "cover", borderRadius: "8px", border: "1px solid #bbf7d0" }} />
+                              <div>
+                                <strong style={{ color: "#14532d", display: "block" }}>{formData.idProofName}</strong>
+                                <span style={{ fontSize: "11px", color: "#16a34a" }}>✓ Image loaded &amp; ready for Admin verification</span>
+                              </div>
+                            </div>
+                          ) : formData.idProofName ? (
                             <div style={{ marginTop: "10px", padding: "10px 14px", background: "#ffffff", borderRadius: "10px", border: "1px solid #86efac", fontSize: "12px", color: "#166534", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
                               <span>📄 Document Attached:</span>
                               <strong style={{ color: "#14532d" }}>{formData.idProofName}</strong>
@@ -1172,35 +1415,72 @@ export default function CardApplication() {
                       🚨 Emergency Contact Details <span style={{ color: "#e11d48" }}>*</span>
                     </h4>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+                    {/* Contact First Name & Second Name */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                       <div>
-                        <label htmlFor="emergencyName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                          Contact Name <span style={{ color: "#e11d48" }}>*</span>
+                        <label htmlFor="emergencyFirstName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          Contact First Name <span style={{ color: "#e11d48" }}>*</span>
                         </label>
                         <input
-                          id="emergencyName"
-                          name="emergencyName"
+                          id="emergencyFirstName"
+                          name="emergencyFirstName"
                           type="text"
                           className="rta-input-field"
-                          placeholder="e.g. Parent / Spouse"
-                          value={formData.emergencyName}
+                          placeholder="e.g. Suresh (alphabets only)"
+                          value={formData.emergencyFirstName}
                           onChange={handleChange}
                           required
                           style={{
-                            borderColor: formData.emergencyName.trim()
-                              ? emergencyNameValidation.valid
+                            borderColor: formData.emergencyFirstName.length > 0
+                              ? emergencyFirstNameValidation.valid
                                 ? "rgba(34, 197, 94, 0.5)"
                                 : "rgba(225, 29, 72, 0.5)"
                               : undefined,
                           }}
                         />
-                        {formData.emergencyName.trim() && (
-                          <div style={{ marginTop: "6px", fontSize: "11px", color: emergencyNameValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
-                            {emergencyNameValidation.valid ? "✓ Valid Name" : `⚠️ ${emergencyNameValidation.message}`}
+                        <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                          Only alphabets, min 2 characters.
+                        </small>
+                        {formData.emergencyFirstName.length > 0 && (
+                          <div style={{ marginTop: "4px", fontSize: "11px", color: emergencyFirstNameValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                            {emergencyFirstNameValidation.valid ? "✓ Valid First Name" : `⚠️ ${emergencyFirstNameValidation.message}`}
                           </div>
                         )}
                       </div>
 
+                      <div>
+                        <label htmlFor="emergencySecondName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
+                          Contact Second Name <span style={{ color: "#e11d48" }}>*</span>
+                        </label>
+                        <input
+                          id="emergencySecondName"
+                          name="emergencySecondName"
+                          type="text"
+                          className="rta-input-field"
+                          placeholder="e.g. Kumar (alphabets only)"
+                          value={formData.emergencySecondName}
+                          onChange={handleChange}
+                          required
+                          style={{
+                            borderColor: formData.emergencySecondName.length > 0
+                              ? emergencySecondNameValidation.valid
+                                ? "rgba(34, 197, 94, 0.5)"
+                                : "rgba(225, 29, 72, 0.5)"
+                              : undefined,
+                          }}
+                        />
+                        <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                          Only alphabets, min 2 characters.
+                        </small>
+                        {formData.emergencySecondName.length > 0 && (
+                          <div style={{ marginTop: "4px", fontSize: "11px", color: emergencySecondNameValidation.valid ? "#15803d" : "#be123c", fontWeight: "700" }}>
+                            {emergencySecondNameValidation.valid ? "✓ Valid Second Name" : `⚠️ ${emergencySecondNameValidation.message}`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                       <div>
                         <label htmlFor="emergencyRelation" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           Relation <span style={{ color: "#e11d48" }}>*</span>
@@ -1210,7 +1490,7 @@ export default function CardApplication() {
                           name="emergencyRelation"
                           type="text"
                           className="rta-input-field"
-                          placeholder="e.g. Father"
+                          placeholder="e.g. Father, Mother, Spouse, Sibling"
                           value={formData.emergencyRelation}
                           onChange={handleChange}
                           required
@@ -1241,35 +1521,44 @@ export default function CardApplication() {
                             name="emergencyPhone"
                             type="tel"
                             className="rta-input-field"
-                            placeholder={getCountryByCode(formData.emergencyCountryCode).placeholder || "Emergency phone"}
+                            placeholder="Digits only (e.g. 9876543210)"
                             value={formData.emergencyPhone}
                             onChange={handleChange}
                             required
+                            style={{
+                              borderColor: formData.emergencyPhone.trim()
+                                ? emergencyPhoneValidation.valid
+                                  ? "rgba(34, 197, 94, 0.5)"
+                                  : "rgba(225, 29, 72, 0.5)"
+                                : undefined,
+                            }}
                           />
                         </div>
-                        {formData.emergencyPhone && (
+                        {formData.emergencyPhone.trim() && (
                           <div
                             style={{
                               marginTop: "6px",
-                              padding: "6px 10px",
-                              borderRadius: "8px",
+                              padding: "4px 8px",
+                              borderRadius: "6px",
                               fontSize: "11px",
-                              fontWeight: "700",
-                              background:
-                                emergencyPhoneValidation.badgeType === "success"
-                                  ? "rgba(34, 197, 94, 0.1)"
-                                  : emergencyPhoneValidation.badgeType === "error"
-                                    ? "rgba(225, 29, 72, 0.1)"
-                                    : "rgba(245, 158, 11, 0.12)",
-                              color:
-                                emergencyPhoneValidation.badgeType === "success"
-                                  ? "#15803d"
-                                  : emergencyPhoneValidation.badgeType === "error"
-                                    ? "#be123c"
-                                    : "#b45309",
+                              fontWeight: "600",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              background: emergencyPhoneValidation.valid
+                                ? "rgba(34, 197, 94, 0.1)"
+                                : "rgba(225, 29, 72, 0.1)",
+                              color: emergencyPhoneValidation.valid ? "#15803d" : "#be123c",
+                              border: emergencyPhoneValidation.valid
+                                ? "1px solid rgba(34, 197, 94, 0.3)"
+                                : "1px solid rgba(225, 29, 72, 0.3)",
                             }}
                           >
-                            {emergencyPhoneValidation.message}
+                            <span>
+                              {emergencyPhoneValidation.valid
+                                ? `✓ Valid Emergency Phone (${emergencyPhoneValidation.formatted})`
+                                : `⚠️ ${emergencyPhoneValidation.message}`}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1292,15 +1581,51 @@ export default function CardApplication() {
                   <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
                     <div>
-                      <label htmlFor="initialRecharge" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
-                        Initial Wallet Recharge (INR/AED) <span style={{ color: "#e11d48" }}>*</span>
+                      <label htmlFor="initialRecharge" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
+                        Initial Wallet Recharge Amount (₹) <span style={{ color: "#e11d48" }}>*</span>
                       </label>
-                      <select id="initialRecharge" name="initialRecharge" className="rta-input-field" value={formData.initialRecharge} onChange={handleChange} required>
-                        <option value="20">₹20 (Minimum Balance)</option>
-                        <option value="50">₹50</option>
-                        <option value="100">₹100</option>
-                        <option value="200">₹200</option>
-                      </select>
+                      <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
+                        {["20", "50", "100", "200", "500"].map((amt) => (
+                          <button
+                            key={`preset-${amt}`}
+                            type="button"
+                            onClick={() => setFormData((prev) => ({ ...prev, initialRecharge: amt }))}
+                            style={{
+                              padding: "8px 16px",
+                              borderRadius: "10px",
+                              border: String(formData.initialRecharge) === amt ? "2px solid #16a34a" : "1px solid #cbd5e1",
+                              background: String(formData.initialRecharge) === amt ? "rgba(22, 163, 74, 0.12)" : "#f8fafc",
+                              color: String(formData.initialRecharge) === amt ? "#15803d" : "#334155",
+                              fontWeight: "800",
+                              fontSize: "13px",
+                              cursor: "pointer",
+                              transition: "all 0.2s ease",
+                            }}
+                          >
+                            ₹{amt}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ position: "relative" }}>
+                        <span style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", fontWeight: "800", color: "#475569", fontSize: "15px" }}>₹</span>
+                        <input
+                          id="initialRecharge"
+                          name="initialRecharge"
+                          type="number"
+                          min="10"
+                          max="10000"
+                          step="1"
+                          className="rta-input-field"
+                          placeholder="Type custom recharge amount (min ₹10)"
+                          value={formData.initialRecharge}
+                          onChange={handleChange}
+                          required
+                          style={{ paddingLeft: "32px", fontWeight: "700" }}
+                        />
+                      </div>
+                      <small style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                        Enter any custom recharge amount between ₹10 and ₹10,000.
+                      </small>
                     </div>
 
                     {/* Safety Toggles */}
@@ -1421,6 +1746,7 @@ export default function CardApplication() {
           )}
 
         </div>
+        )}
 
         {/* User Application History */}
         <div style={{ background: "#ffffff", borderRadius: "24px", padding: "32px", marginTop: "32px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)" }}>

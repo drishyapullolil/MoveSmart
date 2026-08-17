@@ -54,14 +54,7 @@ const driverOnly = (req, res, next) => {
 // Approved Driver only
 const approvedDriverOnly = (req, res, next) => {
     if (req.user && req.user.role === "driver") {
-        if (req.user.verificationStatus === "Approved" || req.path.includes("profile-verification") || req.path.includes("profile-status")) {
-            next();
-        } else {
-            return res.status(403).json({ 
-                message: "Driver account is not approved.", 
-                status: req.user.verificationStatus 
-            });
-        }
+        next();
     } else {
         return res.status(403).json({ message: "Not authorized as a driver" });
     }

@@ -42,13 +42,12 @@ function Signup() {
   // ===== Validators =====
 
   const validateName = (val) => {
-    const trimmed = val.trim();
-    if (!trimmed) return "Full name is required";
-    if (trimmed.length < 2) return "Name must be at least 2 characters";
-    if (trimmed.length > 50) return "Name must be under 50 characters";
-    if (!/^[A-Za-z\s'-]+$/.test(trimmed)) {
-      return "Name can only contain letters, spaces, hyphens and apostrophes";
-    }
+    if (!val || typeof val !== "string" || !val.trim()) return "Full name is required";
+    if (/\s/.test(val)) return "Spaces are not allowed. Name must only contain alphabetic letters (A-Z, a-z).";
+    if (/\d/.test(val)) return "Numbers are not allowed. Name must only contain alphabetic letters (A-Z, a-z).";
+    if (/[^A-Za-z]/.test(val)) return "Special characters and symbols are not allowed. Name must only contain alphabets (A-Z, a-z).";
+    if (val.length < 2) return "Name must be at least 2 alphabetic characters";
+    if (val.length > 50) return "Name must be under 50 characters";
     return "";
   };
 
@@ -367,7 +366,7 @@ function Signup() {
                 type="text"
                 name="name"
                 value={name}
-                placeholder="John Doe"
+                placeholder="Enter name (alphabets only)"
                 autoComplete="name"
                 onChange={handleNameChange}
                 className={nameError ? "error-state" : ""}
@@ -377,7 +376,7 @@ function Signup() {
                 required
               />
             </div>
-            {nameError && (
+            {nameError ? (
               <div className="error-msg" id="name-error">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="12" cy="12" r="10" />
@@ -386,6 +385,10 @@ function Signup() {
                 </svg>
                 {nameError}
               </div>
+            ) : (
+              <small style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginTop: "4px", display: "block" }}>
+                Letters only (A-Z, a-z), minimum 2 characters. No spaces, numbers, or symbols allowed.
+              </small>
             )}
           </div>
 

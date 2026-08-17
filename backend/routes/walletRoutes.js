@@ -14,9 +14,9 @@ const razorpay = new Razorpay({
 });
 
 /**
- * Helper to get or create a persistent active RFID card in MongoDB for balance tracking
+ * Helper to find a persistent active RFID card in MongoDB for the user
  */
-async function getOrCreateCardForUser(targetUserId, email) {
+async function findCardForUser(targetUserId, email) {
   let card = null;
 
   // 1. Try finding card explicitly linked to targetUserId
@@ -34,52 +34,49 @@ async function getOrCreateCardForUser(targetUserId, email) {
       const app = await CardApplication.findOne({ $or: appFilter, status: "Approved" }).sort({ createdAt: -1 });
       if (app && app.assignedCardNumber) {
         card = await RfidCard.findOne({ cardNumber: app.assignedCardNumber });
+        if (card && targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) && !card.user) {
+          card.user = targetUserId;
+          await card.save();
+        }
       }
     }
   }
 
-  // 3. Fallback for guest/demo card "9842104910"
-  if (!card && (!targetUserId || !mongoose.Types.ObjectId.isValid(targetUserId))) {
-    card = await RfidCard.findOne({ cardNumber: "9842104910", status: "Active" });
-  }
-
-  // 4. If STILL no card exists, CREATE a new card in MongoDB specifically for this user!
-  if (!card) {
-    const userObjId = targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) ? targetUserId : null;
-    const cardNum = userObjId ? "9842" + Math.floor(100000 + Math.random() * 900000) : "9842104910";
-    const tagNum = "TAG" + Math.floor(100000 + Math.random() * 900000);
-
-    card = new RfidCard({
-      cardNumber: cardNum,
-      rfidTag: tagNum,
-      user: userObjId,
-      balance: 250.0, // Default initial balance
-      cardType: "Regular Pass",
-      status: "Active",
-    });
-    await card.save();
-  } else if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) && !card.user) {
-    card.user = targetUserId;
-    await card.save();
+  // 3. Fallback: check any card with user if not found above
+  if (!card && targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) {
+    card = await RfidCard.findOne({ user: targetUserId });
   }
 
   return card;
 }
 
-// 1. Get Live Wallet Balance & Associated Card Details from MongoDB
+// 1. Get Live Wallet Balance & Associated Card Details strictly from MongoDB Database
 router.get("/balance", async (req, res) => {
   try {
     const { userId, email } = req.query;
     const sessionUser = req.session?.user;
     const targetUserId = userId || sessionUser?.id || sessionUser?._id;
 
-    const card = await getOrCreateCardForUser(targetUserId, email);
+    const card = await findCardForUser(targetUserId, email);
+
+    if (!card) {
+      return res.json({
+        hasCard: false,
+        balance: 0,
+        cardNumber: "",
+        lastFour: "",
+        isLowBalance: false,
+        cardType: "None",
+        message: "No active RFID card found. Please book/apply for an RFID card.",
+      });
+    }
 
     const balance = Number(card.balance || 0);
-    const cardNumber = card.cardNumber || "9842104910";
-    const lastFour = cardNumber.substring(cardNumber.length - 4);
+    const cardNumber = card.cardNumber || "";
+    const lastFour = cardNumber.length >= 4 ? cardNumber.substring(cardNumber.length - 4) : cardNumber;
 
     res.json({
+      hasCard: true,
       balance,
       cardNumber,
       lastFour,
@@ -95,11 +92,19 @@ router.get("/balance", async (req, res) => {
 // 2. Create Razorpay Order Endpoint
 router.post("/create-razorpay-order", async (req, res) => {
   try {
-    const { amount, currency = "INR", receipt } = req.body;
+    const { amount, currency = "INR", receipt, userId, email } = req.body;
     const numericAmount = Number(amount);
 
     if (!numericAmount || numericAmount <= 0) {
       return res.status(400).json({ message: "A valid positive recharge amount is required." });
+    }
+
+    const sessionUser = req.session?.user;
+    const targetUserId = userId || sessionUser?.id || sessionUser?._id;
+    const card = await findCardForUser(targetUserId, email);
+
+    if (!card) {
+      return res.status(400).json({ message: "No active RFID card linked to your account. Please apply for / book an RFID card first." });
     }
 
     const options = {
@@ -156,16 +161,20 @@ router.post("/verify-razorpay-payment", async (req, res) => {
     const sessionUser = req.session?.user;
     const targetUserId = userId || sessionUser?.id || sessionUser?._id;
 
-    // Get or Create card in MongoDB
-    const card = await getOrCreateCardForUser(targetUserId, email);
+    // Get card in MongoDB
+    const card = await findCardForUser(targetUserId, email);
+
+    if (!card) {
+      return res.status(400).json({ message: "Cannot recharge: No active RFID card linked to account. Please book an RFID card first." });
+    }
 
     // Permanently update balance in MongoDB database
     card.balance = Number(card.balance || 0) + rechargeAmount;
     await card.save();
 
     const newBalance = card.balance;
-    const cardNumber = card.cardNumber || "9842104910";
-    const lastFour = cardNumber.substring(cardNumber.length - 4);
+    const cardNumber = card.cardNumber || "";
+    const lastFour = cardNumber.length >= 4 ? cardNumber.substring(cardNumber.length - 4) : cardNumber;
     const txnId = razorpay_payment_id || `TXN-MS-${Math.floor(100000 + Math.random() * 900000)}`;
 
     const userObjectId = targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) ? targetUserId : (card.user || null);
@@ -215,7 +224,11 @@ router.post("/recharge", async (req, res) => {
     const targetUserId = userId || sessionUser?.id || sessionUser?._id;
     const method = paymentMethod || "Razorpay";
 
-    const card = await getOrCreateCardForUser(targetUserId, email);
+    const card = await findCardForUser(targetUserId, email);
+
+    if (!card) {
+      return res.status(400).json({ error: "Cannot recharge: No active RFID card linked to account. Please book an RFID card first." });
+    }
 
     card.balance = Number(card.balance || 0) + rechargeAmount;
     await card.save();
@@ -223,8 +236,8 @@ router.post("/recharge", async (req, res) => {
     const newBalance = card.balance;
     const randomId = Math.floor(100000 + Math.random() * 900000);
     const txnId = `TXN-MS-${randomId}`;
-    const cardNumber = card.cardNumber || "9842104910";
-    const lastFour = cardNumber.substring(cardNumber.length - 4);
+    const cardNumber = card.cardNumber || "";
+    const lastFour = cardNumber.length >= 4 ? cardNumber.substring(cardNumber.length - 4) : cardNumber;
     const userObjectId = targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) ? targetUserId : (card.user || null);
 
     const transaction = new Transaction({
@@ -252,7 +265,7 @@ router.post("/recharge", async (req, res) => {
   }
 });
 
-// 5. Get Payment / Transaction History from Database (MongoDB)
+// 5. Get Payment / Transaction History strictly from Database (MongoDB) - No hardcoded seeds
 router.get("/transactions", async (req, res) => {
   try {
     const { userId, type } = req.query;
@@ -260,91 +273,29 @@ router.get("/transactions", async (req, res) => {
     const targetUserId = userId || sessionUser?.id || sessionUser?._id;
 
     let query = {};
-    if (targetUserId) {
-      const isValidObjId = mongoose.Types.ObjectId.isValid(targetUserId);
-      if (isValidObjId) {
-        query.$or = [{ user: targetUserId }, { user: null }];
-      } else {
-        query.$or = [{ user: null }];
+    const conditions = [];
+
+    if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) {
+      conditions.push({ user: targetUserId });
+      
+      // Also match card associated with this user
+      const userCard = await RfidCard.findOne({ user: targetUserId });
+      if (userCard && userCard.cardNumber) {
+        conditions.push({ cardNumber: userCard.cardNumber.slice(-4) });
+        conditions.push({ cardNumber: userCard.cardNumber });
       }
+    }
+
+    if (conditions.length > 0) {
+      query.$or = conditions;
     }
 
     if (type && type !== "All") {
       query.type = type;
     }
 
-    let txns = await Transaction.find(query).sort({ createdAt: -1 });
-
-    // If database contains 0 transactions (fresh setup), seed initial transactions into MongoDB
-    if (txns.length === 0) {
-      const totalCount = await Transaction.countDocuments();
-      if (totalCount === 0) {
-        const now = new Date();
-        const userObjectId = targetUserId && mongoose.Types.ObjectId.isValid(targetUserId) ? targetUserId : null;
-        const initialSeed = [
-          {
-            transactionId: "pay_RzrPay_981290",
-            razorpayPaymentId: "pay_RzrPay_981290",
-            razorpayOrderId: "order_RzrPay_981290",
-            amount: 200,
-            type: "Recharge",
-            isDebit: false,
-            status: "Success",
-            paymentMethod: "Razorpay",
-            description: "Wallet Top-Up via Razorpay UPI",
-            cardNumber: "4910",
-            user: userObjectId,
-            createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000),
-          },
-          {
-            transactionId: "TXN-MS-881244",
-            amount: 18,
-            type: "Travel",
-            isDebit: true,
-            status: "Success",
-            paymentMethod: "Wallet Balance",
-            description: "Bus Fare - Erattupetta to Pala (Express Fast Passenger)",
-            cardNumber: "4910",
-            user: userObjectId,
-            createdAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
-          },
-          {
-            transactionId: "pay_RzrPay_881102",
-            razorpayPaymentId: "pay_RzrPay_881102",
-            razorpayOrderId: "order_RzrPay_881102",
-            amount: 500,
-            type: "Recharge",
-            isDebit: false,
-            status: "Success",
-            paymentMethod: "Razorpay",
-            description: "Initial Nol Wallet Recharge via Razorpay",
-            cardNumber: "4910",
-            user: userObjectId,
-            createdAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
-          },
-          {
-            transactionId: "TXN-MS-880911",
-            amount: 32,
-            type: "Travel",
-            isDebit: true,
-            status: "Success",
-            paymentMethod: "Wallet Balance",
-            description: "Bus Fare - Pala to Kottayam Express Corridor",
-            cardNumber: "4910",
-            user: userObjectId,
-            createdAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-          },
-        ];
-
-        await Transaction.insertMany(initialSeed);
-        txns = await Transaction.find(query).sort({ createdAt: -1 });
-      } else {
-        // If DB has transactions but user filter yielded none, fetch all transactions from DB sorted by date
-        let fallbackQuery = {};
-        if (type && type !== "All") fallbackQuery.type = type;
-        txns = await Transaction.find(fallbackQuery).sort({ createdAt: -1 });
-      }
-    }
+    // Strictly fetch real transactions from database
+    const txns = await Transaction.find(query).sort({ createdAt: -1 });
 
     res.json(txns);
   } catch (error) {

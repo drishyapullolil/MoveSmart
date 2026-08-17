@@ -73,6 +73,31 @@ export default function Admin({ defaultTab = "overview" }) {
       setActiveTab("busRoutes");
     }
   }, [location.pathname]);
+
+  // Strict Role Verification: Drivers must NOT access admin page; only admins allowed
+  useEffect(() => {
+    const currentUser = getStoredUser();
+    const token = getStoredToken();
+    const role = (currentUser?.role || "").toLowerCase().trim();
+
+    if (!currentUser || !token) {
+      localStorage.setItem("moveSmart_loginWarning", "Admin access required. Please sign in with an administrator account.");
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    if (role === "driver") {
+      // Driver is strictly restricted to driver dashboard
+      navigate("/dashboard/driver", { replace: true });
+      return;
+    }
+
+    if (role !== "admin") {
+      // Passenger / regular user
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+  }, [navigate]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -930,6 +955,12 @@ export default function Admin({ defaultTab = "overview" }) {
   const textSecondary = darkMode ? "#94a3b8" : "#64748b";
   const borderCol = darkMode ? "#334155" : "#e2e8f0";
 
+  // Don't render admin interface if user is not an admin
+  const currentRole = (user?.role || "").toLowerCase().trim();
+  if (!user || currentRole !== "admin") {
+    return null;
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: bgMain, color: textPrimary, fontFamily: "'Inter', 'Segoe UI', sans-serif", display: "flex", flexDirection: "column" }}>
 
@@ -1039,9 +1070,6 @@ export default function Admin({ defaultTab = "overview" }) {
                   <div onClick={() => { setActiveTab("drivers"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
                     <UserCheck size={14} style={{ color: "#8b5cf6" }} /> <strong>{pendingDriversCount} Driver Licenses</strong> awaiting review
                   </div>
-                  <div onClick={() => { setActiveTab("busRequests"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <Bus size={14} style={{ color: "#10b981" }} /> <strong>{pendingBusReqsCount} Bus Assignment Requests</strong> pending
-                  </div>
                 </div>
               </div>
             )}
@@ -1093,10 +1121,8 @@ export default function Admin({ defaultTab = "overview" }) {
             { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
             { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
             { id: "applications", label: "Card Applications", Icon: FileCheck, badge: pendingAppsCount },
-            { id: "cards", label: "RFID Card Portal", Icon: CreditCard },
             { id: "passengers", label: "Passengers & Wallet", Icon: Users },
             { id: "drivers", label: "Driver Management", Icon: UserCheck, badge: pendingDriversCount },
-            { id: "busRequests", label: "Bus Requests", Icon: Bus, badge: pendingBusReqsCount },
             { id: "transactions", label: "Payments & Logs", Icon: Wallet },
             { id: "leaves", label: "Driver Leaves", Icon: CalendarX },
             { id: "settings", label: "Settings & Tools", Icon: ShieldCheck },
@@ -1893,94 +1919,6 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
           )}
 
-          {/* SECTION 3: RFID CARD MANAGEMENT */}
-          {activeTab === "cards" && (
-            <div className="fade-in-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <div>
-                  <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary }}>💳 RFID Card Directory &amp; Reader Simulator</h2>
-                  <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>Manage active cards, credit balances, block cards, and simulate reader taps.</p>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "28px" }}>
-
-                {/* Left: Card Directory */}
-                <div>
-                  <div style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}` }}>
-                    <h3 style={{ fontSize: "16.5px", fontWeight: "900", margin: "0 0 14px 0", color: textPrimary }}>Issued Smart Cards</h3>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                      {dbCards.map((c) => (
-                        <div key={c._id} style={{ padding: "14px", borderRadius: "14px", background: darkMode ? "#334155" : "#f8fafc", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-                          <div>
-                            <strong style={{ fontSize: "14px", color: textPrimary, display: "block" }}>{c.cardNumber}</strong>
-                            <span style={{ fontSize: "11.5px", color: textSecondary, fontFamily: "monospace" }}>RFID: {c.rfidTag} • {c.cardType}</span>
-                            <div style={{ fontSize: "15px", fontWeight: "900", color: "#16a34a", marginTop: "2px" }}>₹ {c.balance.toFixed(2)}</div>
-                          </div>
-
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <input
-                              type="number"
-                              placeholder="Amt"
-                              style={{ width: "65px", padding: "6px", borderRadius: "8px", border: `1px solid ${borderCol}`, fontSize: "12px" }}
-                              value={adminAdjustAmount[c._id] || ""}
-                              onChange={(e) => setAdminAdjustAmount({ ...adminAdjustAmount, [c._id]: e.target.value })}
-                            />
-                            <button onClick={() => handleAdminAdjustBalance(c._id, "credit")} style={{ padding: "6px 10px", borderRadius: "8px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "11px", cursor: "pointer" }}>+ Add</button>
-                            <button onClick={() => handleAdminToggleCardStatus(c._id)} style={{ padding: "6px 10px", borderRadius: "8px", background: c.status === "Active" ? "rgba(225, 29, 72, 0.1)" : "rgba(34, 197, 94, 0.1)", color: c.status === "Active" ? "#dc2626" : "#16a34a", border: "none", fontWeight: "800", fontSize: "11px", cursor: "pointer" }}>
-                              {c.status === "Active" ? "Block" : "Activate"}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right: RFID Tap Simulator */}
-                <div>
-                  <div style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}` }}>
-                    <h3 style={{ fontSize: "16.5px", fontWeight: "900", margin: "0 0 8px 0", color: textPrimary }}>📡 Live RFID Tap Simulator</h3>
-                    <p style={{ fontSize: "12.5px", color: textSecondary, marginBottom: "16px" }}>Test physical RFID reader tap-in &amp; tap-out fare calculations.</p>
-
-                    <form onSubmit={handleSimulateTap}>
-                      <div className="rta-input-group" style={{ marginBottom: "12px" }}>
-                        <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Select RFID Card</label>
-                        <select className="rta-input-field" value={simCardTag} onChange={(e) => setSimCardTag(e.target.value)}>
-                          <option value="">-- Choose Card --</option>
-                          {dbCards.map(c => <option key={c._id} value={c.rfidTag}>{c.cardNumber} ({c.cardType} - {c.rfidTag})</option>)}
-                        </select>
-                      </div>
-
-                      <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                        <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Select Bus Stop</label>
-                        <select className="rta-input-field" value={simStopCode} onChange={(e) => setSimStopCode(e.target.value)}>
-                          <option value="">-- Choose Stop --</option>
-                          {dbStops.map(s => <option key={s._id} value={s.code}>{s.name} ({s.code})</option>)}
-                        </select>
-                      </div>
-
-                      <button type="submit" style={{ width: "100%", padding: "12px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
-                        Simulate RFID Reader Tap →
-                      </button>
-
-                      {simError && <div style={{ color: "#dc2626", fontSize: "12.5px", marginTop: "12px", fontWeight: "700" }}>⚠️ {simError}</div>}
-                    </form>
-
-                    {simResult && (
-                      <div style={{ marginTop: "16px", padding: "14px", background: "#1e293b", borderRadius: "14px", color: "#38bdf8", fontFamily: "monospace", fontSize: "12px" }}>
-                        <strong style={{ color: "#34d399", display: "block", marginBottom: "4px" }}>Output: {simResult.action}</strong>
-                        <div style={{ color: "#ffffff" }}>{simResult.message}</div>
-                        {simResult.card && <div style={{ color: "#94a3b8", marginTop: "4px" }}>New Balance: ₹{simResult.card.balance}</div>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
 
           {/* SECTION 4: PASSENGERS & WALLET */}
           {activeTab === "passengers" && (
@@ -2071,25 +2009,65 @@ export default function Admin({ defaultTab = "overview" }) {
               {/* Drivers Grid */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
                 {filteredDrivers.map((d) => (
-                  <div key={d._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div key={d._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", flexDirection: "column", justifyContent: "space-between", boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
                     <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "14px" }}>
-                        <div style={{ width: "56px", height: "56px", borderRadius: "50%", overflow: "hidden", border: "2px solid #6d28d9", background: "#f1f5f9" }}>
-                          {d.profilePic ? <img src={d.profilePic} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", color: "#6d28d9" }}>{d.name ? d.name[0] : "D"}</div>}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                          <div style={{ width: "52px", height: "52px", borderRadius: "50%", overflow: "hidden", border: "2px solid #6d28d9", background: "#f1f5f9", flexShrink: 0 }}>
+                            {d.profilePic ? (
+                              <img src={d.profilePic} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", color: "#6d28d9", fontSize: "18px" }}>
+                                {d.name ? d.name[0] : "D"}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <strong style={{ fontSize: "15.5px", color: textPrimary, display: "block" }}>{d.name}</strong>
+                            <span style={{ fontSize: "12px", color: textSecondary }}>{d.email}</span>
+                            {d.phone && <div style={{ fontSize: "11.5px", color: textSecondary, marginTop: "2px" }}>📞 {d.phone}</div>}
+                          </div>
                         </div>
-                        <div>
-                          <strong style={{ fontSize: "16px", color: textPrimary, display: "block" }}>{d.name}</strong>
-                          <span style={{ fontSize: "12px", color: textSecondary }}>{d.email}</span>
-                        </div>
+
+                        <span style={{
+                          fontSize: "11px",
+                          fontWeight: "900",
+                          padding: "3px 9px",
+                          borderRadius: "999px",
+                          background: d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.12)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.12)" : "rgba(217, 119, 6, 0.12)",
+                          color: d.verificationStatus === "Approved" ? "#16a34a" : d.verificationStatus === "Rejected" ? "#dc2626" : "#d97706",
+                          border: `1px solid ${d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.3)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.3)" : "rgba(217, 119, 6, 0.3)"}`
+                        }}>
+                          {d.verificationStatus || "Unverified"}
+                        </span>
                       </div>
 
-                      <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "12px", borderRadius: "12px", fontSize: "12.5px", marginBottom: "14px" }}>
-                        <div>🪪 License #: <strong style={{ fontFamily: "monospace", color: "#6d28d9" }}>{d.licenseNumber || "N/A"}</strong></div>
-                        <div>⏳ Experience: {d.experienceYears || 5} Years</div>
+                      {/* License Info & Mini Thumbnail */}
+                      <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "12px", borderRadius: "14px", fontSize: "12.5px", marginBottom: "14px", border: `1px solid ${borderCol}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "700", textTransform: "uppercase" }}>Driving License:</div>
+                            <strong style={{ fontFamily: "monospace", color: "#6d28d9", fontSize: "13px" }}>{d.licenseNumber || "Not Provided"}</strong>
+                            <div style={{ fontSize: "12px", color: textSecondary, marginTop: "4px" }}>⏳ Experience: {d.experienceYears || 0} Years</div>
+                          </div>
+
+                          {d.licenseImage ? (
+                            <div
+                              onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }}
+                              style={{ width: "64px", height: "46px", borderRadius: "8px", overflow: "hidden", border: "1.5px solid #6d28d9", cursor: "pointer", background: "#0f172a", flexShrink: 0, position: "relative" }}
+                              title="Click to inspect driving license"
+                            >
+                              <img src={d.licenseImage} alt="License Mini" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <span style={{ position: "absolute", bottom: 0, insetInline: 0, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "8px", textAlign: "center", fontWeight: "800" }}>VIEW</span>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: "10.5px", color: "#94a3b8", background: "rgba(148, 163, 184, 0.15)", padding: "4px 8px", borderRadius: "6px" }}>No Photo</span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: "8px" }}>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       <button onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }} style={{ flex: 1, padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
                         🔍 Inspect License
                       </button>
@@ -2105,47 +2083,6 @@ export default function Admin({ defaultTab = "overview" }) {
               </div>
             </div>
           )}
-
-          {/* SECTION 6: BUS REQUESTS */}
-          {activeTab === "busRequests" && (
-            <div className="fade-in-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <div>
-                  <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary }}>🚌 Driver Bus Assignment Requests</h2>
-                  <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>Review driver requests to claim and drive scheduled express buses.</p>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                {adminBusRequests.map((req) => (
-                  <div key={req._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
-                    <div>
-                      <strong style={{ fontSize: "16px", color: textPrimary }}>Driver {req.driverName} ({req.driverEmail})</strong>
-                      <div style={{ fontSize: "13px", color: textSecondary, marginTop: "4px" }}>
-                        Bus: <strong>{req.busNumber}</strong> ({req.busName}) | Route: {req.routeName} | Departure: {req.departureTime}
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <span style={{ fontSize: "11px", fontWeight: "800", padding: "4px 10px", borderRadius: "999px", background: req.status === "Approved" ? "rgba(34, 197, 94, 0.12)" : "rgba(217, 119, 6, 0.12)", color: req.status === "Approved" ? "#16a34a" : "#d97706" }}>
-                        {req.status}
-                      </span>
-                      {req.status === "Pending" && (
-                        <button
-                          onClick={() => { setSelectedBusReqModal(req); setBusReqModalStatus("Approved"); }}
-                          style={{ padding: "8px 16px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}
-                        >
-                          Review &amp; Approve →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-
 
           {/* SECTION: BUS ROUTES, OFFSET TIMINGS & SCHEDULES */}
           {activeTab === "busRoutes" && (
@@ -2228,41 +2165,175 @@ export default function Admin({ defaultTab = "overview" }) {
         </main>
       </div>
 
-      {/* 🪪 MODAL: DRIVER VERIFICATION */}
+      {/* 🪪 MODAL: DRIVER VERIFICATION & LICENSE INSPECTION */}
       {selectedDriverForVerify && (
-        <div className="modal-overlay" style={{ zIndex: 9999 }}>
-          <div className="modal-content" style={{ maxWidth: "780px", width: "95%", borderRadius: "24px", padding: "28px", background: bgCard, color: textPrimary }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-              <h3 style={{ fontSize: "20px", fontWeight: "900", margin: 0 }}>🪪 Driver License Inspection</h3>
-              <button onClick={() => setSelectedDriverForVerify(null)} style={{ background: "none", border: "none", fontSize: "24px", cursor: "pointer", color: textSecondary }}>×</button>
+        <div className="modal-overlay" style={{ zIndex: 9999, background: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(4px)" }}>
+          <div className="modal-content" style={{ maxWidth: "840px", width: "95%", borderRadius: "24px", padding: "30px", background: bgCard, color: textPrimary, boxShadow: "0 25px 60px rgba(0,0,0,0.35)" }}>
+            
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "16px" }}>
+              <div>
+                <h3 style={{ fontSize: "20px", fontWeight: "900", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span>🪪</span> Driver License Inspection &amp; Verification
+                </h3>
+                <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: textSecondary }}>
+                  Verify official driving credentials and background records for <strong>{selectedDriverForVerify.name}</strong>.
+                </p>
+              </div>
+              <button onClick={() => setSelectedDriverForVerify(null)} style={{ background: "none", border: "none", fontSize: "28px", cursor: "pointer", color: textSecondary, fontWeight: "900" }}>×</button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "20px" }}>
-              <div>
-                <strong style={{ fontSize: "16px", display: "block" }}>{selectedDriverForVerify.name}</strong>
-                <span style={{ fontSize: "13px", color: textSecondary }}>{selectedDriverForVerify.email}</span>
-                <div style={{ marginTop: "10px", fontSize: "13px" }}>License #: <strong style={{ color: "#6d28d9" }}>{selectedDriverForVerify.licenseNumber || "N/A"}</strong></div>
-                <div style={{ fontSize: "13px" }}>Experience: {selectedDriverForVerify.experienceYears || 5} Years</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", marginBottom: "24px" }}>
+              
+              {/* Left Column: Driver Profile Details */}
+              <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "20px", borderRadius: "18px", border: `1px solid ${borderCol}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
+                  <div style={{ width: "64px", height: "64px", borderRadius: "50%", overflow: "hidden", border: "3px solid #6d28d9", background: "#e2e8f0", flexShrink: 0 }}>
+                    {selectedDriverForVerify.profilePic ? (
+                      <img src={selectedDriverForVerify.profilePic} alt={selectedDriverForVerify.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", color: "#6d28d9", fontSize: "22px" }}>
+                        {selectedDriverForVerify.name ? selectedDriverForVerify.name[0] : "D"}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <strong style={{ fontSize: "18px", color: textPrimary, display: "block" }}>{selectedDriverForVerify.name}</strong>
+                    <span style={{ fontSize: "13px", color: textSecondary }}>{selectedDriverForVerify.email}</span>
+                    {selectedDriverForVerify.phone && <div style={{ fontSize: "12.5px", color: "#6d28d9", fontWeight: "700", marginTop: "2px" }}>📞 {selectedDriverForVerify.phone}</div>}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px" }}>
+                  <div style={{ padding: "10px 14px", background: darkMode ? "#1e293b" : "#ffffff", borderRadius: "12px", border: `1px solid ${borderCol}` }}>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", display: "block" }}>Driving License Number</span>
+                    <strong style={{ fontSize: "15px", fontFamily: "monospace", color: "#6d28d9", letterSpacing: "0.5px" }}>
+                      {selectedDriverForVerify.licenseNumber || "N/A"}
+                    </strong>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "10px" }}>
+                    <div style={{ flex: 1, padding: "10px 14px", background: darkMode ? "#1e293b" : "#ffffff", borderRadius: "12px", border: `1px solid ${borderCol}` }}>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", display: "block" }}>Experience</span>
+                      <strong>{selectedDriverForVerify.experienceYears || 0} Years</strong>
+                    </div>
+                    <div style={{ flex: 1, padding: "10px 14px", background: darkMode ? "#1e293b" : "#ffffff", borderRadius: "12px", border: `1px solid ${borderCol}` }}>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", display: "block" }}>Current Status</span>
+                      <strong style={{ color: selectedDriverForVerify.verificationStatus === "Approved" ? "#16a34a" : selectedDriverForVerify.verificationStatus === "Rejected" ? "#dc2626" : "#d97706" }}>
+                        {selectedDriverForVerify.verificationStatus || "Unverified"}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {selectedDriverForVerify.verificationNote && (
+                    <div style={{ background: "rgba(109, 40, 217, 0.08)", padding: "10px 14px", borderRadius: "12px", border: "1px solid rgba(109, 40, 217, 0.2)", fontSize: "12px", color: textPrimary }}>
+                      <strong>Existing Note:</strong> {selectedDriverForVerify.verificationNote}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div>
-                {selectedDriverForVerify.licenseImage ? (
-                  <img src={selectedDriverForVerify.licenseImage} alt="License" style={{ width: "100%", maxHeight: "200px", objectFit: "contain", borderRadius: "12px", border: `1px solid ${borderCol}` }} />
-                ) : (
-                  <div style={{ padding: "30px", textAlign: "center", color: "#dc2626", background: "rgba(225, 29, 72, 0.05)", borderRadius: "12px" }}>No license photo uploaded</div>
-                )}
+              {/* Right Column: License Document Viewer */}
+              <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "20px", borderRadius: "18px", border: `1px solid ${borderCol}`, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: "12px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", marginBottom: "8px", display: "flex", justifyContent: "space-between" }}>
+                    <span>🪪 Uploaded License Document:</span>
+                    {selectedDriverForVerify.licenseImage && <span style={{ color: "#16a34a" }}>● Ready to Verify</span>}
+                  </div>
+
+                  {selectedDriverForVerify.licenseImage ? (
+                    <div
+                      onClick={() => setZoomImage(selectedDriverForVerify.licenseImage)}
+                      style={{
+                        borderRadius: "14px",
+                        overflow: "hidden",
+                        border: `2px solid ${borderCol}`,
+                        background: "#0f172a",
+                        cursor: "pointer",
+                        boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
+                        position: "relative",
+                        minHeight: "180px",
+                        maxHeight: "240px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <img
+                        src={selectedDriverForVerify.licenseImage}
+                        alt="Driving License Document"
+                        style={{ width: "100%", height: "100%", maxHeight: "240px", objectFit: "contain", display: "block" }}
+                      />
+                      <div style={{
+                        position: "absolute",
+                        bottom: 0,
+                        insetInline: 0,
+                        background: "linear-gradient(transparent, rgba(0,0,0,0.85))",
+                        padding: "8px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        color: "#ffffff",
+                        fontSize: "11.5px",
+                        fontWeight: "800",
+                      }}>
+                        <span>🔍 Click to View Fullscreen</span>
+                        <span style={{ background: "rgba(255,255,255,0.25)", padding: "2px 8px", borderRadius: "6px", fontSize: "10.5px" }}>Full Size</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "40px 20px", textAlign: "center", color: "#dc2626", background: "rgba(225, 29, 72, 0.05)", borderRadius: "14px", border: "1px dashed rgba(225, 29, 72, 0.3)" }}>
+                      <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }}>📄</span>
+                      <strong style={{ fontSize: "14px" }}>No License Document Uploaded</strong>
+                      <p style={{ fontSize: "12px", color: textSecondary, margin: "4px 0 0 0" }}>Driver has not attached a scan of their physical driving license.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginTop: "14px", fontSize: "12px", color: textSecondary }}>
+                  Click document to zoom in full resolution. Verify photo, validity and license category.
+                </div>
               </div>
+
             </div>
 
-            <div style={{ marginBottom: "20px" }}>
-              <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "6px" }}>Admin Feedback Note:</label>
-              <textarea className="rta-input-field" rows={2} value={driverVerifyNote} onChange={(e) => setDriverVerifyNote(e.target.value)} style={{ width: "100%", resize: "none" }} />
+            {/* Admin Feedback Note */}
+            <div style={{ marginBottom: "22px" }}>
+              <label style={{ fontSize: "12.5px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "6px" }}>
+                Admin Decision &amp; Feedback Note:
+              </label>
+              <textarea
+                className="rta-input-field"
+                rows={2}
+                value={driverVerifyNote}
+                onChange={(e) => setDriverVerifyNote(e.target.value)}
+                placeholder="e.g. Driving license verified with transport authority. Approved for duty."
+                style={{ width: "100%", resize: "none" }}
+              />
             </div>
 
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Approved", driverVerifyNote)} style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer" }}>Accept Driver ✅</button>
-              <button onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Rejected", driverVerifyNote)} style={{ padding: "12px 20px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", cursor: "pointer" }}>Reject ❌</button>
+            {/* Action Buttons */}
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <button
+                onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Approved", driverVerifyNote)}
+                style={{ flex: 1, padding: "13px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.3)" }}
+              >
+                ✓ Accept &amp; Approve Driver
+              </button>
+              <button
+                onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Rejected", driverVerifyNote)}
+                style={{ padding: "13px 22px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
+              >
+                ❌ Reject Driver
+              </button>
+              <button
+                onClick={() => setSelectedDriverForVerify(null)}
+                style={{ padding: "13px 20px", borderRadius: "12px", background: darkMode ? "#334155" : "#f1f5f9", color: textPrimary, border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
+              >
+                Close
+              </button>
             </div>
+
           </div>
         </div>
       )}
@@ -2354,33 +2425,113 @@ export default function Admin({ defaultTab = "overview" }) {
                   {actionApp.institutionName && <div><strong>Institution:</strong> {actionApp.institutionName}</div>}
                 </div>
 
-                {/* ID Proof Document */}
+                {/* 🪪 ID PROOF DOCUMENT IMAGE FROM DATABASE */}
                 {actionApp.idProofUrl && (
-                  <div style={{ marginBottom: "12px" }}>
-                    <div style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", marginBottom: "4px" }}>Govt ID Document Proof:</div>
+                  <div style={{ marginBottom: "18px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: "800", color: textSecondary, textTransform: "uppercase", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
+                      <span>🪪 Submitted Govt ID Document Proof ({actionApp.idType || "ID Proof"}):</span>
+                      <span style={{ color: "#16a34a", fontFamily: "monospace" }}>ID No: {actionApp.idNumber}</span>
+                    </div>
+                    
                     <div
                       onClick={() => setZoomImage(actionApp.idProofUrl)}
-                      style={{ height: "110px", borderRadius: "12px", overflow: "hidden", border: `1.5px solid ${borderCol}`, background: "#000", cursor: "pointer", position: "relative" }}
+                      style={{
+                        borderRadius: "16px",
+                        overflow: "hidden",
+                        border: `2px solid ${borderCol}`,
+                        background: "#0f172a",
+                        cursor: "pointer",
+                        boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
+                        position: "relative",
+                        minHeight: "180px",
+                        maxHeight: "260px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      <img src={actionApp.idProofUrl} alt="Govt ID Proof" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.9 }} />
-                      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: "800", fontSize: "12px" }}>
-                        🔍 View Govt ID Fullscreen
+                      <img
+                        src={actionApp.idProofUrl}
+                        alt="Uploaded Govt ID Document Proof"
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          maxHeight: "260px",
+                          objectFit: "contain",
+                          display: "block",
+                        }}
+                      />
+                      <div style={{
+                        position: "absolute",
+                        bottom: 0,
+                        insetInline: 0,
+                        background: "linear-gradient(transparent, rgba(0,0,0,0.85))",
+                        padding: "8px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        color: "#ffffff",
+                        fontSize: "11.5px",
+                        fontWeight: "800",
+                      }}>
+                        <span>🔍 Click to View Full Size Document</span>
+                        <span style={{ background: "rgba(255,255,255,0.25)", padding: "2px 8px", borderRadius: "6px", fontSize: "10.5px" }}>Full Size</span>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Student ID Document */}
+                {/* 🎓 STUDENT ID DOCUMENT IMAGE FROM DATABASE */}
                 {actionApp.studentIdUrl && (
-                  <div>
-                    <div style={{ fontSize: "11px", fontWeight: "800", color: "#2563eb", textTransform: "uppercase", marginBottom: "4px" }}>🎓 Student ID Card Proof:</div>
+                  <div style={{ marginBottom: "18px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: "800", color: "#2563eb", textTransform: "uppercase", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
+                      <span>🎓 Submitted Student ID Document Proof:</span>
+                      <span style={{ color: "#2563eb" }}>{actionApp.institutionName}</span>
+                    </div>
+                    
                     <div
                       onClick={() => setZoomImage(actionApp.studentIdUrl)}
-                      style={{ height: "110px", borderRadius: "12px", overflow: "hidden", border: "1.5px solid #93c5fd", background: "#000", cursor: "pointer", position: "relative" }}
+                      style={{
+                        borderRadius: "16px",
+                        overflow: "hidden",
+                        border: "2px solid #93c5fd",
+                        background: "#0f172a",
+                        cursor: "pointer",
+                        boxShadow: "0 6px 20px rgba(37, 99, 235, 0.15)",
+                        position: "relative",
+                        minHeight: "180px",
+                        maxHeight: "260px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      <img src={actionApp.studentIdUrl} alt="Student ID Proof" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.9 }} />
-                      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: "800", fontSize: "12px" }}>
-                        🔍 View Student ID Fullscreen
+                      <img
+                        src={actionApp.studentIdUrl}
+                        alt="Uploaded Student ID Document Proof"
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          maxHeight: "260px",
+                          objectFit: "contain",
+                          display: "block",
+                        }}
+                      />
+                      <div style={{
+                        position: "absolute",
+                        bottom: 0,
+                        insetInline: 0,
+                        background: "linear-gradient(transparent, rgba(0,0,0,0.85))",
+                        padding: "8px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        color: "#ffffff",
+                        fontSize: "11.5px",
+                        fontWeight: "800",
+                      }}>
+                        <span>🔍 Click to View Full Size Student ID</span>
+                        <span style={{ background: "rgba(255,255,255,0.25)", padding: "2px 8px", borderRadius: "6px", fontSize: "10.5px" }}>Full Size</span>
                       </div>
                     </div>
                   </div>
@@ -2503,36 +2654,6 @@ export default function Admin({ defaultTab = "overview" }) {
         </div>
       )}
 
-      {/* 🚌 MODAL: BUS REQUEST APPROVAL */}
-      {selectedBusReqModal && (
-        <div className="modal-overlay" style={{ zIndex: 9999 }}>
-          <div className="modal-content" style={{ maxWidth: "480px", width: "90%", padding: "28px", borderRadius: "24px", background: bgCard, color: textPrimary }}>
-            <h3 style={{ fontSize: "18px", fontWeight: "900", margin: "0 0 16px 0" }}>Review Bus Assignment Request</h3>
-            <form onSubmit={handleUpdateBusRequestSubmit}>
-              <div style={{ marginBottom: "14px", fontSize: "13px" }}>
-                <div>Driver: <strong>{selectedBusReqModal.driverName}</strong></div>
-                <div>Bus: <strong>{selectedBusReqModal.busNumber}</strong> ({selectedBusReqModal.busName})</div>
-              </div>
-              <div className="rta-input-group" style={{ marginBottom: "14px" }}>
-                <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Review Decision</label>
-                <select className="rta-input-field" value={busReqModalStatus} onChange={(e) => setBusReqModalStatus(e.target.value)}>
-                  <option value="Approved">Approve &amp; Assign Driver</option>
-                  <option value="Rejected">Reject Request</option>
-                </select>
-              </div>
-              <div className="rta-input-group" style={{ marginBottom: "20px" }}>
-                <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Review Comment</label>
-                <input type="text" className="rta-input-field" value={busReqModalComment} onChange={(e) => setBusReqModalComment(e.target.value)} placeholder="e.g. Bus assigned successfully." />
-              </div>
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button type="submit" style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer" }}>Submit Review →</button>
-                <button type="button" onClick={() => setSelectedBusReqModal(null)} style={{ padding: "12px 18px", borderRadius: "12px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: "800", cursor: "pointer" }}>Cancel</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* 📅 MODAL: DRIVER LEAVE APPROVAL */}
       {selectedLeaveModal && (
         <div className="modal-overlay" style={{ zIndex: 9999 }}>
@@ -2563,12 +2684,112 @@ export default function Admin({ defaultTab = "overview" }) {
         </div>
       )}
 
-      {/* 🖼️ IMAGE LIGHTBOX MODAL */}
+      {/* 🖼️ HIGH-RES DOCUMENT & CARD LIGHTBOX MODAL */}
       {zoomImage && (
-        <div className="modal-overlay" style={{ zIndex: 10000, background: "rgba(0, 0, 0, 0.85)" }} onClick={() => setZoomImage(null)}>
-          <div style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh", margin: "auto" }} onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setZoomImage(null)} style={{ position: "absolute", top: "-40px", right: "0", background: "none", border: "none", color: "#ffffff", fontSize: "32px", cursor: "pointer", fontWeight: "900" }}>×</button>
-            <img src={zoomImage} alt="Document Zoom" style={{ maxWidth: "90vw", maxHeight: "85vh", borderRadius: "16px", boxShadow: "0 20px 40px rgba(0,0,0,0.5)", border: "2px solid #ffffff" }} />
+        <div className="modal-overlay" style={{ zIndex: 10000, background: "rgba(0, 0, 0, 0.88)", backdropFilter: "blur(6px)" }} onClick={() => setZoomImage(null)}>
+          <div style={{ position: "relative", maxWidth: "680px", width: "94%", margin: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setZoomImage(null)}
+              style={{ position: "absolute", top: "-45px", right: "0", background: "none", border: "none", color: "#ffffff", fontSize: "36px", cursor: "pointer", fontWeight: "900" }}
+            >
+              ×
+            </button>
+
+            {typeof zoomImage === "string" ? (
+              <img src={zoomImage} alt="Document Zoom" style={{ width: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: "20px", boxShadow: "0 25px 50px rgba(0,0,0,0.6)", border: "2px solid rgba(255,255,255,0.3)" }} />
+            ) : zoomImage.type === "govtId" ? (
+              /* Magnified High-Definition Government ID Card */
+              <div style={{
+                background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)",
+                borderRadius: "24px",
+                overflow: "hidden",
+                border: "3px solid #94a3b8",
+                boxShadow: "0 25px 60px rgba(0,0,0,0.6)",
+                color: "#0f172a",
+              }}>
+                <div style={{ height: "6px", background: "linear-gradient(90deg, #ff9933 0%, #ffffff 50%, #138808 100%)" }} />
+                <div style={{ background: "#0f172a", color: "#ffffff", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", fontWeight: "900", fontSize: "14px", letterSpacing: "1px" }}>
+                    <span style={{ fontSize: "20px" }}>🏛️</span>
+                    <span>GOVERNMENT OF INDIA • OFFICIAL TRANSIT CARD</span>
+                  </div>
+                  <span style={{ background: "#16a34a", color: "#ffffff", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "800" }}>
+                    AUTHENTICATED
+                  </span>
+                </div>
+
+                <div style={{ padding: "24px", display: "grid", gridTemplateColumns: "140px 1fr", gap: "20px", alignItems: "center" }}>
+                  <div style={{ width: "140px", height: "170px", borderRadius: "14px", overflow: "hidden", border: "2px solid #64748b", background: "#e2e8f0" }}>
+                    {zoomImage.data.idProofUrl && (zoomImage.data.idProofUrl.startsWith("data:image/") || zoomImage.data.idProofUrl.startsWith("http")) ? (
+                      <img src={zoomImage.data.idProofUrl} alt="Applicant" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(zoomImage.data.fullName || "User")}`} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "13.5px" }}>
+                    <div style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a" }}>{zoomImage.data.fullName}</div>
+                    <div>DOB: <strong>{zoomImage.data.dob || "15/08/1998"}</strong> | Gender: <strong>{zoomImage.data.gender || "Male"}</strong></div>
+                    <div>Phone: <strong>{zoomImage.data.phone || "N/A"}</strong> | Email: <strong>{zoomImage.data.email || "N/A"}</strong></div>
+                    <div>Address: <strong>{zoomImage.data.street ? `${zoomImage.data.street}, ` : ""}{zoomImage.data.city || "Kochi"}, {zoomImage.data.state || "Kerala"} - {zoomImage.data.pincode || "682001"}</strong></div>
+                    <div style={{ marginTop: "10px", padding: "8px 14px", borderRadius: "10px", background: "#f1f5f9", border: "1.5px solid #cbd5e1", display: "inline-block" }}>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>{zoomImage.data.idType || "GOVT ID"} NO: </span>
+                      <strong style={{ fontSize: "16px", fontFamily: "monospace", color: "#1e293b" }}>{zoomImage.data.idNumber || "•••• •••• 6789"}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0", padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#64748b" }}>
+                  <span>Verified Electronic Record • MoveSmart Kerala Transit</span>
+                  <span style={{ fontFamily: "monospace", fontSize: "16px", letterSpacing: "3px" }}>|||||| | |||||||| ||||| ||||</span>
+                </div>
+              </div>
+            ) : (
+              /* Magnified High-Definition Student ID Card */
+              <div style={{
+                background: "linear-gradient(135deg, #ffffff 0%, #eff6ff 100%)",
+                borderRadius: "24px",
+                overflow: "hidden",
+                border: "3px solid #93c5fd",
+                boxShadow: "0 25px 60px rgba(37, 99, 235, 0.2)",
+                color: "#0f172a",
+              }}>
+                <div style={{ background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)", color: "#ffffff", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", fontWeight: "900", fontSize: "14px", letterSpacing: "1px" }}>
+                    <span style={{ fontSize: "20px" }}>🎓</span>
+                    <span>STUDENT CONCESSION IDENTITY PASS</span>
+                  </div>
+                  <span style={{ background: "rgba(255, 255, 255, 0.25)", color: "#ffffff", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "800" }}>
+                    CONCESSION 0.9X
+                  </span>
+                </div>
+
+                <div style={{ padding: "24px", display: "grid", gridTemplateColumns: "140px 1fr", gap: "20px", alignItems: "center" }}>
+                  <div style={{ width: "140px", height: "170px", borderRadius: "14px", overflow: "hidden", border: "2px solid #60a5fa", background: "#dbeafe" }}>
+                    {zoomImage.data.studentIdUrl && (zoomImage.data.studentIdUrl.startsWith("data:image/") || zoomImage.data.studentIdUrl.startsWith("http")) ? (
+                      <img src={zoomImage.data.studentIdUrl} alt="Student" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(zoomImage.data.fullName || "Student")}`} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "13.5px" }}>
+                    <div style={{ fontSize: "20px", fontWeight: "900", color: "#1e3a8a" }}>{zoomImage.data.fullName}</div>
+                    <div style={{ fontSize: "14.5px", fontWeight: "800", color: "#2563eb" }}>🏫 {zoomImage.data.institutionName || "College of Engineering / University"}</div>
+                    <div>Roll / Student ID: <strong style={{ fontFamily: "monospace", fontSize: "15px" }}>{zoomImage.data.idNumber || zoomImage.data.applicationId}</strong></div>
+                    <div>Academic Validity: <strong>2026 - 2027</strong> | Emergency: <strong>{zoomImage.data.emergencyPhone || "N/A"}</strong></div>
+                    <div style={{ marginTop: "8px", padding: "6px 12px", borderRadius: "8px", background: "#dbeafe", border: "1px solid #bfdbfe", color: "#1e40af", fontWeight: "700", display: "inline-block" }}>
+                      ✓ Verified for Student Fare Concession (0.9x Base Rate)
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: "#eff6ff", borderTop: "1px solid #dbeafe", padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#1e40af" }}>
+                  <span>Authorized by Institution &amp; Kerala Transit Board</span>
+                  <span style={{ fontFamily: "monospace", fontSize: "16px", letterSpacing: "3px" }}>|||||| | |||||||| ||||| ||||</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

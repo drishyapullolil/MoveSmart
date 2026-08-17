@@ -105,11 +105,9 @@ export function validateInstitutionName(name) {
 
 /**
  * Real-time Passport Number Validation
- * Rules for valid Passport:
- * 1. Must be 6 to 12 alphanumeric characters (no spaces or special symbols).
- * 2. Standard Indian Passport: 8 characters starting with 1 letter (A-Z) followed by 7 digits (e.g. Z1234567, A9876543).
- * 3. International Passports: 6-12 alphanumeric characters.
- * 4. Fake pattern protection: blocks repetitive letters/digits like AAAAAAAA, 11111111, 00000000, 12345678.
+ * Rules for valid Passport (Strict 8 characters total):
+ * 1. Option A: 1 uppercase letter followed by 7 digits (e.g. Z1234567, A9876543)
+ * 2. Option B: 2 uppercase letters followed by 6 digits (e.g. AB123456, KL987654)
  *
  * @param {string} passportNumber
  * @returns {{ valid: boolean, reason: string, message: string, badgeType: "warning" | "error" | "success" }}
@@ -136,70 +134,66 @@ export function validatePassportNumber(passportNumber) {
     };
   }
 
-  // Length check
-  if (clean.length < 6) {
+  // Exact 8-character length check
+  if (clean.length < 8) {
     return {
       valid: false,
       reason: "too_short",
-      message: "Passport number must be at least 6 characters long.",
+      message: `Passport number must be exactly 8 characters (1 letter + 7 digits OR 2 letters + 6 digits). (${clean.length}/8 entered)`,
       badgeType: "error",
     };
   }
 
-  if (clean.length > 12) {
+  if (clean.length > 8) {
     return {
       valid: false,
       reason: "too_long",
-      message: "Passport number cannot exceed 12 characters.",
+      message: `Passport number cannot exceed 8 characters (1 letter + 7 digits OR 2 letters + 6 digits).`,
       badgeType: "error",
     };
   }
 
-  // Check for fake/spam repetitive patterns (e.g. AAAAAAA, 11111111, 00000000)
-  if (/^(\w)\1+$/.test(clean)) {
+  // Must start with at least 1 uppercase letter
+  if (!/^[A-Z]/.test(clean)) {
+    return {
+      valid: false,
+      reason: "invalid_prefix",
+      message: "Passport number must start with 1 or 2 letters (e.g. Z1234567 or AB123456).",
+      badgeType: "error",
+    };
+  }
+
+  // Check 1 letter + 7 digits OR 2 letters + 6 digits
+  const isOneLetterSevenDigits = /^[A-Z][0-9]{7}$/.test(clean);
+  const isTwoLettersSixDigits = /^[A-Z]{2}[0-9]{6}$/.test(clean);
+
+  if (!isOneLetterSevenDigits && !isTwoLettersSixDigits) {
+    return {
+      valid: false,
+      reason: "invalid_format",
+      message: "Passport format must be 1 letter + 7 digits (e.g. Z1234567) or 2 letters + 6 digits (e.g. AB123456).",
+      badgeType: "error",
+    };
+  }
+
+  // Check for fake repetitive digit patterns
+  const numericPart = clean.replace(/^[A-Z]+/, "");
+  if (/^(\d)\1+$/.test(numericPart)) {
     return {
       valid: false,
       reason: "fake_pattern",
-      message: "This appears to be a fake or repetitive passport number.",
+      message: "Please enter a real valid passport number (repetitive digits detected).",
       badgeType: "error",
     };
   }
 
-  // Check for sequential patterns (e.g. 12345678, ABCDEFGH)
-  if ("01234567890123456789".includes(clean) || "ABCDEFGHIJKLMNOPQRSTUVWXYZ".includes(clean)) {
-    return {
-      valid: false,
-      reason: "fake_pattern",
-      message: "Please enter a real valid passport number.",
-      badgeType: "error",
-    };
-  }
-
-  // Standard Indian Passport format (1 uppercase letter + 7 digits)
-  if (/^[A-Z][0-9]{7}$/.test(clean)) {
-    return {
-      valid: true,
-      reason: "valid_indian_passport",
-      message: "✓ Valid Passport Number (Standard 8-Char Format)",
-      badgeType: "success",
-    };
-  }
-
-  // General International Passport format (6-12 alphanumeric)
-  if (/^[A-Z0-9]{6,12}$/.test(clean)) {
-    return {
-      valid: true,
-      reason: "valid_passport",
-      message: "✓ Valid International Passport Number",
-      badgeType: "success",
-    };
-  }
+  const formatDescription = isOneLetterSevenDigits ? "1 letter + 7 digits" : "2 letters + 6 digits";
 
   return {
-    valid: false,
-    reason: "invalid_format",
-    message: "Invalid passport format. Enter 6-12 alphanumeric characters (e.g. Z1234567).",
-    badgeType: "error",
+    valid: true,
+    reason: "valid_passport",
+    message: `✓ Valid Passport Number (${clean} - ${formatDescription})`,
+    badgeType: "success",
   };
 }
 
@@ -215,17 +209,24 @@ export function validateIdNumber(idNumber, category = "Regular") {
     return { valid: false, message: `${label} is required.`, badgeType: "warning" };
   }
 
+  const rawInput = idNumber;
   const clean = idNumber.trim();
 
-  // 1. Foreigner / Passport Number (Alphanumeric 6-12 chars)
+  // 1. Foreigner / Passport Number (Strict 8-character format)
   if (category === "Foreigner") {
     return validatePassportNumber(clean);
   }
 
-  // 2. Student Roll / ID Number (NUMBERS ONLY)
+  // 2. Student Roll / ID Number (NUMBERS ONLY, NO SPACES)
   if (category === "Student") {
+    if (/\s/.test(rawInput)) {
+      return { valid: false, message: "❌ Spaces are not allowed in Student Roll / ID Number.", badgeType: "error" };
+    }
+    if (/[a-zA-Z]/.test(rawInput)) {
+      return { valid: false, message: "❌ Alphabets are not allowed. Student Roll / ID Number must contain numbers only (0-9).", badgeType: "error" };
+    }
     if (!/^\d+$/.test(clean)) {
-      return { valid: false, message: "Student Roll / ID Number must contain numbers only (digits 0-9).", badgeType: "error" };
+      return { valid: false, message: "❌ Student Roll / ID Number must contain numbers only (digits 0-9).", badgeType: "error" };
     }
     if (clean.length < 4) {
       return { valid: false, message: "Student Roll / ID Number must be at least 4 digits long.", badgeType: "error" };
@@ -239,43 +240,131 @@ export function validateIdNumber(idNumber, category = "Regular") {
     return { valid: true, message: "✓ Valid Numeric Student Roll / ID Number", badgeType: "success" };
   }
 
-  // 3. Government ID Number / Aadhaar / DL (NUMBERS ONLY)
-  if (category === "Regular") {
-    const digitsOnly = clean.replace(/\s/g, "");
-    if (!/^\d+$/.test(digitsOnly)) {
-      return { valid: false, message: "Government ID Number must contain numbers only (digits 0-9).", badgeType: "error" };
-    }
-    if (digitsOnly.length < 6) {
-      return { valid: false, message: "Government ID Number must be at least 6 digits long.", badgeType: "error" };
-    }
-    if (digitsOnly.length > 16) {
-      return { valid: false, message: "Government ID Number cannot exceed 16 digits.", badgeType: "error" };
-    }
-    if (/^(\d)\1+$/.test(digitsOnly)) {
-      return { valid: false, message: "Please enter a valid numeric Government ID Number.", badgeType: "error" };
-    }
-    if (digitsOnly.length === 12) {
-      return { valid: true, message: "✓ Valid 12-Digit Aadhaar Number", badgeType: "success" };
-    }
-    return { valid: true, message: "✓ Valid Numeric Government ID Number", badgeType: "success" };
+  // 3. Government ID Number (STRICTLY NO SPACES, NO ALPHABETS, DIGITS ONLY)
+  if (/\s/.test(rawInput)) {
+    return {
+      valid: false,
+      message: "❌ Spaces are not allowed in Government ID Number. Enter continuous digits only.",
+      badgeType: "error",
+    };
   }
 
-  return { valid: true, message: "✓ Valid ID Number", badgeType: "success" };
+  if (/[a-zA-Z]/.test(rawInput)) {
+    return {
+      valid: false,
+      message: "❌ Alphabets are not allowed. Government ID Number must contain numbers only (0-9).",
+      badgeType: "error",
+    };
+  }
+
+  if (!/^\d+$/.test(clean)) {
+    return {
+      valid: false,
+      message: "❌ Government ID Number must contain numbers only (digits 0-9). Special characters are not allowed.",
+      badgeType: "error",
+    };
+  }
+
+  if (clean.length < 6) {
+    return {
+      valid: false,
+      message: `⚠️ Government ID Number must be at least 6 digits long (${clean.length} entered).`,
+      badgeType: "error",
+    };
+  }
+
+  if (clean.length > 16) {
+    return {
+      valid: false,
+      message: `❌ Government ID Number cannot exceed 16 digits (${clean.length} entered).`,
+      badgeType: "error",
+    };
+  }
+
+  if (/^(\d)\1+$/.test(clean)) {
+    return {
+      valid: false,
+      message: "❌ Please enter a real valid numeric Government ID Number.",
+      badgeType: "error",
+    };
+  }
+
+  if (clean.length === 12) {
+    return {
+      valid: true,
+      message: "✓ Valid 12-Digit Aadhaar / Government ID Number",
+      badgeType: "success",
+    };
+  }
+
+  return {
+    valid: true,
+    message: `✓ Valid Government ID Number (${clean})`,
+    badgeType: "success",
+  };
 }
 
 /**
  * Validates street or house address.
+ * Rules:
+ * - No spaces allowed.
+ * - Allowed characters: Alphabets (A-Z, a-z), Numbers (0-9), Parentheses (), and Comma (,).
+ * - Other special characters are not allowed.
+ * - Must contain at least one alphabet (cannot be only numbers or symbols).
+ * - Minimum 2 characters.
+ *
  * @param {string} street
- * @returns {{ valid: boolean, message: string }}
+ * @returns {{ valid: boolean, message: string, badgeType?: "warning" | "error" | "success" }}
  */
 export function validateStreet(street) {
   if (!street || typeof street !== "string" || !street.trim()) {
-    return { valid: false, message: "Street / House Name is required." };
+    return { valid: false, message: "Street / House Name is required.", badgeType: "warning" };
   }
-  if (street.trim().length < 3) {
-    return { valid: false, message: "Street / House Name must be at least 3 characters long." };
+
+  const raw = street;
+  const clean = street.trim();
+
+  // 1. Strictly NO spaces
+  if (/\s/.test(raw)) {
+    return {
+      valid: false,
+      message: "❌ Spaces are not allowed in Street / House Name.",
+      badgeType: "error",
+    };
   }
-  return { valid: true, message: "Valid Street Address" };
+
+  // 2. Only allow A-Z, a-z, 0-9, '(', ')', and ','
+  if (/[^A-Za-z0-9(),]/.test(clean)) {
+    return {
+      valid: false,
+      message: "❌ Only letters, numbers, parentheses (), and commas (,) are allowed.",
+      badgeType: "error",
+    };
+  }
+
+  // 3. Must contain at least one alphabet (not only numbers/symbols)
+  if (!/[A-Za-z]/.test(clean)) {
+    return {
+      valid: false,
+      message: "❌ Street / House Name must contain alphabetic letters.",
+      badgeType: "error",
+    };
+  }
+
+  // 4. Minimum length check
+  if (clean.length < 2) {
+    return {
+      valid: false,
+      message: "⚠️ Street / House Name must be at least 2 characters long.",
+      badgeType: "error",
+    };
+  }
+
+  return {
+    valid: true,
+    message: `✓ Valid Street / House Name (${clean})`,
+    badgeType: "success",
+  };
 }
 
 /**

@@ -345,7 +345,7 @@ router.put("/admin/bus-request/:id/status", async (req, res) => {
 // ----------------------------------------------------
 // 3. DRIVER - LEAVE MANAGEMENT (WITH 2-HOUR DEADLINE RULE)
 // ----------------------------------------------------
-// Apply for leave (enforces 2-hour deadline rule before bus departure)
+// Apply for leave (Cannot apply for today or past dates; must be future date starting from tomorrow up to 90 days)
 router.post("/driver/leave", async (req, res) => {
   try {
     const { driverId, driverName, driverEmail, leaveDate, leaveType, halfDaySlot, reason } = req.body;
@@ -358,21 +358,50 @@ router.post("/driver/leave", async (req, res) => {
       return res.status(400).json({ message: "Please select a Half-Day slot: Forenoon (AM) or Afternoon (PM)." });
     }
 
-    // Check if driver has an assigned bus with a departure time today / on leave date
-    const assignedBus = await Bus.findOne({
-      $or: [{ driverName: driverName }, { driverId: driverId }],
+    // Date validation: Must be strictly future date (starting tomorrow)
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    // Parse leaveDate (format: YYYY-MM-DD)
+    const dateParts = String(leaveDate).split("-").map(Number);
+    if (dateParts.length !== 3 || isNaN(dateParts[0]) || isNaN(dateParts[1]) || isNaN(dateParts[2])) {
+      return res.status(400).json({ message: "Invalid leave date format. Please select a valid date." });
+    }
+
+    const selectedLeaveMidnight = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]).getTime();
+
+    if (selectedLeaveMidnight <= todayMidnight) {
+      return res.status(400).json({
+        message: "⚠️ Leave cannot be applied for today or past dates. Leave applications must be submitted for tomorrow onwards."
+      });
+    }
+
+    const maxAdvanceDays = 90;
+    const maxFutureMidnight = todayMidnight + (maxAdvanceDays * 24 * 60 * 60 * 1000);
+    if (selectedLeaveMidnight > maxFutureMidnight) {
+      return res.status(400).json({
+        message: `⚠️ Leave cannot be applied more than ${maxAdvanceDays} days in advance.`
+      });
+    }
+
+    // Check if there is already a pending or approved leave for this driver on the exact date
+    const dEmail = driverEmail || req.user?.email || "";
+    const existingLeave = await DriverLeave.findOne({
+      driverEmail: new RegExp(`^${dEmail.trim()}$`, "i"),
+      leaveDate: leaveDate,
+      status: { $in: ["Pending", "Approved"] }
     });
 
-    if (assignedBus && isWithin2Hours(assignedBus.departureTime, leaveDate)) {
+    if (existingLeave) {
       return res.status(400).json({
-        message: `⚠️ Driver leave MUST be requested at least 2 hours before scheduled bus departure time (Bus: ${assignedBus.busNumber}, Scheduled Departure: ${assignedBus.departureTime}). Emergency leave within 2 hours requires direct Admin override.`,
+        message: `⚠️ You already have a ${existingLeave.status.toLowerCase()} leave application submitted for ${leaveDate}.`
       });
     }
 
     const newLeave = new DriverLeave({
-      driverId: driverId && driverId.match(/^[0-9a-fA-F]{24}$/) ? driverId : "60d0fe4f5311236168a109ca",
-      driverName,
-      driverEmail: driverEmail || "driver@movesmart.in",
+      driverId: driverId && driverId.match(/^[0-9a-fA-F]{24}$/) ? driverId : req.user?._id || "60d0fe4f5311236168a109ca",
+      driverName: driverName || req.user?.name || "Driver",
+      driverEmail: dEmail || "driver@movesmart.in",
       leaveDate,
       leaveType,
       halfDaySlot: leaveType === "Half Day" ? halfDaySlot : "N/A",
@@ -384,7 +413,7 @@ router.post("/driver/leave", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Leave request submitted successfully for ${leaveType} on ${leaveDate}! Awaiting admin approval.`,
+      message: `✓ Leave request for ${leaveDate} (${leaveType}) submitted to Admin! Pending review.`,
       leave: newLeave,
     });
   } catch (error) {
