@@ -47,7 +47,14 @@ import {
   Sliders,
   Calendar,
   AlertTriangle,
-  Scan
+  Scan,
+  Video,
+  Activity,
+  Flame,
+  Wifi,
+  WifiOff,
+  UserX,
+  EyeOff
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -127,8 +134,16 @@ export default function Admin({ defaultTab = "overview" }) {
   const [busReqModalStatus, setBusReqModalStatus] = useState("Approved");
   const [busReqModalComment, setBusReqModalComment] = useState("");
 
-  // Safety Alerts State
+  // Safety Alerts & Live Video States
   const [safetyAlertsCount, setSafetyAlertsCount] = useState(0);
+  const [liveVideoFrames, setLiveVideoFrames] = useState({});
+  const [activeSessions, setActiveSessions] = useState([]);
+  const [liveAlerts, setLiveAlerts] = useState([]);
+  const [selectedVideoBus, setSelectedVideoBus] = useState(null);
+  const [demoStreamActive, setDemoStreamActive] = useState(false);
+  const [demoEar, setDemoEar] = useState(0.29);
+  const [demoAlertness, setDemoAlertness] = useState("NORMAL");
+
   const fetchSafetyAlertsCount = useCallback(async () => {
     try {
       const res = await axios.get("/api/monitoring/stats");
@@ -139,6 +154,96 @@ export default function Admin({ defaultTab = "overview" }) {
       // Non-blocking
     }
   }, []);
+
+  const fetchActiveSessions = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/monitoring/sessions/active");
+      const sessions = res.data.sessions || [];
+      setActiveSessions(sessions);
+      if (sessions.length > 0 && !selectedVideoBus) {
+        setSelectedVideoBus(sessions[0].busNumber || sessions[0]._id);
+      }
+    } catch (err) {
+      console.error("Error fetching active monitoring sessions:", err);
+    }
+  }, [selectedVideoBus]);
+
+  const fetchLiveAlerts = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/monitoring/alerts?status=All");
+      setLiveAlerts(res.data.alerts || []);
+    } catch (err) {
+      console.error("Error fetching live alerts:", err);
+    }
+  }, []);
+
+  const handleAcknowledgeAlert = async (alertId) => {
+    try {
+      const res = await axios.put(`/api/monitoring/alerts/${alertId}/acknowledge`);
+      showToast(res.data?.message || "Alert acknowledged.");
+      setLiveAlerts((prev) =>
+        prev.map((a) => (a._id === alertId ? { ...a, status: "Acknowledged" } : a))
+      );
+      fetchSafetyAlertsCount();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to acknowledge alert", "error");
+    }
+  };
+
+  const handleResolveAlert = async (alertId, resolutionNote = "Resolved by Admin") => {
+    try {
+      const res = await axios.put(`/api/monitoring/alerts/${alertId}/resolve`, { resolutionNote });
+      showToast(res.data?.message || "Alert resolved.");
+      setLiveAlerts((prev) =>
+        prev.map((a) => (a._id === alertId ? { ...a, status: "Resolved", resolutionNote } : a))
+      );
+      fetchSafetyAlertsCount();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to resolve alert", "error");
+    }
+  };
+
+  const handleSimulateOverviewEvent = async (eventType, ear = 0.14) => {
+    try {
+      const targetBus = activeSessions[0]?.busNumber || "KL-07-MS-1008";
+      const targetSession = activeSessions[0]?._id;
+      await axios.post("/api/monitoring/event", {
+        sessionId: targetSession,
+        busNumber: targetBus,
+        eventType,
+        ear,
+        absenceSeconds: eventType === "DRIVER_ABSENT" ? 30 : 0,
+        faceConfidence: eventType === "DRIVER_MISMATCH" ? 0.32 : 0.96,
+      });
+      showToast(`Simulated event triggered: ${eventType}`);
+      fetchLiveAlerts();
+      fetchSafetyAlertsCount();
+    } catch (err) {
+      // Fallback local simulation if no session
+      const mockAlert = {
+        _id: `evt-${Date.now()}`,
+        busNumber: "KL-07-MS-1008",
+        driverName: "Suresh Kumar",
+        eventType,
+        title:
+          eventType === "CRITICAL_DROWSINESS"
+            ? "🔴 Critical Driver Safety Alert: Severe Drowsiness"
+            : eventType === "DROWSINESS_WARNING"
+              ? "🟠 Drowsiness Warning"
+              : eventType === "DRIVER_MISMATCH"
+                ? "🔴 Driver Identity Mismatch Detected"
+                : "🟡 Early Drowsiness Warning",
+        description: `Live AI event: ${eventType} (Simulated test on Admin Dashboard)`,
+        severity: eventType === "CRITICAL_DROWSINESS" || eventType === "DRIVER_MISMATCH" ? "Critical" : "High",
+        status: "Active",
+        createdAt: new Date(),
+      };
+      setLiveAlerts((prev) => [mockAlert, ...prev]);
+      setActiveEmergencyAlert(mockAlert);
+      setSafetyAlertsCount((prev) => prev + 1);
+      showToast(`🚨 ${mockAlert.title}`, "error");
+    }
+  };
 
   // Passengers & Wallet Page States
   const [passengerSearchQuery, setPassengerSearchQuery] = useState("");
@@ -223,20 +328,61 @@ export default function Admin({ defaultTab = "overview" }) {
     fetchAdminDrivers();
     fetchAdminBusRequests();
     fetchSafetyAlertsCount();
-  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests, fetchSafetyAlertsCount]);
+    fetchActiveSessions();
+    fetchLiveAlerts();
 
-  // Real-Time Socket.IO Safety Alert Ingestion for Global Admin Dashboard
+    const interval = setInterval(() => {
+      fetchSafetyAlertsCount();
+      fetchActiveSessions();
+      fetchLiveAlerts();
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests, fetchSafetyAlertsCount, fetchActiveSessions, fetchLiveAlerts]);
+
+  // Real-Time Socket.IO Video Frames & Safety Alert Ingestion for Global Admin Dashboard
   useEffect(() => {
-    const socket = io({
+    const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
+    const socket = io(socketUrl, {
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
     });
 
     socket.on("connect", () => {
+      console.log("Admin Safety Socket Connected:", socket.id);
       socket.emit("join-admin-safety");
     });
 
+    // Real-time Driver Video Camera Frame Stream
+    socket.on("admin:stream-frame", (data) => {
+      if (data?.frame) {
+        const busKey = data.busNumber || "default";
+        const sessionKey = data.sessionId || busKey;
+        setLiveVideoFrames((prev) => ({
+          ...prev,
+          [busKey]: data.frame,
+          [sessionKey]: data.frame,
+          latest: data.frame,
+        }));
+        if (data.ear !== undefined) {
+          setDemoEar(Number(data.ear));
+        }
+        if (data.alertness) {
+          setDemoAlertness(data.alertness);
+        }
+        if (!selectedVideoBus) {
+          setSelectedVideoBus(busKey);
+        }
+      }
+    });
+
+    // Real-time Driver Safety Alert Handler
     const handleSafetyAlert = (alertDoc) => {
+      setLiveAlerts((prev) => {
+        const filtered = prev.filter((a) => a._id !== alertDoc._id);
+        return [alertDoc, ...filtered];
+      });
+
       // Increment unread badge in real time
       setSafetyAlertsCount((prev) => prev + 1);
 
@@ -267,7 +413,7 @@ export default function Admin({ defaultTab = "overview" }) {
             osc.stop(ctx.currentTime + 0.25);
           }
         }
-      } catch (e) {}
+      } catch (e) { }
 
       // Show top emergency alert banner on screen
       if (alertDoc.severity === "Critical" || alertDoc.severity === "High") {
@@ -281,10 +427,201 @@ export default function Admin({ defaultTab = "overview" }) {
     socket.on("safety:alert", handleSafetyAlert);
     socket.on("admin:safety-alert", handleSafetyAlert);
 
+    // Real-time Telemetry updates (EAR, face confidence, alertness)
+    socket.on("telemetry:update", ({ sessionId, busNumber, ear, faceConfidence, currentDriverStatus, currentAlertness, deviceStatus }) => {
+      setActiveSessions((prev) =>
+        prev.map((s) => {
+          if (s._id === sessionId || s.busNumber === busNumber) {
+            return {
+              ...s,
+              currentDriverStatus: currentDriverStatus || s.currentDriverStatus,
+              currentAlertness: currentAlertness || s.currentAlertness,
+              deviceStatus: deviceStatus || s.deviceStatus,
+              latestTelemetry: {
+                ...s.latestTelemetry,
+                ear: ear !== undefined ? ear : s.latestTelemetry?.ear,
+                faceConfidence: faceConfidence !== undefined ? faceConfidence : s.latestTelemetry?.faceConfidence,
+              },
+              lastHeartbeat: new Date(),
+            };
+          }
+          return s;
+        })
+      );
+    });
+
+    // Session Status Changes (Trip Started / Ended)
+    socket.on("session:status-change", (sessionDoc) => {
+      setActiveSessions((prev) => {
+        if (sessionDoc.status === "Ended") {
+          return prev.filter((s) => s._id !== sessionDoc._id);
+        }
+        const exists = prev.some((s) => s._id === sessionDoc._id);
+        if (exists) {
+          return prev.map((s) => (s._id === sessionDoc._id ? sessionDoc : s));
+        }
+        return [sessionDoc, ...prev];
+      });
+      fetchSafetyAlertsCount();
+    });
+
+    // Device Status changes
+    socket.on("device:status-change", ({ sessionId, status }) => {
+      setActiveSessions((prev) =>
+        prev.map((s) => (s._id === sessionId ? { ...s, deviceStatus: status } : s))
+      );
+    });
+
     return () => {
       socket.disconnect();
     };
   }, []);
+
+  // Animated Live Demo Video Frame Generator for Admin Testing
+  useEffect(() => {
+    if (!demoStreamActive) return;
+
+    let frameCount = 0;
+    const canvas = document.createElement("canvas");
+    canvas.width = 480;
+    canvas.height = 320;
+    const ctx = canvas.getContext("2d");
+
+    const timer = setInterval(() => {
+      frameCount++;
+      const w = 480;
+      const h = 320;
+
+      // Dark futuristic background
+      const grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, "#090d16");
+      grad.addColorStop(1, "#1e1b4b");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Cyber Grid lines
+      ctx.strokeStyle = "rgba(124, 58, 237, 0.15)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < w; x += 30) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < h; y += 30) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      // Simulated Face Tracking & Head Movement
+      const t = frameCount * 0.05;
+      const headX = w / 2 + Math.sin(t * 0.7) * 12;
+      const headY = h / 2 - 10 + Math.cos(t * 0.5) * 8;
+
+      // Draw Head Silhouette
+      ctx.fillStyle = "#1e293b";
+      ctx.beginPath();
+      ctx.ellipse(headX, headY, 70, 95, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#4ade80";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Eye blink calculation
+      const blinkCycle = frameCount % 60;
+      const isBlinking = blinkCycle > 55;
+      const eyeH = isBlinking ? 2 : 12;
+      const currentSimEar = isBlinking ? 0.11 : 0.28 + Math.sin(t) * 0.03;
+
+      // Left Eye
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.ellipse(headX - 26, headY - 18, 16, eyeH, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (!isBlinking) {
+        ctx.fillStyle = "#0284c7";
+        ctx.beginPath();
+        ctx.arc(headX - 26 + Math.sin(t) * 3, headY - 18, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Right Eye
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.ellipse(headX + 26, headY - 18, 16, eyeH, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (!isBlinking) {
+        ctx.fillStyle = "#0284c7";
+        ctx.beginPath();
+        ctx.arc(headX + 26 + Math.sin(t) * 3, headY - 18, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Nose & Mouth
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.beginPath();
+      ctx.moveTo(headX, headY - 5);
+      ctx.lineTo(headX - 4, headY + 14);
+      ctx.lineTo(headX + 4, headY + 14);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(headX, headY + 38, 20, 0.1, Math.PI - 0.1, false);
+      ctx.stroke();
+
+      // Facial Landmark Points Grid (468 Landmark Simulation)
+      ctx.fillStyle = "rgba(74, 222, 128, 0.7)";
+      for (let angle = 0; angle < Math.PI * 2; angle += 0.35) {
+        const lx = headX + Math.cos(angle) * 65;
+        const ly = headY + Math.sin(angle) * 88;
+        ctx.fillRect(lx - 1.5, ly - 1.5, 3, 3);
+      }
+
+      // Face Bounding Box HUD
+      const boxX = headX - 90;
+      const boxY = headY - 110;
+      const boxW = 180;
+      const boxH = 220;
+      const statusCol = currentSimEar < 0.18 ? "#ef4444" : "#22c55e";
+
+      ctx.strokeStyle = statusCol;
+      ctx.lineWidth = 2.5;
+      const cLen = 22;
+      // Corners
+      ctx.beginPath();
+      ctx.moveTo(boxX, boxY + cLen); ctx.lineTo(boxX, boxY); ctx.lineTo(boxX + cLen, boxY);
+      ctx.moveTo(boxX + boxW - cLen, boxY); ctx.lineTo(boxX + boxW, boxY); ctx.lineTo(boxX + boxW, boxY + cLen);
+      ctx.moveTo(boxX, boxY + boxH - cLen); ctx.lineTo(boxX, boxY + boxH); ctx.lineTo(boxX + cLen, boxY + boxH);
+      ctx.moveTo(boxX + boxW - cLen, boxY + boxH); ctx.lineTo(boxX + boxW, boxY + boxH); ctx.lineTo(boxX + boxW, boxY + boxH - cLen);
+      ctx.stroke();
+
+      // Tag
+      ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+      ctx.fillRect(boxX, boxY - 24, 160, 22);
+      ctx.fillStyle = statusCol;
+      ctx.font = "bold 11px monospace";
+      ctx.fillText(`AI 3D MESH ● EAR ${currentSimEar.toFixed(2)}`, boxX + 6, boxY - 9);
+
+      // HUD Bottom Bar
+      ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+      ctx.fillRect(0, h - 28, w, 28);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px monospace";
+      ctx.fillText(`EAR: ${currentSimEar.toFixed(2)} | CONF: 97% | 30 FPS | DRIVER: SURESH KUMAR`, 10, h - 10);
+
+      const frameData = canvas.toDataURL("image/jpeg", 0.6);
+      setLiveVideoFrames((prev) => ({
+        ...prev,
+        latest: frameData,
+        "KL-07-MS-1008": frameData,
+      }));
+      setDemoEar(currentSimEar);
+    }, 50);
+
+    return () => clearInterval(timer);
+  }, [demoStreamActive]);
 
   // Handler: Update Bus Request Status
   const handleUpdateBusRequestSubmit = async (e) => {
@@ -588,6 +925,7 @@ export default function Admin({ defaultTab = "overview" }) {
   // Background Theme Colors
   const bgMain = darkMode ? "#0f172a" : "#f8fafc";
   const bgCard = darkMode ? "#1e293b" : "#ffffff";
+  const bgCardSecondary = darkMode ? "#0f172a" : "#f8fafc";
   const textPrimary = darkMode ? "#f8fafc" : "#1e293b";
   const textSecondary = darkMode ? "#94a3b8" : "#64748b";
   const borderCol = darkMode ? "#334155" : "#e2e8f0";
@@ -822,19 +1160,33 @@ export default function Admin({ defaultTab = "overview" }) {
               animation: "pulse 2s infinite ease-in-out",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <div style={{
-                  width: "48px",
-                  height: "48px",
-                  borderRadius: "14px",
-                  background: "rgba(255, 255, 255, 0.15)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "24px",
-                  flexShrink: 0,
-                }}>
-                  🚨
-                </div>
+                {/* Live Video Thumbnail if available */}
+                {(liveVideoFrames[activeEmergencyAlert.busNumber] || liveVideoFrames["latest"]) ? (
+                  <div style={{ width: "64px", height: "50px", borderRadius: "10px", overflow: "hidden", border: "2px solid #ffffff", position: "relative", flexShrink: 0 }}>
+                    <img
+                      src={liveVideoFrames[activeEmergencyAlert.busNumber] || liveVideoFrames["latest"]}
+                      alt="Driver Alert Camera"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
+                    />
+                    <span style={{ position: "absolute", bottom: "2px", left: "2px", background: "rgba(0,0,0,0.8)", color: "#ef4444", fontSize: "8px", fontWeight: "900", padding: "1px 3px", borderRadius: "3px" }}>
+                      LIVE
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "14px",
+                    background: "rgba(255, 255, 255, 0.15)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "24px",
+                    flexShrink: 0,
+                  }}>
+                    🚨
+                  </div>
+                )}
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "900", letterSpacing: "0.5px" }}>
@@ -946,13 +1298,13 @@ export default function Admin({ defaultTab = "overview" }) {
               </div>
 
               {/* 5 Summary Metric Cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px", marginBottom: "32px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px", marginBottom: "28px" }}>
                 {[
                   { title: "Total Passengers", val: dbCards.length + adminApplications.length, icon: "👥", color: "#6d28d9", bg: "rgba(109, 40, 217, 0.08)", trend: "+14% this month" },
                   { title: "Active RFID Cards", val: dbCards.filter(c => c.status === "Active").length, icon: "💳", color: "#16a34a", bg: "rgba(22, 163, 74, 0.08)", trend: "Operational" },
                   { title: "Pending Applications", val: pendingAppsCount, icon: "📥", color: "#d97706", bg: "rgba(217, 119, 6, 0.08)", trend: "Action Required" },
                   { title: "Verified Drivers", val: adminDrivers.filter(d => d.verificationStatus === "Approved").length, icon: "🧑✈️", color: "#2563eb", bg: "rgba(37, 99, 235, 0.08)", trend: "On Duty" },
-                  { title: "Today's Revenue", val: `₹ ${(dbCards.reduce((acc, c) => acc + (c.balance || 0), 0) * 1.5).toFixed(2)}`, icon: "💰", color: "#7c3aed", bg: "rgba(124, 58, 237, 0.08)", trend: "Live MongoDB" },
+                  { title: "Active Safety Alerts", val: safetyAlertsCount, icon: "🚨", color: safetyAlertsCount > 0 ? "#dc2626" : "#16a34a", bg: safetyAlertsCount > 0 ? "rgba(220, 38, 38, 0.12)" : "rgba(22, 163, 74, 0.08)", trend: safetyAlertsCount > 0 ? "⚠️ Requires Attention" : "All Clear" },
                 ].map((card, idx) => (
                   <div key={idx} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -965,6 +1317,404 @@ export default function Admin({ defaultTab = "overview" }) {
                     <div style={{ fontSize: "11.5px", fontWeight: "800", color: card.color, marginTop: "6px" }}>{card.trend}</div>
                   </div>
                 ))}
+              </div>
+
+              {/* ========================================================================= */}
+              {/* LIVE DRIVER VIDEO STREAM & AI SAFETY MONITORING HUB (ADMIN OVERVIEW)      */}
+              {/* ========================================================================= */}
+              <div
+                style={{
+                  background: darkMode ? "#1e293b" : "#ffffff",
+                  borderRadius: "24px",
+                  border: `1px solid ${safetyAlertsCount > 0 ? "rgba(239, 68, 68, 0.35)" : borderCol}`,
+                  padding: "24px",
+                  marginBottom: "32px",
+                  boxShadow: safetyAlertsCount > 0 ? "0 10px 30px rgba(239, 68, 68, 0.08)" : "0 8px 24px rgba(0,0,0,0.04)",
+                }}
+              >
+                {/* Hub Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", marginBottom: "20px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "linear-gradient(135deg, #7c3aed, #4f46e5)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(124, 58, 237, 0.3)" }}>
+                      <Video size={22} />
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <h3 style={{ fontSize: "18px", fontWeight: "900", margin: 0, color: textPrimary }}>
+                          Live Driver Camera Video Feed &amp; AI Safety Stream
+                        </h3>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: "rgba(34, 197, 94, 0.15)", color: "#16a34a", padding: "3px 9px", borderRadius: "999px", fontSize: "11.5px", fontWeight: "800" }}>
+                          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#16a34a", display: "inline-block", animation: "pulse 1.5s infinite" }}></span>
+                          Live Telemetry Ingestion Active
+                        </span>
+                      </div>
+                      <p style={{ fontSize: "12.5px", color: textSecondary, margin: "3px 0 0 0" }}>
+                        Real-time webcam stream, facial landmark Eye Aspect Ratio (EAR) gauge, driver presence, and fatigue alerts.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    {/* Active Bus Channel Selector */}
+                    {activeSessions.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Channel:</span>
+                        <select
+                          value={selectedVideoBus || activeSessions[0]?.busNumber}
+                          onChange={(e) => setSelectedVideoBus(e.target.value)}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "10px",
+                            border: `1px solid ${borderCol}`,
+                            background: darkMode ? "#0f172a" : "#f8fafc",
+                            color: textPrimary,
+                            fontWeight: "800",
+                            fontSize: "12.5px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {activeSessions.map((s) => (
+                            <option key={s._id} value={s.busNumber}>
+                              Bus {s.busNumber} ({s.driverName})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => setDemoStreamActive(!demoStreamActive)}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: "10px",
+                        background: demoStreamActive ? "rgba(34, 197, 94, 0.15)" : (darkMode ? "#334155" : "#f1f5f9"),
+                        color: demoStreamActive ? "#16a34a" : textPrimary,
+                        border: `1px solid ${demoStreamActive ? "#16a34a" : borderCol}`,
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Activity size={14} />
+                      {demoStreamActive ? "Demo Stream Active" : "Preview Demo Stream"}
+                    </button>
+
+                    <button
+                      onClick={() => setActiveTab("driverSafety")}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: "10px",
+                        background: "linear-gradient(135deg, #6d28d9, #4f46e5)",
+                        color: "#ffffff",
+                        border: "none",
+                        fontSize: "12.5px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        boxShadow: "0 4px 12px rgba(109, 40, 217, 0.3)",
+                      }}
+                    >
+                      <ShieldAlert size={14} /> Full Safety Console →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Hub Main Grid: Video Player (Left) + Safety Alerts Center (Right) */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "24px" }}>
+
+                  {/* LEFT: Live Video Feed Player */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div
+                      style={{
+                        background: "#090d16",
+                        borderRadius: "18px",
+                        height: "280px",
+                        position: "relative",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        border: `2px solid ${activeSessions.find(s => s.busNumber === selectedVideoBus)?.currentAlertness === "CRITICAL_DROWSINESS"
+                            ? "#ef4444"
+                            : activeSessions.find(s => s.busNumber === selectedVideoBus)?.currentAlertness === "DROWSINESS_WARNING"
+                              ? "#f97316"
+                              : "#334155"
+                          }`,
+                        boxShadow: "inset 0 0 20px rgba(0,0,0,0.8)",
+                      }}
+                    >
+                      {/* Actual Video Frame Stream from Driver */}
+                      {(liveVideoFrames[selectedVideoBus] || liveVideoFrames["latest"] || demoStreamActive) ? (
+                        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                          {liveVideoFrames[selectedVideoBus] || liveVideoFrames["latest"] ? (
+                            <img
+                              src={liveVideoFrames[selectedVideoBus] || liveVideoFrames["latest"]}
+                              alt="Driver Camera Live Stream"
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                                transform: "scaleX(-1)",
+                              }}
+                            />
+                          ) : (
+                            /* Simulated Demo Stream Canvas graphic */
+                            <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                              <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(rgba(124, 58, 237, 0.25) 1px, transparent 1px)", backgroundSize: "16px 16px" }} />
+                              <div style={{ width: "120px", height: "140px", borderRadius: "16px", border: "2px dashed #4ade80", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.05)", zIndex: 2 }}>
+                                <span style={{ fontSize: "42px" }}>👨‍✈️</span>
+                                <span style={{ fontSize: "10.5px", color: "#4ade80", fontWeight: "900", marginTop: "6px" }}>FACE VERIFIED: 97%</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        /* Standby Placeholder when camera is waiting */
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "10px", padding: "20px", textAlign: "center", color: "#94a3b8", zIndex: 2 }}>
+                          <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", color: "#a855f7" }}>
+                            <Video size={26} />
+                          </div>
+                          <div>
+                            <strong style={{ color: "#ffffff", fontSize: "14px", display: "block" }}>
+                              Driver Camera Standby
+                            </strong>
+                            <span style={{ fontSize: "12px", color: "#94a3b8" }}>
+                              Live video feeds stream automatically when a driver starts a trip in the Driver Portal.
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setDemoStreamActive(true)}
+                            style={{
+                              marginTop: "4px",
+                              padding: "6px 14px",
+                              borderRadius: "8px",
+                              background: "rgba(124, 58, 237, 0.3)",
+                              color: "#c4b5fd",
+                              border: "1px solid rgba(124, 58, 237, 0.5)",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                            }}
+                          >
+                            ▶ Toggle Live Preview Demo Feed
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Top Overlay HUD Bar */}
+                      <div style={{ position: "absolute", top: "10px", left: "12px", display: "flex", alignItems: "center", gap: "6px", background: "rgba(0,0,0,0.75)", padding: "4px 10px", borderRadius: "8px", color: "#4ade80", fontSize: "11px", fontFamily: "monospace", zIndex: 10 }}>
+                        <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#4ade80", display: "inline-block", animation: "pulse 1.5s infinite" }} />
+                        {(liveVideoFrames[selectedVideoBus] || liveVideoFrames["latest"]) ? "REC ● LIVE VIDEO FEED (30 FPS)" : (demoStreamActive ? "SIMULATED AI VIDEO FEED" : "CAMERA READY ● STANDBY")}
+                      </div>
+
+                      <div style={{ position: "absolute", top: "10px", right: "12px", background: "rgba(0,0,0,0.75)", padding: "4px 10px", borderRadius: "8px", color: "#cbd5e1", fontSize: "11px", zIndex: 10, fontWeight: "700" }}>
+                        BUS: <strong style={{ color: "#ffffff" }}>{selectedVideoBus || activeSessions[0]?.busNumber || "KL-07-MS-1008"}</strong>
+                      </div>
+
+                      {/* Bottom Overlay HUD Bar */}
+                      <div style={{ position: "absolute", bottom: "10px", left: "12px", right: "12px", background: "rgba(15, 23, 42, 0.88)", padding: "8px 12px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 10, backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ color: "#94a3b8", fontSize: "11px", fontWeight: "800" }}>LIVE EAR:</span>
+                          <div style={{ width: "60px", height: "6px", borderRadius: "3px", background: "#334155", overflow: "hidden" }}>
+                            <div
+                              style={{
+                                width: `${Math.min(100, Math.max(0, (((activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar) / 0.35) * 100)))}%`,
+                                height: "100%",
+                                background: (activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar) < 0.22 ? "#ef4444" : "#22c55e",
+                              }}
+                            />
+                          </div>
+                          <span style={{ color: "#ffffff", fontSize: "12px", fontWeight: "900", fontFamily: "monospace" }}>
+                            {(activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar).toFixed(2)}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: "11.5px", color: "#e2e8f0", fontWeight: "700" }}>
+                          Driver: <strong style={{ color: "#a855f7" }}>{activeSessions.find(s => s.busNumber === selectedVideoBus)?.driverName || "Suresh Kumar"}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Driver Status Tags Row */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: bgCardSecondary, padding: "10px 14px", borderRadius: "12px", border: `1px solid ${borderCol}`, fontSize: "12px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <UserCheck size={14} style={{ color: "#16a34a" }} />
+                        <span style={{ fontWeight: "800", color: textPrimary }}>Biometrics:</span>
+                        <span style={{ color: "#16a34a", fontWeight: "800" }}>Verified Driver</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Eye size={14} style={{ color: (activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar) < 0.22 ? "#ef4444" : "#16a34a" }} />
+                        <span style={{ fontWeight: "800", color: textPrimary }}>Fatigue State:</span>
+                        <span style={{ color: (activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar) < 0.22 ? "#dc2626" : "#16a34a", fontWeight: "900" }}>
+                          {(activeSessions.find(s => s.busNumber === selectedVideoBus)?.latestTelemetry?.ear || demoEar) < 0.22 ? "Drowsiness Alert" : "Alert & Active"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RIGHT: Real-Time Safety Alerts & Rapid Incident Ticker */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <h4 style={{ fontSize: "14px", fontWeight: "900", margin: 0, color: textPrimary, display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Flame size={16} style={{ color: "#ef4444" }} />
+                        Recent Driver Safety Incidents &amp; Alerts ({liveAlerts.filter(a => a.status === "Active").length} Active)
+                      </h4>
+                      <button
+                        onClick={fetchLiveAlerts}
+                        style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "800", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                      >
+                        <RefreshCw size={12} /> Refresh
+                      </button>
+                    </div>
+
+                    {/* Alerts Scrollable Box */}
+                    <div
+                      style={{
+                        background: bgCardSecondary,
+                        borderRadius: "16px",
+                        border: `1px solid ${borderCol}`,
+                        height: "230px",
+                        overflowY: "auto",
+                        padding: "8px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
+                      }}
+                    >
+                      {liveAlerts.length === 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: textSecondary, textAlign: "center", padding: "20px" }}>
+                          <CheckCircle size={32} style={{ color: "#16a34a", marginBottom: "6px" }} />
+                          <strong style={{ color: textPrimary, fontSize: "13.5px" }}>All Clear — Zero Active Alerts</strong>
+                          <span style={{ fontSize: "12px" }}>Operating drivers are currently verified and operating safely.</span>
+                        </div>
+                      ) : (
+                        liveAlerts.slice(0, 5).map((alert) => {
+                          const isCritical = alert.severity === "Critical";
+                          const isResolved = alert.status === "Resolved";
+                          return (
+                            <div
+                              key={alert._id}
+                              style={{
+                                background: bgCard,
+                                borderRadius: "12px",
+                                padding: "12px 14px",
+                                border: `1px solid ${isCritical && !isResolved ? "rgba(239, 68, 68, 0.4)" : borderCol}`,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "10px",
+                                boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", flex: 1, minWidth: 0 }}>
+                                <div
+                                  style={{
+                                    width: "32px",
+                                    height: "32px",
+                                    borderRadius: "10px",
+                                    background: isCritical ? "rgba(239, 68, 68, 0.15)" : "rgba(249, 115, 22, 0.15)",
+                                    color: isCritical ? "#dc2626" : "#ea580c",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {isCritical ? <Flame size={18} /> : <AlertTriangle size={18} />}
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                                    <strong style={{ fontSize: "13px", color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                      {alert.title}
+                                    </strong>
+                                    <span style={{ fontSize: "10px", fontWeight: "900", padding: "1px 6px", borderRadius: "4px", background: isCritical ? "#ef4444" : "#f97316", color: "#ffffff" }}>
+                                      {alert.severity}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: "11.5px", color: textSecondary, marginTop: "2px" }}>
+                                    Bus {alert.busNumber || "KL-07-MS-1008"} • Driver: {alert.driverName || "Driver"} • {new Date(alert.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Alert Fast Actions */}
+                              <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+                                {!isResolved && alert.status !== "Acknowledged" && (
+                                  <button
+                                    onClick={() => handleAcknowledgeAlert(alert._id)}
+                                    style={{
+                                      padding: "5px 9px",
+                                      borderRadius: "8px",
+                                      background: "rgba(14, 165, 233, 0.1)",
+                                      color: "#0284c7",
+                                      border: "1px solid rgba(14, 165, 233, 0.3)",
+                                      fontWeight: "800",
+                                      fontSize: "11px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Ack
+                                  </button>
+                                )}
+                                {!isResolved && (
+                                  <button
+                                    onClick={() => handleResolveAlert(alert._id)}
+                                    style={{
+                                      padding: "5px 10px",
+                                      borderRadius: "8px",
+                                      background: "#16a34a",
+                                      color: "#ffffff",
+                                      border: "none",
+                                      fontWeight: "800",
+                                      fontSize: "11px",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Resolve
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Quick Simulation Trigger Bar */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", background: bgCardSecondary, padding: "8px 12px", borderRadius: "12px", border: `1px solid ${borderCol}` }}>
+                      <span style={{ fontSize: "11px", fontWeight: "900", color: textSecondary }}>TEST ALERTS:</span>
+                      <button
+                        onClick={() => handleSimulateOverviewEvent("DROWSINESS_WARNING", 0.15)}
+                        style={{ padding: "4px 8px", borderRadius: "6px", background: "rgba(249, 115, 22, 0.15)", color: "#ea580c", border: "1px solid rgba(249, 115, 22, 0.3)", fontSize: "11px", fontWeight: "800", cursor: "pointer" }}
+                      >
+                        ⚠️ Drowsiness
+                      </button>
+                      <button
+                        onClick={() => handleSimulateOverviewEvent("CRITICAL_DROWSINESS", 0.10)}
+                        style={{ padding: "4px 8px", borderRadius: "6px", background: "rgba(239, 68, 68, 0.15)", color: "#dc2626", border: "1px solid rgba(239, 68, 68, 0.4)", fontSize: "11px", fontWeight: "900", cursor: "pointer" }}
+                      >
+                        🚨 Severe Sleep
+                      </button>
+                      <button
+                        onClick={() => handleSimulateOverviewEvent("DRIVER_MISMATCH", 0.28)}
+                        style={{ padding: "4px 8px", borderRadius: "6px", background: "rgba(225, 29, 72, 0.15)", color: "#e11d48", border: "1px solid rgba(225, 29, 72, 0.4)", fontSize: "11px", fontWeight: "800", cursor: "pointer" }}
+                      >
+                        🕵️ Mismatch
+                      </button>
+                      <button
+                        onClick={() => handleSimulateOverviewEvent("DRIVER_VERIFIED", 0.29)}
+                        style={{ padding: "4px 8px", borderRadius: "6px", background: "rgba(34, 197, 94, 0.15)", color: "#16a34a", border: "1px solid rgba(34, 197, 94, 0.3)", fontSize: "11px", fontWeight: "800", cursor: "pointer" }}
+                      >
+                        ✅ All Clear
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Analytics & Graphs Section */}

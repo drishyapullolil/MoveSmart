@@ -27,6 +27,7 @@ import sys
 import time
 import math
 import json
+import base64
 import argparse
 import threading
 import requests
@@ -684,6 +685,18 @@ class MoveSmartMonitoringClient:
 
         self.enrolled_encoding = profile
         print(f"✓ [GATE PASSED] Biometric profile verified for Driver '{self.driver_id}'.")
+        try:
+            r = requests.post(f"{self.server_url}/api/monitoring/session/start", json={
+                "busNumber": self.bus_number,
+                "driverId": self.driver_id,
+            }, headers=self.headers, timeout=4)
+            if r.status_code in [200, 201]:
+                sess = r.json().get("session", {})
+                self.session_id = sess.get("_id")
+                print(f"[SESSION ACTIVE] Monitoring session registered on backend (ID: {self.session_id})")
+        except Exception as e:
+            print(f"[SESSION START NOTICE] {e}")
+
         self.send_event("DRIVER_VERIFIED", ear=0.28, face_conf=0.98)
         return True
 
@@ -735,6 +748,37 @@ class MoveSmartMonitoringClient:
                 print(f"📡 [EVENT SENT] {event_type} (EAR: {ear}, Absence: {absence_sec}s, Driver: {self.driver_id})")
         except Exception as e:
             print(f"[EVENT ERROR] {e}")
+
+    def send_stream_frame(self, frame_bgr, ear=0.28, face_conf=0.95):
+        now = time.time()
+        if now - getattr(self, "_last_frame_stream_time", 0.0) < 0.08:
+            return
+        self._last_frame_stream_time = now
+        if cv2 is None or frame_bgr is None or getattr(frame_bgr, 'size', 0) == 0:
+            return
+
+        def _broadcast():
+            try:
+                h, w = frame_bgr.shape[:2]
+                target_w = 480
+                target_h = int(h * (target_w / max(1, w)))
+                small = cv2.resize(frame_bgr, (target_w, target_h))
+                _, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 45])
+                b64_str = "data:image/jpeg;base64," + base64.b64encode(buf).decode("utf-8")
+                requests.post(f"{self.server_url}/api/monitoring/stream-frame", json={
+                    "sessionId": self.session_id,
+                    "busNumber": self.bus_number,
+                    "driverName": self.driver_id,
+                    "frame": b64_str,
+                    "ear": float(ear) if ear is not None else 0.28,
+                    "faceConfidence": float(face_conf) if face_conf is not None else 0.95,
+                    "alertness": self.current_state,
+                    "driverStatus": "DRIVER_VERIFIED" if self.consecutive_mismatches == 0 else "DRIVER_MISMATCH",
+                }, headers=self.headers, timeout=2)
+            except Exception:
+                pass
+
+        threading.Thread(target=_broadcast, daemon=True).start()
 
     def process_periodic_verification(self, frame_bgr):
         """
@@ -950,8 +994,10 @@ def main():
                 locs = face_rec.face_locations(rgb_for_loc) if face_rec is not None else []
                 faces = [[l[3], l[0], l[1]-l[3], l[2]-l[0]] for l in locs]
 
+            ear_approx = 0.28
             if len(faces) == 0:
-                client.process_frame(face_detected=False)
+                ear_approx = 0.0
+                client.process_frame(face_detected=False, ear_score=0.0)
             else:
                 (x, y, w, h) = faces[0]
                 roi_gray = gray[y:y+h, x:x+w] if gray is not None else None
@@ -960,8 +1006,20 @@ def main():
                 if eye_cascade is not None and roi_gray is not None:
                     eyes = eye_cascade.detectMultiScale(roi_gray, 1.1, 4)
 
-                ear_approx = 0.28 if len(eyes) >= 2 else (0.18 if len(eyes) == 1 else 0.12)
+                if eye_cascade is not None and roi_gray is not None:
+                    if len(eyes) >= 2:
+                        ear_approx = 0.30
+                    elif len(eyes) == 1:
+                        ear_approx = 0.25
+                    else:
+                        ear_approx = 0.15
+                else:
+                    ear_approx = 0.28
+
                 client.process_frame(face_detected=True, ear_score=ear_approx, face_match_score=client.current_face_conf)
+
+            # Broadcast real camera video frame with face telemetry to backend
+            client.send_stream_frame(frame, ear=ear_approx, face_conf=client.current_face_conf)
 
             # REQUIREMENT 2: Periodic 10-second biometric face verification
             client.process_periodic_verification(frame)

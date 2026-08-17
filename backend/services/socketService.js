@@ -11,11 +11,15 @@ const initSocketService = (httpServer) => {
 
   io = new Server(httpServer, {
     cors: {
-      origin: "*",
+      origin: (origin, callback) => {
+        // Reflect requesting origin to satisfy browser credentials: true policy
+        callback(null, true);
+      },
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: true,
     },
     transports: ["websocket", "polling"],
+    allowEIO3: true,
   });
 
   io.on("connection", (socket) => {
@@ -46,7 +50,8 @@ const initSocketService = (httpServer) => {
     // Real-time Driver Camera Video Stream
     socket.on("driver:stream-frame", (data) => {
       // Broadcast live video frame to admin safety console
-      socket.to("admin-safety").emit("admin:stream-frame", data);
+      io.to("admin-safety").emit("admin:stream-frame", data);
+      socket.broadcast.emit("admin:stream-frame", data);
     });
 
     // Real-time Driver Safety Direct Socket Broadcast
@@ -197,6 +202,12 @@ const startHeartbeatMonitor = () => {
   }, 5000); // Check every 5s
 };
 
+const emitStreamFrame = (data) => {
+  if (!io) return;
+  io.to("admin-safety").emit("admin:stream-frame", data);
+  io.emit("admin:stream-frame", data);
+};
+
 module.exports = {
   initSocketService,
   getIO,
@@ -204,4 +215,5 @@ module.exports = {
   emitTelemetryUpdate,
   emitDeviceStatusChange,
   emitSessionStatusChange,
+  emitStreamFrame,
 };

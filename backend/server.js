@@ -8,26 +8,26 @@ const app = express();
 
 // CORS Configuration with Credentials & Custom Authorization Header Support
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://localhost:5000",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:5000",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000",
 ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, Postman) or any local dev origin
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
-      return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
-  optionsSuccessStatus: 200,
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, Postman) or any local dev origin
+        if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
+            return callback(null, true);
+        }
+        return callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
@@ -39,12 +39,12 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 const mongoURI = process.env.MONGODB_URI;
 
 mongoose.connect(mongoURI)
-.then(() => {
-    console.log("MongoDB connected ✅");
-})
-.catch((error) => {
-    console.error("MongoDB Error ❌:", error);
-});
+    .then(() => {
+        console.log("MongoDB connected ✅");
+    })
+    .catch((error) => {
+        console.error("MongoDB Error ❌:", error);
+    });
 
 // Middleware to check database connection status
 app.use((req, res, next) => {
@@ -54,10 +54,12 @@ app.use((req, res, next) => {
         if (
             req.method === "GET" &&
             (req.path === "/api/buses" ||
-             req.path.startsWith("/api/buses/") ||
-             req.path === "/api/locations" ||
-             req.path === "/api/routes" ||
-             req.path === "/api/public-routes")
+                req.path.startsWith("/api/buses/") ||
+                req.path === "/api/locations" ||
+                req.path === "/api/routes" ||
+                req.path === "/api/public-routes" ||
+                req.path === "/api/admin/drivers" ||
+                req.path.startsWith("/api/monitoring/"))
         ) {
             return next();
         }
@@ -115,4 +117,5 @@ if (require.main === module) {
     });
 }
 
+module.exports = { app, server };
 module.exports = { app, server };
