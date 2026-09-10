@@ -5,7 +5,10 @@
 export const getStoredUser = () => {
   try {
     const raw = localStorage.getItem("user") || sessionStorage.getItem("user");
-    return raw ? JSON.parse(raw) : null;
+    if (!raw || raw === "undefined" || raw === "null" || raw.trim() === "") return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
   } catch (err) {
     console.error("Error parsing stored user session:", err);
     return null;
@@ -13,7 +16,11 @@ export const getStoredUser = () => {
 };
 
 export const getStoredToken = () => {
-  return localStorage.getItem("authToken") || sessionStorage.getItem("authToken") || null;
+  const token = localStorage.getItem("authToken") || sessionStorage.getItem("authToken") || null;
+  if (!token || token === "undefined" || token === "null" || typeof token !== "string" || token.trim() === "") {
+    return null;
+  }
+  return token;
 };
 
 export const setStoredUser = (user, rememberMe = true) => {

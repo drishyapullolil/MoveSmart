@@ -54,7 +54,8 @@ import {
   Wifi,
   WifiOff,
   UserX,
-  EyeOff
+  EyeOff,
+  Package
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -64,6 +65,9 @@ export default function Admin({ defaultTab = "overview" }) {
   const [activeTab, setActiveTab] = useState(() => {
     if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
       return "busRoutes";
+    }
+    if (location.pathname === "/admin/lost-found") {
+      return "lostFound";
     }
     return defaultTab;
   });
@@ -168,6 +172,115 @@ export default function Admin({ defaultTab = "overview" }) {
   const [demoStreamActive, setDemoStreamActive] = useState(false);
   const [demoEar, setDemoEar] = useState(0.29);
   const [demoAlertness, setDemoAlertness] = useState("NORMAL");
+
+  // ── Lost & Found Admin States ──────────────────────────────
+  const [lfData, setLfData] = useState({ summary: {}, lostItems: [], foundItems: [], matches: [], handovers: [] });
+  const [lfLoading, setLfLoading] = useState(false);
+  const [lfInnerTab, setLfInnerTab] = useState("lostQueue"); // lostQueue | foundQueue | matchingStudio | ownerRequests | finderHandover | custodyCollection | allLost | allFound | closedCases
+  const [lfMatchLostId, setLfMatchLostId] = useState("");
+  const [lfMatchFoundId, setLfMatchFoundId] = useState("");
+  
+  // Handover intake state
+  const [lfHandoverModal, setLfHandoverModal] = useState(null);
+  const [lfHandoverForm, setLfHandoverForm] = useState({ receivedDate: new Date().toISOString().split("T")[0], receivedTime: "", itemCondition: "Good", handoverNotes: "" });
+  const [lfHandoverPhoto, setLfHandoverPhoto] = useState("");
+
+  // Lightbox modal for Admin image inspection
+  const [lfLightboxImg, setLfLightboxImg] = useState(null);
+  const [lfLightboxTitle, setLfLightboxTitle] = useState("");
+
+  const fetchLfData = useCallback(async () => {
+    setLfLoading(true);
+    try {
+      const token = getStoredToken();
+      const res = await axios.get("/api/lostfound/admin/all-dashboard", { headers: { Authorization: `Bearer ${token}` } });
+      setLfData(res.data || { summary: {}, lostItems: [], foundItems: [], matches: [], handovers: [] });
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to load Lost & Found data.", "error");
+    } finally { setLfLoading(false); }
+  }, []);
+
+  const handleLfVerifyReport = async (type, id, action, adminNotes = "") => {
+    try {
+      const token = getStoredToken();
+      await axios.put(`/api/lostfound/admin/verify-report/${type}/${id}`, { action, adminNotes }, { headers: { Authorization: `Bearer ${token}` } });
+      showToast(`${type === "lost" ? "Lost" : "Found"} report ${action}d! ✔`, "success");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Verification failed.", "error"); }
+  };
+
+  const handleLfMatch = async () => {
+    if (!lfMatchLostId.trim() || !lfMatchFoundId.trim()) { showToast("Select both Lost and Found items.", "error"); return; }
+    try {
+      const token = getStoredToken();
+      await axios.put("/api/lostfound/admin/match", { lostItemId: lfMatchLostId.trim(), foundItemId: lfMatchFoundId.trim() }, { headers: { Authorization: `Bearer ${token}` } });
+      showToast("Items matched successfully! Owner notified. ✔", "success");
+      setLfMatchLostId(""); setLfMatchFoundId("");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Match failed.", "error"); }
+  };
+
+  const handleLfMatchDecision = async (matchId, action, adminNotes = "") => {
+    try {
+      const token = getStoredToken();
+      await axios.put(`/api/lostfound/admin/match-decision/${matchId}`, { action, adminNotes }, { headers: { Authorization: `Bearer ${token}` } });
+      showToast(action === "approve" ? "Match approved! Finder notified for handover." : "Match rejected.", "success");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Action failed.", "error"); }
+  };
+
+  const handleLfHandoverReceiveSubmit = async (e) => {
+    e?.preventDefault();
+    if (!lfHandoverModal) return;
+    try {
+      const token = getStoredToken();
+      await axios.post("/api/lostfound/admin/handover-receive", {
+        handoverId: lfHandoverModal._id,
+        receivedDate: lfHandoverForm.receivedDate,
+        receivedTime: lfHandoverForm.receivedTime,
+        itemCondition: lfHandoverForm.itemCondition,
+        handoverPhoto: lfHandoverPhoto,
+        handoverNotes: lfHandoverForm.handoverNotes,
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      showToast("Item received into Admin custody! Owner notified.", "success");
+      setLfHandoverModal(null);
+      setLfHandoverPhoto("");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Failed to record handover.", "error"); }
+  };
+
+  const handleLfHandoverReady = async (handoverId) => {
+    try {
+      const token = getStoredToken();
+      await axios.put(`/api/lostfound/admin/handover-ready/${handoverId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      showToast("Item marked ready for owner collection.", "success");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Action failed.", "error"); }
+  };
+
+  const handleLfHandoverConfirmReturn = async (handoverId, adminReturnNotes = "") => {
+    try {
+      const token = getStoredToken();
+      await axios.put(`/api/lostfound/admin/handover-confirm-return/${handoverId}`, { adminReturnNotes }, { headers: { Authorization: `Bearer ${token}` } });
+      showToast("Return verified and case closed! ✔", "success");
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Return confirmation failed.", "error"); }
+  };
+
+  const handleLfDelete = async (type, id) => {
+    if (!window.confirm(`Delete this ${type} report? This cannot be undone.`)) return;
+    try {
+      const token = getStoredToken();
+      await axios.delete(`/api/lostfound/admin/item/${type}/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      showToast(`${type === "lost" ? "Lost" : "Found"} report deleted.`);
+      fetchLfData();
+    } catch (err) { showToast(err.response?.data?.message || "Delete failed.", "error"); }
+  };
+
+  useEffect(() => {
+    if (activeTab === "lostFound") fetchLfData();
+  }, [activeTab, fetchLfData]);
+  // ── End Lost & Found Admin States ───────────────────────────
 
   const fetchSafetyAlertsCount = useCallback(async () => {
     try {
@@ -1125,6 +1238,7 @@ export default function Admin({ defaultTab = "overview" }) {
             { id: "drivers", label: "Driver Management", Icon: UserCheck, badge: pendingDriversCount },
             { id: "transactions", label: "Payments & Logs", Icon: Wallet },
             { id: "leaves", label: "Driver Leaves", Icon: CalendarX },
+            { id: "lostFound", label: "Lost & Found", Icon: Package },
             { id: "settings", label: "Settings & Tools", Icon: ShieldCheck },
           ].map((item) => {
             const isSel = activeTab === item.id;
@@ -2159,6 +2273,670 @@ export default function Admin({ defaultTab = "overview" }) {
           {activeTab === "driverBiometrics" && (
             <div className="fade-in-section">
               <DriverBiometricsManager darkMode={darkMode} showToast={showToast} />
+            </div>
+          )}
+
+          {/* SECTION 13: LOST & FOUND MANAGEMENT */}
+          {activeTab === "lostFound" && (
+            <div className="fade-in-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary }}>🔍 Lost &amp; Found Management Center</h2>
+                  <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>
+                    Admin-controlled verification, private matching, physical custody intake, and collection proof validation.
+                  </p>
+                </div>
+                <button onClick={fetchLfData} style={{ padding: "10px 20px", borderRadius: "12px", background: "linear-gradient(135deg,#4c1d95,#7c3aed)", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <RefreshCw size={14} /> Refresh Data
+                </button>
+              </div>
+
+              {/* 13 Statistics Counters */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "12px", marginBottom: "24px" }}>
+                {[
+                  { label: "Total Lost", val: lfData.summary.totalLost ?? 0, color: "#6d28d9" },
+                  { label: "Total Found", val: lfData.summary.totalFound ?? 0, color: "#2563eb" },
+                  { label: "Pending Lost Verif.", val: lfData.summary.pendingLostVerification ?? 0, color: "#dc2626", alert: true },
+                  { label: "Pending Found Verif.", val: lfData.summary.pendingFoundVerification ?? 0, color: "#ea580c", alert: true },
+                  { label: "Unmatched Found", val: lfData.summary.unmatchedFound ?? 0, color: "#0284c7" },
+                  { label: "Possible Matches", val: lfData.summary.possibleMatches ?? 0, color: "#8b5cf6" },
+                  { label: "Pending Owner Conf.", val: lfData.summary.pendingOwnerConfirmation ?? 0, color: "#d97706" },
+                  { label: "Pending Admin Appr.", val: lfData.summary.pendingAdminApproval ?? 0, color: "#e11d48", alert: true },
+                  { label: "Awaiting Handover", val: lfData.summary.itemsAwaitingHandover ?? 0, color: "#ca8a04" },
+                  { label: "In Admin Custody", val: lfData.summary.itemsInAdminCustody ?? 0, color: "#0d9488" },
+                  { label: "Ready for Pickup", val: lfData.summary.readyForCollection ?? 0, color: "#059669" },
+                  { label: "Returned Items", val: lfData.summary.returnedItems ?? 0, color: "#16a34a" },
+                  { label: "Closed Cases", val: lfData.summary.closedCases ?? 0, color: "#475569" },
+                ].map(s => (
+                  <div key={s.label} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "14px", padding: "12px", position: "relative" }}>
+                    {s.alert && s.val > 0 && <span style={{ position: "absolute", top: "6px", right: "6px", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444" }} />}
+                    <div style={{ fontSize: "22px", fontWeight: "900", color: s.color }}>{s.val}</div>
+                    <div style={{ fontSize: "11px", fontWeight: "700", color: textSecondary, marginTop: "2px" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sub-Tabs */}
+              <div style={{ display: "flex", gap: "8px", marginBottom: "22px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "12px", overflowX: "auto" }}>
+                {[
+                  { id: "lostQueue", label: "📋 Lost Verification", badge: lfData.summary.pendingLostVerification },
+                  { id: "foundQueue", label: "📦 Found Verification", badge: lfData.summary.pendingFoundVerification },
+                  { id: "matchingStudio", label: "⚖️ Matching Studio" },
+                  { id: "ownerRequests", label: "🙋 Owner Requests", badge: lfData.summary.pendingAdminApproval },
+                  { id: "finderHandover", label: "🤝 Finder Handover Queue", badge: lfData.summary.itemsAwaitingHandover },
+                  { id: "custodyCollection", label: "🏢 Custody & Collection", badge: lfData.summary.readyForCollection },
+                  { id: "allLost", label: `📁 All Lost (${lfData.lostItems.length})` },
+                  { id: "allFound", label: `📁 All Found (${lfData.foundItems.length})` },
+                ].map(t => (
+                  <button key={t.id} type="button" onClick={() => setLfInnerTab(t.id)} style={{ padding: "8px 16px", borderRadius: "10px", border: `2px solid ${lfInnerTab === t.id ? "#7c3aed" : borderCol}`, background: lfInnerTab === t.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : bgCard, color: lfInnerTab === t.id ? "#fff" : textSecondary, fontWeight: "800", fontSize: "12.5px", cursor: "pointer", whiteSpace: "nowrap", position: "relative" }}>
+                    {t.label}
+                    {t.badge > 0 && <span style={{ marginLeft: "6px", background: "#ef4444", color: "#fff", padding: "1px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: "900" }}>{t.badge}</span>}
+                  </button>
+                ))}
+              </div>
+
+              {lfLoading && <div style={{ textAlign: "center", padding: "32px", color: textSecondary }}>Loading Lost &amp; Found Data...</div>}
+
+              {/* 1. LOST QUEUE (PENDING VERIFICATION) */}
+              {!lfLoading && lfInnerTab === "lostQueue" && (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, marginBottom: "14px" }}>📋 Pending Lost Item Reports</h3>
+                  {lfData.lostItems.filter(i => i.adminVerificationStatus === "Pending").length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "36px", color: textSecondary, background: bgCard, borderRadius: "14px", border: `1px solid ${borderCol}` }}>✓ No pending lost reports to verify.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {lfData.lostItems.filter(i => i.adminVerificationStatus === "Pending").map(item => (
+                        <div key={item._id} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "18px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px" }}>
+                            <div style={{ display: "flex", gap: "16px", flex: 1, minWidth: "280px" }}>
+                              {/* Prominent Image Preview */}
+                              <div style={{ width: "100px", height: "100px", borderRadius: "12px", background: darkMode ? "#1a2234" : "#f1f5f9", border: `1.5px solid ${borderCol}`, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" }}>
+                                {item.photo ? (
+                                  <img
+                                    src={item.photo}
+                                    alt={item.itemName}
+                                    onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Lost Report: ${item.itemName} (${item.reportId})`); }}
+                                    style={{ width: "100%", height: "100%", objectFit: "cover", cursor: "pointer", transition: "transform 0.2s" }}
+                                    title="Click to view full size"
+                                  />
+                                ) : (
+                                  <div style={{ textAlign: "center", padding: "6px", color: textSecondary, fontSize: "11px", fontWeight: "700" }}>
+                                    📷 No Photo Uploaded
+                                  </div>
+                                )}
+                              </div>
+
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontFamily: "monospace", fontWeight: "900", color: "#dc2626", fontSize: "13px" }}>{item.reportId}</div>
+                                <h4 style={{ fontSize: "16px", fontWeight: "800", color: textPrimary, margin: "2px 0 4px 0" }}>{item.itemName} ({item.category})</h4>
+                                <div style={{ fontSize: "12px", color: textSecondary }}>
+                                  Owner: <strong>{item.ownerId?.name || "User"}</strong> &bull; 🔒 Phone: <strong style={{ color: "#16a34a" }}>{item.ownerPhone}</strong>
+                                </div>
+                                {item.photo && (
+                                  <button
+                                    onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Lost Report: ${item.itemName} (${item.reportId})`); }}
+                                    style={{ background: "none", border: "none", color: "#7c3aed", fontSize: "11px", fontWeight: "800", padding: "4px 0 0 0", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                  >
+                                    🔍 View Full Size Photo
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              <button onClick={() => handleLfVerifyReport("lost", item._id, "approve")} style={{ padding: "8px 18px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✓ Approve &amp; Publish</button>
+                              <button onClick={() => handleLfVerifyReport("lost", item._id, "reject")} style={{ padding: "8px 18px", borderRadius: "10px", background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.25)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✕ Reject</button>
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: "12px", fontSize: "12.5px", color: textSecondary, background: darkMode ? "#1a2234" : "#f8fafc", padding: "12px", borderRadius: "10px" }}>
+                            <div><strong>Description:</strong> {item.description}</div>
+                            <div><strong>Lost Date/Time:</strong> {item.lostDate} {item.lostTime || ""} &bull; <strong>Location:</strong> {item.location} &bull; <strong>Bus:</strong> {item.busNumber || "N/A"}</div>
+                            {item.brand && <span><strong>Brand:</strong> {item.brand} &bull; </span>}
+                            {item.color && <span><strong>Color:</strong> {item.color}</span>}
+                            {item.identifyingDetails && <div style={{ color: "#7c3aed", marginTop: "4px" }}><strong>🔒 Secret Identifying Marks:</strong> {item.identifyingDetails}</div>}
+                            {item.serialNumber && <div style={{ color: "#7c3aed" }}><strong>🔒 Serial/IMEI:</strong> {item.serialNumber}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 2. FOUND QUEUE (PENDING VERIFICATION) */}
+              {!lfLoading && lfInnerTab === "foundQueue" && (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, marginBottom: "14px" }}>📦 Pending Found Item Reports</h3>
+                  {lfData.foundItems.filter(i => i.adminVerificationStatus === "Pending").length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "36px", color: textSecondary, background: bgCard, borderRadius: "14px", border: `1px solid ${borderCol}` }}>✓ No pending found reports to verify.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {lfData.foundItems.filter(i => i.adminVerificationStatus === "Pending").map(item => (
+                        <div key={item._id} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "18px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px" }}>
+                            <div style={{ display: "flex", gap: "16px", flex: 1, minWidth: "280px" }}>
+                              {/* Prominent Image Preview */}
+                              <div style={{ width: "100px", height: "100px", borderRadius: "12px", background: darkMode ? "#1a2234" : "#f1f5f9", border: `1.5px solid ${borderCol}`, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                {item.photo ? (
+                                  <img
+                                    src={item.photo}
+                                    alt={item.itemName}
+                                    onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Found Report: ${item.itemName} (${item.reportId})`); }}
+                                    style={{ width: "100%", height: "100%", objectFit: "cover", cursor: "pointer" }}
+                                    title="Click to view full size"
+                                  />
+                                ) : (
+                                  <div style={{ textAlign: "center", padding: "6px", color: textSecondary, fontSize: "11px", fontWeight: "700" }}>
+                                    📷 No Photo Uploaded
+                                  </div>
+                                )}
+                              </div>
+
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontFamily: "monospace", fontWeight: "900", color: "#2563eb", fontSize: "13px" }}>{item.reportId}</div>
+                                <h4 style={{ fontSize: "16px", fontWeight: "800", color: textPrimary, margin: "2px 0 4px 0" }}>{item.itemName} ({item.category})</h4>
+                                <div style={{ fontSize: "12px", color: textSecondary }}>
+                                  Finder: <strong>{item.foundBy?.name || item.finderName || "User"}</strong> &bull; 🔒 Phone: <strong style={{ color: "#2563eb" }}>{item.finderPhone}</strong>
+                                </div>
+                                {item.photo && (
+                                  <button
+                                    onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Found Report: ${item.itemName} (${item.reportId})`); }}
+                                    style={{ background: "none", border: "none", color: "#2563eb", fontSize: "11px", fontWeight: "800", padding: "4px 0 0 0", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                  >
+                                    🔍 View Full Size Photo
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              <button onClick={() => handleLfVerifyReport("found", item._id, "approve")} style={{ padding: "8px 18px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✓ Approve &amp; Publish</button>
+                              <button onClick={() => handleLfVerifyReport("found", item._id, "reject")} style={{ padding: "8px 18px", borderRadius: "10px", background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.25)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✕ Reject</button>
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: "12px", fontSize: "12.5px", color: textSecondary, background: darkMode ? "#1a2234" : "#f8fafc", padding: "12px", borderRadius: "10px" }}>
+                            <div><strong>Description:</strong> {item.description}</div>
+                            <div><strong>Found Date:</strong> {item.foundDate} &bull; <strong>Bus:</strong> {item.busNumber} &bull; <strong>Route:</strong> {item.route} &bull; <strong>Location:</strong> {item.location}</div>
+                            {item.foundDetails && <div style={{ color: "#2563eb", marginTop: "4px" }}><strong>🔒 Private Found Details:</strong> {item.foundDetails}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 3. SIDE-BY-SIDE MATCHING STUDIO WITH HIGH-RESOLUTION PHOTO COMPARISON */}
+              {!lfLoading && lfInnerTab === "matchingStudio" && (() => {
+                const selectedLost = lfData.lostItems.find(i => i._id === lfMatchLostId);
+                const selectedFound = lfData.foundItems.find(i => i._id === lfMatchFoundId);
+
+                return (
+                  <div>
+                    <div style={{ background: darkMode ? "#1e293b" : "#f0fdf4", border: "1.5px solid #86efac", borderRadius: "16px", padding: "20px", marginBottom: "24px" }}>
+                      <h4 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, margin: "0 0 8px 0" }}>⚖️ Side-by-Side Visual Matching Studio</h4>
+                      <p style={{ fontSize: "12.5px", color: textSecondary, margin: "0 0 16px 0" }}>
+                        Select a verified Lost Report and Found Report to compare photos, identifying marks, serial numbers, and private phone numbers before linking.
+                      </p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "12px", alignItems: "flex-end" }}>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Select Lost Item</label>
+                          <select value={lfMatchLostId} onChange={e => setLfMatchLostId(e.target.value)} style={{ width: "100%", height: "42px", borderRadius: "10px", padding: "0 10px", fontSize: "13px" }}>
+                            <option value="">-- Choose Lost Report --</option>
+                            {lfData.lostItems.filter(i => !i.matchedFoundItemId && i.adminVerificationStatus === "Approved").map(i => (
+                              <option key={i._id} value={i._id}>{i.reportId} — {i.itemName} ({i.category}, Bus: {i.busNumber || "N/A"})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Select Found Item</label>
+                          <select value={lfMatchFoundId} onChange={e => setLfMatchFoundId(e.target.value)} style={{ width: "100%", height: "42px", borderRadius: "10px", padding: "0 10px", fontSize: "13px" }}>
+                            <option value="">-- Choose Found Report --</option>
+                            {lfData.foundItems.filter(i => !i.matchedLostItemId && i.adminVerificationStatus === "Approved").map(i => (
+                              <option key={i._id} value={i._id}>{i.reportId} — {i.itemName} ({i.category}, Bus: {i.busNumber || "N/A"})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button onClick={handleLfMatch} disabled={!lfMatchLostId || !lfMatchFoundId} style={{ height: "42px", padding: "0 24px", borderRadius: "10px", background: (!lfMatchLostId || !lfMatchFoundId) ? "#94a3b8" : "linear-gradient(135deg,#15803d,#16a34a)", color: "#fff", border: "none", fontWeight: "900", fontSize: "13px", cursor: (!lfMatchLostId || !lfMatchFoundId) ? "not-allowed" : "pointer" }}>
+                          Link &amp; Match Items 🔗
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Side-by-Side Visual Comparison Cards */}
+                    {(selectedLost || selectedFound) && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
+                        
+                        {/* LEFT: LOST ITEM CARD */}
+                        <div style={{ background: bgCard, border: "2px solid #dc2626", borderRadius: "18px", padding: "20px", display: "flex", flexDirection: "column" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                            <span style={{ fontSize: "12px", fontWeight: "900", color: "#dc2626", background: "rgba(220,38,38,0.1)", padding: "4px 10px", borderRadius: "10px" }}>LOST ITEM</span>
+                            <span style={{ fontFamily: "monospace", fontWeight: "800", color: textSecondary }}>{selectedLost?.reportId || "No Selection"}</span>
+                          </div>
+
+                          {selectedLost && (
+                            <>
+                              <div style={{ width: "100%", height: "180px", borderRadius: "12px", background: darkMode ? "#1a2234" : "#f1f5f9", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px", border: `1px solid ${borderCol}` }}>
+                                {selectedLost.photo ? (
+                                  <img
+                                    src={selectedLost.photo}
+                                    alt={selectedLost.itemName}
+                                    onClick={() => { setLfLightboxImg(selectedLost.photo); setLfLightboxTitle(`Lost: ${selectedLost.itemName}`); }}
+                                    style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "pointer", background: "#000" }}
+                                    title="Click to enlarge"
+                                  />
+                                ) : (
+                                  <div style={{ color: textSecondary, fontSize: "12px", fontWeight: "700" }}>📷 No Photo Provided</div>
+                                )}
+                              </div>
+                              <h4 style={{ fontSize: "16px", fontWeight: "900", color: textPrimary, margin: "0 0 6px 0" }}>{selectedLost.itemName}</h4>
+                              <div style={{ fontSize: "12px", color: textSecondary, lineHeight: "1.6" }}>
+                                <div><strong>Category:</strong> {selectedLost.category}</div>
+                                <div><strong>Owner:</strong> {selectedLost.ownerId?.name} (🔒 <span style={{ color: "#16a34a", fontWeight: "800" }}>{selectedLost.ownerPhone}</span>)</div>
+                                <div><strong>Lost Date:</strong> {selectedLost.lostDate} &bull; <strong>Bus:</strong> {selectedLost.busNumber || "—"}</div>
+                                <div><strong>Description:</strong> {selectedLost.description}</div>
+                                {selectedLost.identifyingDetails && <div style={{ color: "#7c3aed", marginTop: "4px" }}><strong>🔒 Unique Marks:</strong> {selectedLost.identifyingDetails}</div>}
+                                {selectedLost.serialNumber && <div style={{ color: "#7c3aed" }}><strong>🔒 Serial/IMEI:</strong> {selectedLost.serialNumber}</div>}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* RIGHT: FOUND ITEM CARD */}
+                        <div style={{ background: bgCard, border: "2px solid #2563eb", borderRadius: "18px", padding: "20px", display: "flex", flexDirection: "column" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                            <span style={{ fontSize: "12px", fontWeight: "900", color: "#2563eb", background: "rgba(37,99,235,0.1)", padding: "4px 10px", borderRadius: "10px" }}>FOUND ITEM</span>
+                            <span style={{ fontFamily: "monospace", fontWeight: "800", color: textSecondary }}>{selectedFound?.reportId || "No Selection"}</span>
+                          </div>
+
+                          {selectedFound && (
+                            <>
+                              <div style={{ width: "100%", height: "180px", borderRadius: "12px", background: darkMode ? "#1a2234" : "#f1f5f9", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px", border: `1px solid ${borderCol}` }}>
+                                {selectedFound.photo ? (
+                                  <img
+                                    src={selectedFound.photo}
+                                    alt={selectedFound.itemName}
+                                    onClick={() => { setLfLightboxImg(selectedFound.photo); setLfLightboxTitle(`Found: ${selectedFound.itemName}`); }}
+                                    style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "pointer", background: "#000" }}
+                                    title="Click to enlarge"
+                                  />
+                                ) : (
+                                  <div style={{ color: textSecondary, fontSize: "12px", fontWeight: "700" }}>📷 No Photo Provided</div>
+                                )}
+                              </div>
+                              <h4 style={{ fontSize: "16px", fontWeight: "900", color: textPrimary, margin: "0 0 6px 0" }}>{selectedFound.itemName}</h4>
+                              <div style={{ fontSize: "12px", color: textSecondary, lineHeight: "1.6" }}>
+                                <div><strong>Category:</strong> {selectedFound.category}</div>
+                                <div><strong>Finder:</strong> {selectedFound.foundBy?.name || selectedFound.finderName} (🔒 <span style={{ color: "#2563eb", fontWeight: "800" }}>{selectedFound.finderPhone}</span>)</div>
+                                <div><strong>Found Date:</strong> {selectedFound.foundDate} &bull; <strong>Bus:</strong> {selectedFound.busNumber}</div>
+                                <div><strong>Description:</strong> {selectedFound.description}</div>
+                                {selectedFound.foundDetails && <div style={{ color: "#2563eb", marginTop: "4px" }}><strong>🔒 Found Details:</strong> {selectedFound.foundDetails}</div>}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* 4. OWNER MATCH REQUESTS QUEUE */}
+              {!lfLoading && lfInnerTab === "ownerRequests" && (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, marginBottom: "14px" }}>🙋 Owner Match Requests &amp; Confirmations</h3>
+                  {lfData.matches.filter(m => m.adminStatus === "Pending").length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "36px", color: textSecondary, background: bgCard, borderRadius: "14px", border: `1px solid ${borderCol}` }}>✓ No pending match requests.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {lfData.matches.filter(m => m.adminStatus === "Pending").map(m => (
+                        <div key={m._id} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "18px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontFamily: "monospace", fontWeight: "900", color: "#6d28d9", fontSize: "13px" }}>{m.matchId} ({m.matchedBy === "owner_request" ? "Owner Match Request" : "Admin Suggested"})</div>
+                              <h4 style={{ fontSize: "15px", fontWeight: "800", color: textPrimary, margin: "2px 0" }}>
+                                Lost: {m.lostItemId?.itemName} &harr; Found: {m.foundItemId?.itemName}
+                              </h4>
+                              {m.ownerRequestNote && <div style={{ fontSize: "12.5px", color: "#7c3aed", marginTop: "4px" }}><strong>Owner Explanation / Proof:</strong> “{m.ownerRequestNote}”</div>}
+                            </div>
+
+                            {/* Photos side by side */}
+                            <div style={{ display: "flex", gap: "10px" }}>
+                              {m.lostItemId?.photo && (
+                                <img
+                                  src={m.lostItemId.photo}
+                                  alt="Lost Photo"
+                                  onClick={() => { setLfLightboxImg(m.lostItemId.photo); setLfLightboxTitle(`Lost: ${m.lostItemId.itemName}`); }}
+                                  style={{ width: "60px", height: "60px", borderRadius: "8px", objectFit: "cover", cursor: "pointer", border: "1px solid #dc2626" }}
+                                  title="Lost Photo"
+                                />
+                              )}
+                              {m.foundItemId?.photo && (
+                                <img
+                                  src={m.foundItemId.photo}
+                                  alt="Found Photo"
+                                  onClick={() => { setLfLightboxImg(m.foundItemId.photo); setLfLightboxTitle(`Found: ${m.foundItemId.itemName}`); }}
+                                  style={{ width: "60px", height: "60px", borderRadius: "8px", objectFit: "cover", cursor: "pointer", border: "1px solid #2563eb" }}
+                                  title="Found Photo"
+                                />
+                              )}
+                            </div>
+
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              <button onClick={() => handleLfMatchDecision(m._id, "approve")} style={{ padding: "8px 18px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✓ Approve Match &amp; Notify Finder</button>
+                              <button onClick={() => handleLfMatchDecision(m._id, "reject")} style={{ padding: "8px 18px", borderRadius: "10px", background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.25)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>✕ Reject</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 5. FINDER HANDOVER QUEUE */}
+              {!lfLoading && lfInnerTab === "finderHandover" && (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, marginBottom: "14px" }}>🤝 Finder Handover Queue</h3>
+                  {lfData.handovers.filter(h => h.status === "Awaiting_Finder_Handover").length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "36px", color: textSecondary, background: bgCard, borderRadius: "14px", border: `1px solid ${borderCol}` }}>✓ No items currently awaiting finder handover.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {lfData.handovers.filter(h => h.status === "Awaiting_Finder_Handover").map(h => (
+                        <div key={h._id} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                          <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+                            {h.foundItemId?.photo && (
+                              <img
+                                src={h.foundItemId.photo}
+                                alt="Found"
+                                onClick={() => { setLfLightboxImg(h.foundItemId.photo); setLfLightboxTitle(`Found Item: ${h.foundItemId.itemName}`); }}
+                                style={{ width: "60px", height: "60px", borderRadius: "8px", objectFit: "cover", cursor: "pointer", border: `1px solid ${borderCol}` }}
+                              />
+                            )}
+                            <div>
+                              <div style={{ fontFamily: "monospace", fontWeight: "900", color: "#ca8a04", fontSize: "13px" }}>{h.handoverId}</div>
+                              <h4 style={{ fontSize: "15px", fontWeight: "800", color: textPrimary, margin: "2px 0" }}>Found: {h.foundItemId?.itemName} &bull; Owner: {h.ownerId?.name}</h4>
+                              <div style={{ fontSize: "12px", color: textSecondary }}>Finder: <strong>{h.finderId?.name}</strong> (🔒 {h.foundItemId?.finderPhone || "Phone"})</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setLfHandoverModal(h); }}
+                            style={{ padding: "9px 18px", borderRadius: "10px", background: "linear-gradient(135deg,#0d9488,#14b8a6)", color: "#fff", border: "none", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}
+                          >
+                            📥 Record Physical Handover from Finder
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 6. CUSTODY & OWNER COLLECTION QUEUE */}
+              {!lfLoading && lfInnerTab === "custodyCollection" && (
+                <div>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", color: textPrimary, marginBottom: "14px" }}>🏢 Items in Custody &amp; Return Proof Verification</h3>
+                  {lfData.handovers.filter(h => h.status !== "Completed" && h.status !== "Awaiting_Finder_Handover").length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "36px", color: textSecondary, background: bgCard, borderRadius: "14px", border: `1px solid ${borderCol}` }}>No items currently in custody queue.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {lfData.handovers.filter(h => h.status !== "Completed" && h.status !== "Awaiting_Finder_Handover").map(h => (
+                        <div key={h._id} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "18px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
+                            <div>
+                              <div style={{ fontFamily: "monospace", fontWeight: "900", color: "#0d9488", fontSize: "13px" }}>{h.handoverId} ({h.status})</div>
+                              <h4 style={{ fontSize: "16px", fontWeight: "800", color: textPrimary, margin: "2px 0" }}>{h.lostItemId?.itemName} &bull; Owner: {h.ownerId?.name} (🔒 {h.lostItemId?.ownerPhone})</h4>
+                            </div>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                              {h.status === "In_Admin_Custody" && (
+                                <button onClick={() => handleLfHandoverReady(h._id)} style={{ padding: "8px 16px", borderRadius: "10px", background: "#2563eb", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                                  Mark Ready for Pickup 📍
+                                </button>
+                              )}
+                              {(h.status === "Proof_Submitted" || h.ownerConfirmedReceived) && (
+                                <button onClick={() => handleLfHandoverConfirmReturn(h._id)} style={{ padding: "8px 18px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                                  ✓ Confirm Returned &amp; Close Case
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Clear side-by-side display of received item photo & proof */}
+                          {(h.receivedItemPhoto || h.receivingProof || h.handoverPhoto) && (
+                            <div style={{ display: "flex", gap: "16px", marginTop: "14px", flexWrap: "wrap" }}>
+                              {h.handoverPhoto && (
+                                <div style={{ textAlign: "center" }}>
+                                  <div style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, marginBottom: "4px" }}>Finder Handover Photo:</div>
+                                  <img
+                                    src={h.handoverPhoto}
+                                    alt="Handover Intake"
+                                    onClick={() => { setLfLightboxImg(h.handoverPhoto); setLfLightboxTitle(`Handover Intake: ${h.handoverId}`); }}
+                                    style={{ width: "120px", height: "100px", objectFit: "cover", borderRadius: "10px", border: `1.5px solid ${borderCol}`, cursor: "pointer" }}
+                                    title="Click to view high resolution"
+                                  />
+                                </div>
+                              )}
+                              {h.receivedItemPhoto && (
+                                <div style={{ textAlign: "center" }}>
+                                  <div style={{ fontSize: "11px", fontWeight: "800", color: "#16a34a", marginBottom: "4px" }}>Owner Received Photo:</div>
+                                  <img
+                                    src={h.receivedItemPhoto}
+                                    alt="Owner Received"
+                                    onClick={() => { setLfLightboxImg(h.receivedItemPhoto); setLfLightboxTitle(`Owner Collection Photo: ${h.handoverId}`); }}
+                                    style={{ width: "120px", height: "100px", objectFit: "cover", borderRadius: "10px", border: "2px solid #16a34a", cursor: "pointer" }}
+                                    title="Click to view high resolution"
+                                  />
+                                </div>
+                              )}
+                              {h.receivingProof && (
+                                <div style={{ textAlign: "center" }}>
+                                  <div style={{ fontSize: "11px", fontWeight: "800", color: "#2563eb", marginBottom: "4px" }}>Receiving Slip / Receipt:</div>
+                                  <img
+                                    src={h.receivingProof}
+                                    alt="Receipt Slip"
+                                    onClick={() => { setLfLightboxImg(h.receivingProof); setLfLightboxTitle(`Receiving Slip Proof: ${h.handoverId}`); }}
+                                    style={{ width: "120px", height: "100px", objectFit: "cover", borderRadius: "10px", border: "2px solid #2563eb", cursor: "pointer" }}
+                                    title="Click to view high resolution"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 7. ALL LOST ITEMS */}
+              {!lfLoading && lfInnerTab === "allLost" && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <thead>
+                      <tr style={{ background: darkMode ? "#1e293b" : "#f8fafc" }}>
+                        {["Photo", "Report ID", "Item / Cat", "Owner (Private Phone)", "Date", "Bus", "Status", "Actions"].map(h => (
+                          <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: "800", color: textSecondary, borderBottom: `2px solid ${borderCol}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lfData.lostItems.map(item => (
+                        <tr key={item._id} style={{ borderBottom: `1px solid ${borderCol}` }}>
+                          <td style={{ padding: "10px 14px" }}>
+                            {item.photo ? (
+                              <img
+                                src={item.photo}
+                                alt={item.itemName}
+                                onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Lost: ${item.itemName} (${item.reportId})`); }}
+                                style={{ width: "42px", height: "42px", borderRadius: "8px", objectFit: "cover", cursor: "pointer", border: `1px solid ${borderCol}` }}
+                                title="Click to view photo"
+                              />
+                            ) : (
+                              <span style={{ fontSize: "10px", color: textSecondary }}>No photo</span>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 14px", fontWeight: "700", color: "#dc2626", fontFamily: "monospace" }}>{item.reportId}</td>
+                          <td style={{ padding: "10px 14px" }}><div style={{ fontWeight: "700" }}>{item.itemName}</div><div style={{ fontSize: "11px", color: textSecondary }}>{item.category}</div></td>
+                          <td style={{ padding: "10px 14px" }}><div>{item.ownerId?.name || "—"}</div><div style={{ fontSize: "11px", color: "#16a34a", fontWeight: "700" }}>🔒 {item.ownerPhone}</div></td>
+                          <td style={{ padding: "10px 14px" }}>{item.lostDate}</td>
+                          <td style={{ padding: "10px 14px" }}>{item.busNumber || "—"}</td>
+                          <td style={{ padding: "10px 14px" }}><span style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", background: "#f1f5f9" }}>{item.status}</span></td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <button onClick={() => handleLfDelete("lost", item._id)} style={{ padding: "4px 10px", borderRadius: "8px", background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.2)", fontSize: "11px", cursor: "pointer" }}>Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* 8. ALL FOUND ITEMS */}
+              {!lfLoading && lfInnerTab === "allFound" && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <thead>
+                      <tr style={{ background: darkMode ? "#1e293b" : "#f8fafc" }}>
+                        {["Photo", "Report ID", "Item / Cat", "Finder (Private Phone)", "Date", "Bus", "Status", "Actions"].map(h => (
+                          <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: "800", color: textSecondary, borderBottom: `2px solid ${borderCol}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lfData.foundItems.map(item => (
+                        <tr key={item._id} style={{ borderBottom: `1px solid ${borderCol}` }}>
+                          <td style={{ padding: "10px 14px" }}>
+                            {item.photo ? (
+                              <img
+                                src={item.photo}
+                                alt={item.itemName}
+                                onClick={() => { setLfLightboxImg(item.photo); setLfLightboxTitle(`Found: ${item.itemName} (${item.reportId})`); }}
+                                style={{ width: "42px", height: "42px", borderRadius: "8px", objectFit: "cover", cursor: "pointer", border: `1px solid ${borderCol}` }}
+                                title="Click to view photo"
+                              />
+                            ) : (
+                              <span style={{ fontSize: "10px", color: textSecondary }}>No photo</span>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 14px", fontWeight: "700", color: "#2563eb", fontFamily: "monospace" }}>{item.reportId}</td>
+                          <td style={{ padding: "10px 14px" }}><div style={{ fontWeight: "700" }}>{item.itemName}</div><div style={{ fontSize: "11px", color: textSecondary }}>{item.category}</div></td>
+                          <td style={{ padding: "10px 14px" }}><div>{item.foundBy?.name || item.finderName || "—"}</div><div style={{ fontSize: "11px", color: "#2563eb", fontWeight: "700" }}>🔒 {item.finderPhone}</div></td>
+                          <td style={{ padding: "10px 14px" }}>{item.foundDate}</td>
+                          <td style={{ padding: "10px 14px" }}>{item.busNumber || "—"}</td>
+                          <td style={{ padding: "10px 14px" }}><span style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", background: "#f1f5f9" }}>{item.status}</span></td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <button onClick={() => handleLfDelete("found", item._id)} style={{ padding: "4px 10px", borderRadius: "8px", background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.2)", fontSize: "11px", cursor: "pointer" }}>Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* MODAL: ADMIN PHYSICAL HANDOVER INTAKE FROM FINDER */}
+              {lfHandoverModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                  <div style={{ background: bgCard, color: textPrimary, borderRadius: "24px", padding: "28px", maxWidth: "520px", width: "100%", border: `1px solid ${borderCol}`, boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <h3 style={{ fontSize: "18px", fontWeight: "900", margin: 0 }}>📥 Record Physical Handover from Finder</h3>
+                      <button onClick={() => setLfHandoverModal(null)} style={{ background: "none", border: "none", color: textSecondary, fontSize: "18px", cursor: "pointer" }}>✕</button>
+                    </div>
+                    <form onSubmit={handleLfHandoverReceiveSubmit}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Date Received</label>
+                          <input type="date" required value={lfHandoverForm.receivedDate} onChange={e => setLfHandoverForm({ ...lfHandoverForm, receivedDate: e.target.value })} style={{ width: "100%", height: "38px", borderRadius: "8px", border: `1px solid ${borderCol}`, padding: "0 10px" }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Item Condition</label>
+                          <select value={lfHandoverForm.itemCondition} onChange={e => setLfHandoverForm({ ...lfHandoverForm, itemCondition: e.target.value })} style={{ width: "100%", height: "38px", borderRadius: "8px", border: `1px solid ${borderCol}`, padding: "0 10px" }}>
+                            <option value="Good">Good / Undamaged</option>
+                            <option value="Minor Scratches">Minor Scratches</option>
+                            <option value="Damaged">Damaged</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: "12px" }}>
+                        <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Handover Intake Photo (Optional)</label>
+                        <input type="file" accept="image/*" onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const r = new FileReader();
+                            r.onload = () => setLfHandoverPhoto(r.result);
+                            r.readAsDataURL(file);
+                          }
+                        }} style={{ fontSize: "12px" }} />
+                        {lfHandoverPhoto && <img src={lfHandoverPhoto} alt="Handover" style={{ maxHeight: "60px", marginTop: "6px", borderRadius: "6px" }} />}
+                      </div>
+                      <div style={{ marginBottom: "16px" }}>
+                        <label style={{ fontSize: "11px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "4px" }}>Intake / Custody Notes</label>
+                        <textarea rows={2} placeholder="e.g. Stored in Station Counter Locker #4" value={lfHandoverForm.handoverNotes} onChange={e => setLfHandoverForm({ ...lfHandoverForm, handoverNotes: e.target.value })} style={{ width: "100%", borderRadius: "8px", border: `1px solid ${borderCol}`, padding: "8px" }} />
+                      </div>
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <button type="button" onClick={() => setLfHandoverModal(null)} style={{ flex: 1, padding: "10px", borderRadius: "10px", background: "none", border: `1px solid ${borderCol}`, color: textSecondary, fontWeight: "800", cursor: "pointer" }}>Cancel</button>
+                        <button type="submit" style={{ flex: 2, padding: "10px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer" }}>Receive Into Custody</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* ULTRA HIGH-RESOLUTION LIGHTBOX MODAL FOR ADMIN IMAGE INSPECTION */}
+              {lfLightboxImg && (
+                <div
+                  onClick={() => setLfLightboxImg(null)}
+                  style={{
+                    position: "fixed",
+                    inset: 0,
+                    background: "rgba(0,0,0,0.88)",
+                    backdropFilter: "blur(8px)",
+                    zIndex: 999999,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "30px",
+                  }}
+                >
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      maxWidth: "90vw",
+                      maxHeight: "90vh",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      background: "#1e1b4b",
+                      borderRadius: "20px",
+                      padding: "16px 20px 20px",
+                      boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
+                      border: "1px solid rgba(255,255,255,0.2)",
+                    }}
+                  >
+                    <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", color: "#fff" }}>
+                      <span style={{ fontSize: "14px", fontWeight: "800" }}>{lfLightboxTitle || "High-Resolution Image Inspection"}</span>
+                      <button onClick={() => setLfLightboxImg(null)} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", width: "32px", height: "32px", color: "#fff", fontSize: "16px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                    </div>
+                    <img
+                      src={lfLightboxImg}
+                      alt="Full Inspection"
+                      style={{
+                        maxWidth: "85vw",
+                        maxHeight: "75vh",
+                        objectFit: "contain",
+                        borderRadius: "12px",
+                        boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 

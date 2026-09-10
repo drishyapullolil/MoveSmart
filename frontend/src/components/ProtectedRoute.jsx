@@ -16,8 +16,8 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
   const user = getStoredUser();
   const token = getStoredToken();
 
-  // If not logged in at all, redirect to login
-  if (!user && !token) {
+  // If not logged in with both a valid user and token, redirect to login
+  if (!user || !token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
@@ -28,17 +28,19 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
 
   if (normalizedAllowed.length > 0 && !normalizedAllowed.includes(role)) {
     // If the logged-in user is a driver, they can ONLY access driver pages
-    if (role === "driver") {
+    if (role === "driver" && location.pathname !== "/dashboard/driver") {
       return <Navigate to="/dashboard/driver" replace />;
     }
 
     // If the logged-in user is an admin
-    if (role === "admin") {
+    if (role === "admin" && location.pathname !== "/admin") {
       return <Navigate to="/admin" replace />;
     }
 
-    // Default regular user/passenger redirect
-    return <Navigate to="/dashboard" replace />;
+    // Default regular user/passenger redirect (only if not already on dashboard)
+    if (location.pathname !== "/dashboard") {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return children;

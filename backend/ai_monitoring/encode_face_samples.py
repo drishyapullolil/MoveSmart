@@ -65,6 +65,32 @@ def decode_base64_image(b64_string: Optional[str]) -> Optional[np.ndarray]:
     return None
 
 
+def detect_face_locations(rgb_img: np.ndarray) -> list:
+    """
+    Detects face locations with progressive upsampling fallback.
+    Tries upsample=1 first (fast), then upsample=2 if nothing found
+    (catches smaller/farther faces at the cost of extra compute).
+    """
+    if face_rec is None:
+        return []
+    try:
+        locations = face_rec.face_locations(rgb_img, number_of_times_to_upsample=1, model="hog")
+        if len(locations) == 0:
+            locations = face_rec.face_locations(rgb_img, number_of_times_to_upsample=2, model="hog")
+        return locations
+    except TypeError:
+        return face_rec.face_locations(rgb_img)
+
+
+def is_frame_sharp_enough(rgb_img: np.ndarray, threshold: float = 60.0) -> bool:
+    """Rejects motion-blurred or badly-focused frames using Laplacian variance."""
+    if cv2 is None:
+        return True
+    gray = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2GRAY)
+    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return variance >= threshold
+
+
 def process_samples(samples: Any) -> Tuple[bool, Dict[str, Any], int]:
     """
     Processes an array of base64 images.
@@ -90,9 +116,19 @@ def process_samples(samples: Any) -> Tuple[bool, Dict[str, Any], int]:
             continue
 
         try:
-            locations = face_rec.face_locations(rgb_img)
+            if not is_frame_sharp_enough(rgb_img):
+                sys.stderr.write(f"[WARN] Sample {idx+1} rejected: too blurry.\n")
+                failed_count += 1
+                continue
+
+            locations = detect_face_locations(rgb_img)
+
             if len(locations) == 1:
-                encs = face_rec.face_encodings(rgb_img, locations)
+                try:
+                    encs = face_rec.face_encodings(rgb_img, locations, num_jitters=2)
+                except TypeError:
+                    encs = face_rec.face_encodings(rgb_img, locations)
+
                 if encs and len(encs) > 0:
                     enc_arr = np.array(encs[0], dtype=np.float64)
                     norm = np.linalg.norm(enc_arr)
@@ -101,8 +137,11 @@ def process_samples(samples: Any) -> Tuple[bool, Dict[str, Any], int]:
                     valid_encodings.append(enc_arr)
                 else:
                     failed_count += 1
+            elif len(locations) == 0:
+                sys.stderr.write(f"[WARN] Sample {idx+1} rejected: no face detected.\n")
+                failed_count += 1
             else:
-                # 0 faces or more than 1 face detected
+                sys.stderr.write(f"[WARN] Sample {idx+1} rejected: {len(locations)} faces detected, expected 1.\n")
                 failed_count += 1
         except Exception as e:
             sys.stderr.write(f"[WARN] Sample {idx+1} encoding error: {e}\n")

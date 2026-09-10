@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Shield, Bus, LayoutDashboard, LogOut, ExternalLink, User, Bell } from "lucide-react";
+import { Shield, Bus, LayoutDashboard, LogOut, ExternalLink, User, Bell, Package } from "lucide-react";
 import { getStoredUser, clearStoredSession } from "../utils/session";
 
 export default function AdminHeader() {
@@ -180,6 +180,40 @@ export default function AdminHeader() {
           >
             <Bus size={18} />
             <span>Bus &amp; Routes</span>
+          </Link>
+
+          <Link
+            to="/admin/lost-found"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "10px 18px",
+              borderRadius: "12px",
+              fontSize: "14px",
+              fontWeight: "700",
+              textDecoration: "none",
+              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+              background: isActive("/admin/lost-found") ? "linear-gradient(135deg, rgba(168, 85, 247, 0.3) 0%, rgba(168, 85, 247, 0.1) 100%)" : "transparent",
+              color: isActive("/admin/lost-found") ? "#d8b4fe" : "#c4b5fd",
+              border: isActive("/admin/lost-found") ? "1px solid rgba(168, 85, 247, 0.5)" : "1px solid transparent",
+              boxShadow: isActive("/admin/lost-found") ? "0 4px 12px rgba(168, 85, 247, 0.2)" : "none",
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive("/admin/lost-found")) {
+                e.currentTarget.style.background = "rgba(168, 85, 247, 0.1)";
+                e.currentTarget.style.color = "#f3e8ff";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive("/admin/lost-found")) {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "#c4b5fd";
+              }
+            }}
+          >
+            <Package size={18} />
+            <span>Lost &amp; Found</span>
           </Link>
 
           <div style={{ width: "1px", height: "24px", background: "rgba(255, 255, 255, 0.1)", margin: "0 8px" }}></div>

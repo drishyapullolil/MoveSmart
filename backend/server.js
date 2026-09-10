@@ -38,12 +38,29 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 // MongoDB Atlas Connection
 const mongoURI = process.env.MONGODB_URI;
 
-mongoose.connect(mongoURI)
-    .then(() => {
-        console.log("MongoDB connected ✅");
-    })
+mongoose.connection.on("connected", () => {
+    console.log("MongoDB connected ✅");
+});
+
+mongoose.connection.on("error", (error) => {
+    console.error("MongoDB connection error ⚠️:", error.message);
+});
+
+mongoose.connection.on("disconnected", () => {
+    console.warn("MongoDB disconnected ⚠️. Waiting for reconnection...");
+});
+
+mongoose.connection.on("reconnected", () => {
+    console.log("MongoDB reconnected ✅");
+});
+
+mongoose.connect(mongoURI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    family: 4, // Use IPv4, skip trying IPv6
+})
     .catch((error) => {
-        console.error("MongoDB Error ❌:", error);
+        console.error("Initial MongoDB Connection Error ❌:", error.message);
     });
 
 // Middleware to check database connection status
@@ -94,6 +111,10 @@ app.use("/api", require("./routes/bookingRoutes"));
 // Driver & Leave Management Routes
 app.use("/api", require("./routes/driverRoutes"));
 
+// Lost & Found Management Routes
+app.use("/api/lostfound", require("./routes/lostFoundRoutes"));
+app.use("/api/lost-found", require("./routes/lostFoundRoutes"));
+
 // Test Route
 app.get("/", (req, res) => {
     res.send("Backend running 🚀");
@@ -117,5 +138,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, server };
 module.exports = { app, server };

@@ -10,13 +10,14 @@ import {
   Sparkles,
   ShieldCheck,
   UserCheck,
+  Phone,
   X,
   Info,
   Navigation,
   ArrowRight
 } from "lucide-react";
 
-export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelected, onToggleSeats }) {
+export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
   const [showDetails, setShowDetails] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [selectedStationIndex, setSelectedStationIndex] = useState(null);
@@ -54,7 +55,7 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
   const getStationTimings = () => {
     const list = [];
     const scheduleTrips = Array.isArray(bus?.schedule) ? bus.schedule : [];
-    
+
     let rawStations = [];
     if (scheduleTrips.length > 0 && Array.isArray(scheduleTrips[0].stations)) {
       rawStations = scheduleTrips[0].stations;
@@ -90,7 +91,7 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
       const name = String(stopName).trim();
       const isStart = idx === 0;
       const isEnd = idx === stopsList.length - 1;
-      
+
       let arr = arrivalTime;
       let dep = departureTime;
       if (isStart) {
@@ -150,7 +151,7 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
   };
 
   return (
-    <div className={`bus-card-box ${isSelected ? "selected-bus" : ""}`}>
+    <div className={`bus-card-box ${showDetails ? "expanded-bus" : ""}`}>
       <div className="bus-card-header-row">
         {/* Bus Title & Operator */}
         <div className="bus-info-group">
@@ -227,20 +228,59 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
         {/* Price & Action */}
         <div className="bus-price-action">
           <div className="price-display">
-            <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Starting at</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fare / Ticket</span>
             <span className="price-num">₹{price}</span>
           </div>
 
           <button
             type="button"
-            onClick={() => onToggleSeats(_id)}
-            className={`view-seats-btn ${isSelected ? "seats-active" : ""}`}
+            onClick={() => setShowDetails(!showDetails)}
+            className={`view-seats-btn ${showDetails ? "seats-active" : ""}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           >
-            <span>{isSelected ? "Hide Seats" : "Select Seats"}</span>
-            <ChevronRight size={16} style={{ transform: isSelected ? "rotate(90deg)" : "none", transition: "transform 0.2s" }} />
+            <Clock size={16} />
+            <span>{showDetails ? "Hide Timetable" : "View Timetable"}</span>
+            <ChevronDown size={16} style={{ transform: showDetails ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
           </button>
         </div>
       </div>
+
+      {/* Intermediate Sub-Stations Chain Preview */}
+      {stationList.length > 2 && (
+        <div style={{ marginTop: 12, padding: "10px 14px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+            <MapPin size={13} style={{ color: "#7c3aed" }} />
+            <span>ROUTE STOPS &amp; SUB-STATIONS ({stationList.length} TOTAL STOPS):</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            {stationList.map((st, i) => (
+              <React.Fragment key={i}>
+                <span
+                  onClick={() => handleStationClick(i)}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: st.isStart || st.isEnd ? 800 : 600,
+                    padding: "3px 9px",
+                    borderRadius: 6,
+                    background: st.isStart ? "#dcfce7" : st.isEnd ? "#fae8ff" : "#ffffff",
+                    color: st.isStart ? "#15803d" : st.isEnd ? "#86198f" : "#334155",
+                    border: `1px solid ${st.isStart ? "#86efac" : st.isEnd ? "#f0abfc" : "#cbd5e1"}`,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                  title={`Click to view timing for ${st.name}`}
+                >
+                  <span>{st.isStart ? "🟢" : st.isEnd ? "🔴" : "⚪"}</span>
+                  <span>{st.name}</span>
+                </span>
+                {i < stationList.length - 1 && <span style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>➔</span>}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Driver Badge Row */}
       <div
@@ -251,7 +291,7 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
           padding: "10px 14px",
           marginTop: 12,
           display: "flex",
-          justify: "space-between",
+          justifyContent: "space-between",
           alignItems: "center",
           border: "1px solid #cbd5e1",
           cursor: "pointer",
@@ -263,14 +303,14 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div
             style={{
-              width: 38,
-              height: 38,
+              width: 40,
+              height: 40,
               borderRadius: "50%",
               background: "#16a34a",
               color: "#ffffff",
               display: "flex",
               alignItems: "center",
-              justify: "center",
+              justifyContent: "center",
               fontWeight: 900,
               fontSize: 16,
               overflow: "hidden",
@@ -288,7 +328,7 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
 
           <div>
             <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span>Assigned Driver: <strong>{driverName}</strong></span>
+              <span>Assigned Driver: <strong style={{ color: "#1e1b4b" }}>{driverName}</strong></span>
               {driverVerified ? (
                 <span style={{ fontSize: 10, background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: 10, fontWeight: 900, display: "inline-flex", alignItems: "center", gap: 3, border: "1px solid #86efac" }}>
                   <ShieldCheck size={12} /> Admin Verified ✅
@@ -299,36 +339,70 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-              License: <strong style={{ fontFamily: "monospace", color: "#475569" }}>{driverLicense}</strong> · {driverExperience || 8} yrs exp
+            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span>License: <strong style={{ fontFamily: "monospace", color: "#475569" }}>{driverLicense}</strong></span>
+              <span>•</span>
+              <span>Exp: <strong>{driverExperience || 0} yrs</strong></span>
+              {driverPhone && driverPhone !== "N/A" && (
+                <>
+                  <span>•</span>
+                  <span style={{ color: "#059669", fontWeight: 700 }}>📞 {driverPhone}</span>
+                </>
+              )}
             </div>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowDriverModal(true);
-          }}
-          style={{
-            background: "#ffffff",
-            border: "1px solid #94a3b8",
-            borderRadius: 8,
-            padding: "5px 12px",
-            fontSize: 11,
-            fontWeight: 800,
-            color: "#0f172a",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-          }}
-        >
-          <UserCheck size={14} style={{ color: "#16a34a" }} />
-          <span>View Driver &amp; License</span>
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {driverPhone && driverPhone !== "N/A" && (
+            <a
+              href={`tel:${driverPhone.replace(/\s+/g, "")}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "#f0fdf4",
+                border: "1px solid #86efac",
+                borderRadius: 8,
+                padding: "5px 10px",
+                fontSize: 11,
+                fontWeight: 800,
+                color: "#15803d",
+                textDecoration: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title={`Call Driver (${driverPhone})`}
+            >
+              <Phone size={13} />
+              <span>Call</span>
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowDriverModal(true);
+            }}
+            style={{
+              background: "#ffffff",
+              border: "1px solid #94a3b8",
+              borderRadius: 8,
+              padding: "5px 12px",
+              fontSize: 11,
+              fontWeight: 800,
+              color: "#0f172a",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            }}
+          >
+            <UserCheck size={14} style={{ color: "#16a34a" }} />
+            <span>Driver Profile</span>
+          </button>
+        </div>
       </div>
 
       {/* Footer Meta */}
@@ -352,8 +426,8 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "", isSelecte
           </button>
         </div>
 
-        <div className="seats-left-pill" style={isLowSeat ? { background: "#fef3c7", color: "#92400e", borderColor: "#fcd34d" } : {}}>
-          {availableSeats === 0 ? "Sold Out" : `${availableSeats} Seats Available`}
+        <div className="seats-left-pill" style={{ background: "rgba(124, 58, 237, 0.08)", color: "#6d28d9", borderColor: "rgba(124, 58, 237, 0.2)" }}>
+          🚌 Fleet Bus #{busNumber}
         </div>
       </div>
 

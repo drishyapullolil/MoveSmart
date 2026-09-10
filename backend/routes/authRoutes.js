@@ -17,6 +17,56 @@ const router = express.Router();
 const otpStore = new Map();
 
 
+// REAL-TIME CHECK EMAIL AVAILABILITY
+router.get("/check-email", async (req, res) => {
+    try {
+        const { email } = req.query;
+
+        if (!email || typeof email !== "string" || !email.trim()) {
+            return res.status(400).json({
+                exists: false,
+                available: false,
+                message: "Email is required"
+            });
+        }
+
+        const cleanEmail = email.trim().toLowerCase();
+
+        // Basic syntax check
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+        if (!emailRegex.test(cleanEmail)) {
+            return res.status(400).json({
+                exists: false,
+                available: false,
+                message: "Invalid email format"
+            });
+        }
+
+        const existing = await User.exists({ email: cleanEmail });
+
+        if (existing) {
+            return res.json({
+                exists: true,
+                available: false,
+                message: "An account with this email already exists. Please login."
+            });
+        }
+
+        return res.json({
+            exists: false,
+            available: true,
+            message: "Email is available"
+        });
+    } catch (error) {
+        console.error("Check Email Error:", error);
+        res.status(500).json({
+            exists: false,
+            available: false,
+            message: error.message || "Failed to check email availability"
+        });
+    }
+});
+
 router.post("/send-otp", async (req, res) => {
     try {
         const { email } = req.body;
@@ -25,10 +75,20 @@ router.post("/send-otp", async (req, res) => {
             return res.status(400).json({ message: "Email is required" });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        otpStore.set(email.toLowerCase(), { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+        const cleanEmail = email.trim().toLowerCase();
 
-        await sendOtpEmail(email, otp);
+        // Check if user already exists
+        const existingUser = await User.findOne({ email: cleanEmail });
+        if (existingUser) {
+            return res.status(400).json({
+                message: "An account with this email already exists. Please login."
+            });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        otpStore.set(cleanEmail, { otp, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+        await sendOtpEmail(cleanEmail, otp);
 
         res.json({ message: "OTP sent successfully to your email" });
     } catch (error) {
@@ -151,15 +211,13 @@ router.post("/login", async (req, res) => {
         }
 
         const cleanEmail = email.trim();
-        let user = await User.findOne({ email: cleanEmail.toLowerCase() });
-        if (!user) {
-            user = await User.findOne({ email: cleanEmail });
-        }
-        if (!user) {
-            user = await User.findOne({
-                email: { $regex: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
-            });
-        }
+        const user = await User.findOne({
+            $or: [
+                { email: cleanEmail.toLowerCase() },
+                { email: cleanEmail },
+                { email: { $regex: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } }
+            ]
+        }).lean();
 
         if (!user) {
             return res.status(404).json({

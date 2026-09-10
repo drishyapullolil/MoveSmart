@@ -93,7 +93,7 @@ class FallbackFaceEngine:
                     except Exception:
                         pass
 
-    def face_locations(self, rgb_image):
+    def face_locations(self, rgb_image, *args, **kwargs):
         """
         Locates faces in an RGB image.
         Returns list of (top, right, bottom, left) bounding boxes.
@@ -129,7 +129,7 @@ class FallbackFaceEngine:
             return [(top, right, bottom, left)]
         return []
 
-    def face_encodings(self, rgb_image, known_face_locations=None):
+    def face_encodings(self, rgb_image, known_face_locations=None, *args, **kwargs):
         """
         Extracts 128-dimensional normalized biometric feature vector per face.
         """
@@ -424,7 +424,14 @@ class FaceProfileManager:
                     continue
 
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if cv2 is not None else frame
-                locations = face_rec.face_locations(rgb_frame) if face_rec is not None else []
+                locations = []
+                if face_rec is not None:
+                    try:
+                        locations = face_rec.face_locations(rgb_frame, number_of_times_to_upsample=1, model="hog")
+                        if len(locations) == 0:
+                            locations = face_rec.face_locations(rgb_frame, number_of_times_to_upsample=2, model="hog")
+                    except TypeError:
+                        locations = face_rec.face_locations(rgb_frame)
 
                 if len(locations) == 0:
                     print("  [FRAME REJECTED] No face detected. Please position face in center.", end="\r")
@@ -432,7 +439,12 @@ class FaceProfileManager:
                     print(f"  [FRAME REJECTED] {len(locations)} faces detected! Ensure only ONE person is visible.", end="\r")
                 else:
                     # Exactly 1 valid face
-                    encs = face_rec.face_encodings(rgb_frame, locations) if face_rec is not None else []
+                    encs = []
+                    if face_rec is not None:
+                        try:
+                            encs = face_rec.face_encodings(rgb_frame, locations, num_jitters=2)
+                        except TypeError:
+                            encs = face_rec.face_encodings(rgb_frame, locations)
                     if encs and len(encs) > 0:
                         collected_encodings.append(np.array(encs[0], dtype=np.float64))
                         print(f"  [ENROLL SUCCESS] Sample {len(collected_encodings)}/{samples} recorded.   ")
@@ -580,21 +592,35 @@ class FaceProfileManager:
 
         return None
 
-    def verify_frame(self, frame_bgr, enrolled_encoding, tolerance=0.50):
+    def verify_frame(self, frame_bgr, enrolled_encoding, tolerance=0.55):
         """
-        Compares detected face in frame_bgr against enrolled_encoding.
+        Compares detected face in frame_bgr against enrolled_encoding with progressive upsampling.
         Returns: (is_match: bool, distance: float, confidence_score: float, status_string: str)
         """
         if frame_bgr is None or enrolled_encoding is None:
             return False, 1.0, 0.0, "NO_FRAME"
 
         rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB) if (cv2 is not None and frame_bgr is not None) else frame_bgr
-        locations = face_rec.face_locations(rgb_frame) if face_rec is not None else []
+        
+        locations = []
+        if face_rec is not None:
+            try:
+                locations = face_rec.face_locations(rgb_frame, number_of_times_to_upsample=1, model="hog")
+                if len(locations) == 0:
+                    locations = face_rec.face_locations(rgb_frame, number_of_times_to_upsample=2, model="hog")
+            except TypeError:
+                locations = face_rec.face_locations(rgb_frame)
 
         if len(locations) == 0:
             return False, 1.0, 0.0, "NO_FACE"
 
-        encodings = face_rec.face_encodings(rgb_frame, locations) if face_rec is not None else []
+        encodings = []
+        if face_rec is not None:
+            try:
+                encodings = face_rec.face_encodings(rgb_frame, locations, num_jitters=1)
+            except TypeError:
+                encodings = face_rec.face_encodings(rgb_frame, locations)
+
         if not encodings or len(encodings) == 0:
             return False, 1.0, 0.0, "NO_ENCODING"
 
@@ -614,7 +640,7 @@ class FaceProfileManager:
 # MOVESMART MONITORING CLIENT DAEMON
 # ----------------------------------------------------
 class MoveSmartMonitoringClient:
-    def __init__(self, server_url, bus_number, driver_id="drv-sample-01", token=None, verify_interval=10.0, tolerance=0.50):
+    def __init__(self, server_url, bus_number, driver_id="drv-sample-01", token=None, verify_interval=10.0, tolerance=0.55):
         self.server_url = server_url.rstrip("/")
         self.bus_number = bus_number
         self.driver_id = driver_id
@@ -898,7 +924,7 @@ def main():
     parser.add_argument("--camera", default="0", help="Camera Index or Video Stream URL")
     parser.add_argument("--enroll", action="store_true", help="Run Biometric Face Profile Enrollment Wizard and exit")
     parser.add_argument("--verify-interval", type=float, default=10.0, help="Face Verification Interval in seconds (default: 10)")
-    parser.add_argument("--tolerance", type=float, default=0.50, help="Biometric Distance Tolerance (default: 0.50)")
+    parser.add_argument("--tolerance", type=float, default=0.55, help="Biometric Distance Tolerance (default: 0.55)")
     args = parser.parse_args()
 
     # ----------------------------------------------------

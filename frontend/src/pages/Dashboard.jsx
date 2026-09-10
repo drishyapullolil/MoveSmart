@@ -1,16 +1,17 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import CardApplication from "./Cardapplication";
 import { processRazorpayPayment } from "../utils/razorpay";
-import { getStoredUser, clearStoredSession } from "../utils/session";
+import { getStoredUser, getStoredToken } from "../utils/session";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 
-function Dashboard() {
+function Dashboard({ defaultTab }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState("planner");
+  const [activeTab, setActiveTab] = useState(() => {
+    return defaultTab || "planner";
+  });
   const [user, setUser] = useState(() => getStoredUser());
 
   // Real RFID States
@@ -26,11 +27,12 @@ function Dashboard() {
   const [journeyHistory, setJourneyHistory] = useState([]);
 
   // Wojhati Planner States
-  const [origin, setOrigin] = useState("Kochi Bus Stand");
-  const [destination, setDestination] = useState("Thiruvananthapuram Central");
+  const [origin, setOrigin] = useState("");
+  const [destination, setDestination] = useState("");
   const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
   const [planTime, setPlanTime] = useState("12:00");
   const [plannerResults, setPlannerResults] = useState(null);
+  const [dbLocations, setDbLocations] = useState([]);
 
   // Nol Balance Checker States
   const [nolTagId, setNolTagId] = useState("");
@@ -47,8 +49,8 @@ function Dashboard() {
   const [scheduleResult, setScheduleResult] = useState(null);
 
   // Intercity Booking States
-  const [intercityFrom, setIntercityFrom] = useState("Ernakulam (Kaloor Bus Stand)");
-  const [intercityTo, setIntercityTo] = useState("Kozhikode (Mofussil Bus Stand)");
+  const [intercityFrom, setIntercityFrom] = useState("");
+  const [intercityTo, setIntercityTo] = useState("");
   const [intercitySeats, setIntercitySeats] = useState("1");
   const [intercitySuccess, setIntercitySuccess] = useState(false);
 
@@ -59,54 +61,65 @@ function Dashboard() {
   ]);
   const [chatInput, setChatInput] = useState("");
 
-  // Wojhati Search Handler
-  const handleSearchRoutes = () => {
-    if (!origin || !destination) return;
+  const [plannerLoading, setPlannerLoading] = useState(false);
+  const [plannerError, setPlannerError] = useState("");
 
-    const mockRoutes = [
-      {
-        id: 1,
-        mode: "Express Bus",
-        busName: "MoveSmart Express",
-        busNumber: "KL-07-MS-8812",
-        source: origin,
-        destination,
-        departureTime: planTime,
-        arrivalTime: "10:30",
-        travelDate: planDate,
-        seatsAvailable: 25,
-        fare: "120.00",
-        distance: "200 km",
-        rating: "4.9",
-        status: "Seats Available",
-        steps: [
-          { type: "Walk", desc: `Walk from ${origin} to the main departure platform (5 mins)` },
-          { type: "Bus", desc: "Premium air‑conditioned coach with Wi‑Fi and live GPS" },
-          { type: "Walk", desc: `Arrive at ${destination} (5 mins)` }
-        ]
-      },
-      {
-        id: 2,
-        mode: "Direct Coach",
-        busName: "MoveSmart Swift Deluxe",
-        busNumber: "KL-202",
-        source: origin,
-        destination,
-        departureTime: "14:00",
-        arrivalTime: "16:20",
-        travelDate: planDate,
-        seatsAvailable: 0,
-        fare: "100.00",
-        distance: "150 km",
-        rating: "4.7",
-        status: "Bus Full",
-        steps: [
-          { type: "Bus", desc: `Direct express coach from ${origin} to ${destination}` },
-          { type: "Walk", desc: `Alight and walk to the terminal exit (3 mins)` }
-        ]
+  useEffect(() => {
+    const fetchDbStations = async () => {
+      try {
+        const res = await axios.get("/api/locations");
+        if (res.data?.success && Array.isArray(res.data.locations)) {
+          setDbLocations(res.data.locations);
+        }
+      } catch (err) {
+        console.warn("Could not load stations:", err.message);
       }
-    ];
-    setPlannerResults(mockRoutes);
+    };
+    fetchDbStations();
+  }, []);
+
+  // Live Bus Route Search Handler
+  const handleSearchRoutes = async () => {
+    setPlannerLoading(true);
+    setPlannerError("");
+    try {
+      const res = await axios.get("/api/buses", {
+        params: { from: origin.trim(), to: destination.trim(), date: planDate }
+      });
+      const busesList = res.data?.buses || [];
+      const mapped = busesList.map((b) => ({
+        id: b._id,
+        mode: b.busType || "Express Bus",
+        busName: b.busName,
+        busNumber: b.busNumber,
+        source: b.fromLocation,
+        destination: b.toLocation,
+        departureTime: b.departureTime,
+        arrivalTime: b.arrivalTime,
+        duration: b.duration,
+        travelDate: planDate,
+        seatsAvailable: b.availableSeats !== undefined ? b.availableSeats : (b.totalSeats || 32),
+        fare: b.price || "250.00",
+        rating: b.rating || "4.8",
+        driverName: b.driverName,
+        driverPhone: b.driverPhone,
+        driverLicense: b.driverLicense,
+        driverVerified: b.driverVerified,
+        driverExperience: b.driverExperience,
+        driverPhoto: b.driverPhoto,
+        stops: b.stops || [],
+        status: b.availableSeats === 0 ? "Bus Full" : "Active Service",
+      }));
+      setPlannerResults(mapped);
+      if (mapped.length === 0) {
+        setPlannerError(`No active buses scheduled by admin for "${origin || 'All'} ➔ ${destination || 'All'}".`);
+      }
+    } catch (err) {
+      console.error("Error searching routes:", err);
+      setPlannerError("Failed to search buses. Please check server connection.");
+    } finally {
+      setPlannerLoading(false);
+    }
   };
 
   const fetchMyCards = useCallback(async () => {
@@ -236,42 +249,92 @@ function Dashboard() {
     });
   };
 
-  // Route Schedule Search Handler
-  const handleSearchSchedule = () => {
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+
+  // Real Bus Route Schedule Search Handler
+  const handleSearchSchedule = async () => {
     if (!routeQuery) return;
-    const q = routeQuery.toUpperCase().trim();
+    const q = routeQuery.trim();
+    setScheduleLoading(true);
+    try {
+      const [routesRes, busesRes] = await Promise.all([
+        axios.get("/api/routes"),
+        axios.get("/api/buses")
+      ]);
 
-    const mockRoutesDb = {
-      "K01": {
-        name: "Kochi Bus Stand ➜ Thiruvananthapuram Central",
-        frequency: "Every 30 mins",
-        stops: ["Kochi Bus Stand", "Alappuzha Terminal", "Kollam Central", "Thiruvananthapuram Central"],
-        timetable: ["06:00", "06:30", "07:00", "07:30", "08:00"]
-      },
-      "K02": {
-        name: "Ernakulam (Kaloor) ➜ Kozhikode (Mofussil Stand)",
-        frequency: "Every 45 mins",
-        stops: ["Ernakulam Kaloor", "Thrissur Sakthan", "Palakkad Central", "Kozhikode Mofussil"],
-        timetable: ["05:45", "06:30", "07:15", "08:00", "08:45"]
-      },
-      "K03": {
-        name: "Thiruvananthapuram ➜ Kottayam Express",
-        frequency: "Every 20 mins",
-        stops: ["Thiruvananthapuram Central", "Nedumangad", "Kottayam Central"],
-        timetable: ["06:10", "06:30", "06:50", "07:10", "07:30"]
+      const allRoutes = routesRes.data?.routes || [];
+      const allBuses = busesRes.data?.buses || [];
+
+      // Find matching route or bus
+      const matchedRoute = allRoutes.find(
+        (r) =>
+          r.routeId?.toLowerCase() === q.toLowerCase() ||
+          r.routeName?.toLowerCase().includes(q.toLowerCase()) ||
+          r.fromLocation?.toLowerCase().includes(q.toLowerCase()) ||
+          r.toLocation?.toLowerCase().includes(q.toLowerCase())
+      );
+
+      const matchedBus = allBuses.find(
+        (b) =>
+          b.busNumber?.toLowerCase() === q.toLowerCase() ||
+          b.busName?.toLowerCase().includes(q.toLowerCase()) ||
+          b.fromLocation?.toLowerCase().includes(q.toLowerCase()) ||
+          b.toLocation?.toLowerCase().includes(q.toLowerCase())
+      );
+
+      if (matchedRoute) {
+        const stopsList = Array.isArray(matchedRoute.stops)
+          ? matchedRoute.stops.map((s) => (typeof s === "object" ? s.name || s.stopName : s)).filter(Boolean)
+          : [matchedRoute.fromLocation, matchedRoute.toLocation];
+
+        const associatedBuses = allBuses.filter(
+          (b) =>
+            b.fromLocation?.toLowerCase() === matchedRoute.fromLocation?.toLowerCase() ||
+            b.toLocation?.toLowerCase() === matchedRoute.toLocation?.toLowerCase()
+        );
+
+        const timetable = associatedBuses.length > 0
+          ? associatedBuses.map((b) => b.departureTime)
+          : [matchedRoute.base_start_time || "08:00 AM", "11:30 AM", "02:30 PM", "06:00 PM"];
+
+        setScheduleResult({
+          route: matchedRoute.routeId,
+          name: matchedRoute.routeName,
+          frequency: matchedRoute.frequency || "Every 30 mins",
+          stops: stopsList.length > 0 ? stopsList : [matchedRoute.fromLocation, matchedRoute.toLocation],
+          timetable,
+          associatedBuses,
+        });
+      } else if (matchedBus) {
+        const stopsList = Array.isArray(matchedBus.stops) && matchedBus.stops.length > 0
+          ? matchedBus.stops.map((s) => (typeof s === "object" ? s.name || s.stopName : s)).filter(Boolean)
+          : [matchedBus.fromLocation, matchedBus.toLocation];
+
+        setScheduleResult({
+          route: matchedBus.busNumber,
+          name: `${matchedBus.busName} (${matchedBus.fromLocation} ➔ ${matchedBus.toLocation})`,
+          frequency: matchedBus.duration || "Direct Transit",
+          stops: stopsList,
+          timetable: [matchedBus.departureTime],
+          driverName: matchedBus.driverName,
+          driverPhone: matchedBus.driverPhone,
+          driverLicense: matchedBus.driverLicense,
+          driverVerified: matchedBus.driverVerified,
+        });
+      } else {
+        setScheduleResult({
+          route: q,
+          error: `No route or bus found matching "${q}". Try searching city names or route IDs.`,
+        });
       }
-    };
-
-    if (mockRoutesDb[q]) {
+    } catch (err) {
+      console.error("Error searching schedule:", err);
       setScheduleResult({
         route: q,
-        ...mockRoutesDb[q]
+        error: "Failed to fetch live schedule from server.",
       });
-    } else {
-      setScheduleResult({
-        route: q,
-        error: "Route not found. Try searching K01, K02, or K03."
-      });
+    } finally {
+      setScheduleLoading(false);
     }
   };
 
@@ -389,7 +452,7 @@ function Dashboard() {
               { id: "planner", label: "🗺️ Journey Planner" },
               { id: "nol", label: "🪪 RFID Card Portal" },
               { id: "schedules", label: "⏱️ Bus Timetables" },
-              { id: "intercity", label: "🎫 Express Tickets" },
+              { id: "intercity", label: "🚌 Bus Fleet Directory" },
             ].map((tab) => {
               const isSelected = activeTab === tab.id;
               return (
@@ -446,8 +509,9 @@ function Dashboard() {
                     type="text"
                     className="rta-input-field"
                     value={origin}
+                    list="db-locations-list"
                     onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="e.g. Kochi Bus Stand"
+                    placeholder="e.g. Kochi, Malam, Vyttila..."
                   />
                 </div>
 
@@ -479,10 +543,17 @@ function Dashboard() {
                     type="text"
                     className="rta-input-field"
                     value={destination}
+                    list="db-locations-list"
                     onChange={(e) => setDestination(e.target.value)}
-                    placeholder="e.g. Thiruvananthapuram Central"
+                    placeholder="e.g. Trivandrum, Pala, Erumely..."
                   />
                 </div>
+
+                <datalist id="db-locations-list">
+                  {dbLocations.map((loc, idx) => (
+                    <option key={idx} value={loc} />
+                  ))}
+                </datalist>
 
                 <div className="rta-input-group">
                   <label htmlFor="planner-date" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Travel Date</label>
@@ -527,14 +598,32 @@ function Dashboard() {
                 </button>
               </div>
 
-              {/* Wojhati Results */}
-              {plannerResults && (
+              {/* Planner Results */}
+              {plannerLoading && (
+                <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
+                  <div style={{ width: 36, height: 36, border: "3px solid #6d28d9", borderTopColor: "transparent", borderRadius: "50%", margin: "0 auto 12px", animation: "spin 1s linear infinite" }}></div>
+                  <strong style={{ fontSize: "14px", color: "#1e293b" }}>Searching Live Admin Bus Schedules...</strong>
+                </div>
+              )}
+
+              {plannerError && !plannerLoading && (
+                <div style={{ marginTop: "24px", padding: "16px", borderRadius: "14px", background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", fontSize: "13.5px", fontWeight: "700", textAlign: "center" }}>
+                  ⚠️ {plannerError}
+                </div>
+              )}
+
+              {plannerResults && !plannerLoading && (
                 <div style={{ marginTop: "32px", borderTop: "1px dashed #e2e8f0", paddingTop: "28px" }}>
-                  <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "18px", color: "#1e293b" }}>Recommended Routes &amp; Fares</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    {plannerResults.map((res) => {
-                      const isFull = res.seatsAvailable <= 0;
-                      return (
+                  <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "18px", color: "#1e293b" }}>
+                    Available Bus Schedules ({plannerResults.length})
+                  </h3>
+                  {plannerResults.length === 0 ? (
+                    <div style={{ background: "#f8fafc", padding: "28px", borderRadius: "16px", textAlign: "center", border: "1px dashed #cbd5e1", color: "#64748b" }}>
+                      No buses registered by the admin for this route yet.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                      {plannerResults.map((res) => (
                         <div
                           key={res.id}
                           style={{
@@ -557,12 +646,12 @@ function Dashboard() {
                                 </span>
                               </div>
                               <div style={{ marginTop: "6px", fontSize: "13.5px", color: "#64748b" }}>
-                                {res.source} ➔ {res.destination}
+                                🟢 {res.source} ➔ 🔴 {res.destination}
                               </div>
                             </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px", background: isFull ? "rgba(225, 29, 72, 0.1)" : "rgba(34, 197, 94, 0.12)", color: isFull ? "#dc2626" : "#16a34a", padding: "6px 12px", borderRadius: "999px", fontSize: "12px", fontWeight: "800" }}>
-                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: isFull ? "#dc2626" : "#22c55e" }} />
-                              {isFull ? "Bus Full" : "Seats Available"}
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "rgba(34, 197, 94, 0.12)", color: "#16a34a", padding: "6px 12px", borderRadius: "999px", fontSize: "12px", fontWeight: "800" }}>
+                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#22c55e" }} />
+                              {res.status}
                             </div>
                           </div>
 
@@ -576,29 +665,49 @@ function Dashboard() {
                               <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.arrivalTime}</div>
                             </div>
                             <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Date</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.travelDate}</div>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Duration</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.duration || "Direct"}</div>
                             </div>
                             <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Available Seats</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.seatsAvailable}</div>
+                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Fare</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#6d28d9", marginTop: "3px" }}>₹ {res.fare}</div>
                             </div>
+                          </div>
+
+                          {/* Driver Summary Banner */}
+                          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 14px", borderRadius: "12px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12.5px" }}>
+                              <span>👤 Assigned Driver: <strong style={{ color: "#14532d" }}>{res.driverName || "Not Assigned"}</strong></span>
+                              {res.driverVerified && (
+                                <span style={{ fontSize: "10.5px", background: "#dcfce7", color: "#15803d", padding: "1px 7px", borderRadius: "8px", fontWeight: "800" }}>
+                                  Verified ✅
+                                </span>
+                              )}
+                              {res.driverPhone && res.driverPhone !== "N/A" && (
+                                <span style={{ color: "#059669", fontWeight: "700" }}>📞 {res.driverPhone}</span>
+                              )}
+                            </div>
+                            {res.driverLicense && res.driverLicense !== "N/A" && (
+                              <span style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace" }}>
+                                License: {res.driverLicense}
+                              </span>
+                            )}
                           </div>
 
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #f1f5f9" }}>
                             <div style={{ display: "flex", gap: "10px" }}>
-                              <button onClick={() => navigate("/bus-booking")} style={{ padding: "8px 16px", borderRadius: "10px", background: "#16a34a", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>Book Seat</button>
-                              <button onClick={() => navigate("/bus-booking")} style={{ padding: "8px 16px", borderRadius: "10px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>View Details</button>
+                              <button onClick={() => navigate("/book-bus")} style={{ padding: "8px 18px", borderRadius: "10px", background: "#6d28d9", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>
+                                View Full Timetable &amp; Driver Profile →
+                              </button>
                             </div>
                             <div style={{ textAlign: "right" }}>
-                              <div style={{ fontSize: "18px", fontWeight: "900", color: "#2e1065" }}>₹ {res.fare}</div>
-                              <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "2px" }}>⭐ {res.rating} • {res.distance} • Live GPS</div>
+                              <div style={{ fontSize: "11.5px", color: "#64748b" }}>⭐ {res.rating} • Live Fleet Tracking</div>
                             </div>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -854,7 +963,7 @@ function Dashboard() {
                               </div>
                               <div style={{ textAlign: "right" }}>
                                 <div style={{ fontWeight: "900", fontSize: "16px", color: "#16a34a" }}>
-                                  ₹ {card.balance.toFixed(2)}
+                                  ₹ {Number(card.balance || 0).toFixed(2)}
                                 </div>
                                 <span style={{
                                   fontSize: "10px",
@@ -904,13 +1013,13 @@ function Dashboard() {
                                     {j.tapOutStop ? ` ➔ ${j.tapOutStop.name}` : " (In Transit)"}
                                   </span>
                                   <span style={{ fontWeight: "900", color: "#6d28d9" }}>
-                                    {j.status === "In-Progress" ? "Pending..." : `₹ ${j.fare.toFixed(2)}`}
+                                    {j.status === "In-Progress" ? "Pending..." : `₹ ${Number(j.fare || 0).toFixed(2)}`}
                                   </span>
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: "11px" }}>
                                   <span>{new Date(j.tapInTime).toLocaleString()}</span>
                                   {j.status === "Completed" && (
-                                    <span>{j.distanceKm.toFixed(1)} km</span>
+                                    <span>{Number(j.distanceKm || 0).toFixed(1)} km</span>
                                   )}
                                   {j.status === "Expired" && (
                                     <span style={{ color: "#dc2626", fontWeight: "700" }}>No Tap-Out Penalty</span>
@@ -933,19 +1042,19 @@ function Dashboard() {
           {/* TAB 3: KERALA BUS TIMETABLES */}
           {activeTab === "schedules" && (
             <div className="fade-in-section">
-              <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Bus Timetables &amp; Schedules</h3>
+              <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Bus Timetables &amp; Fleet Schedules</h3>
               <p style={{ color: "#64748b", fontSize: "13.5px", marginBottom: "24px" }}>
-                Search for bus schedules by route code. Try searching <strong>K01</strong>, <strong>K02</strong>, or <strong>K03</strong>.
+                Search for active bus schedules by route name, origin/destination city, or bus registration number.
               </p>
 
               <div style={{ display: "flex", gap: "12px", maxWidth: "600px", margin: "0 auto 32px auto", flexWrap: "wrap" }}>
                 <div className="rta-input-group" style={{ flex: 1, minWidth: "220px" }}>
-                  <label htmlFor="route-search-input" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Enter Route Code</label>
+                  <label htmlFor="route-search-input" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Route / Bus Search</label>
                   <input
                     id="route-search-input"
                     type="text"
                     className="rta-input-field"
-                    placeholder="e.g. K01"
+                    placeholder="e.g. Kochi, Trivandrum, RT-101"
                     value={routeQuery}
                     onChange={(e) => setRouteQuery(e.target.value)}
                   />
@@ -955,7 +1064,7 @@ function Dashboard() {
                   onClick={handleSearchSchedule}
                   style={{ alignSelf: "flex-end", height: "46px", padding: "0 24px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#ffffff", border: "none", fontWeight: "800", cursor: "pointer" }}
                 >
-                  Search Timetable →
+                  {scheduleLoading ? "Searching..." : "Search Timetable →"}
                 </button>
               </div>
 
@@ -969,10 +1078,10 @@ function Dashboard() {
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "28px" }}>
                       <div>
                         <h4 style={{ fontSize: "16px", fontWeight: "900", color: "#1e293b", marginBottom: "4px" }}>
-                          Route {scheduleResult.route} Timetable
+                          {scheduleResult.name}
                         </h4>
                         <p style={{ fontSize: "13.5px", color: "#6d28d9", fontWeight: "800", marginBottom: "18px" }}>
-                          {scheduleResult.name} ({scheduleResult.frequency})
+                          Frequency: {scheduleResult.frequency}
                         </p>
 
                         <div style={{ position: "relative", paddingLeft: "24px" }}>
@@ -981,7 +1090,7 @@ function Dashboard() {
                             <div key={idx} style={{ position: "relative", paddingBottom: "20px" }}>
                               <span style={{ position: "absolute", left: "-23px", top: "5px", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#16a34a", border: "2px solid #FFFFFF" }}></span>
                               <div style={{ fontWeight: "800", fontSize: "14px", color: "#1e293b" }}>{stop}</div>
-                              <div style={{ fontSize: "11px", color: "#64748b" }}>Stop #{1000 + idx}</div>
+                              <div style={{ fontSize: "11px", color: "#64748b" }}>Stop #{idx + 1}</div>
                             </div>
                           ))}
                         </div>
@@ -989,12 +1098,39 @@ function Dashboard() {
 
                       <div>
                         <h4 style={{ fontSize: "15px", fontWeight: "900", color: "#1e293b", marginBottom: "14px" }}>Scheduled Departure Times</h4>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: "10px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: "10px", marginBottom: "20px" }}>
                           {scheduleResult.timetable.map((time, idx) => (
                             <div key={idx} style={{ padding: "10px", backgroundColor: "rgba(109, 40, 217, 0.08)", color: "#2e1065", border: "1px solid rgba(109, 40, 217, 0.2)", borderRadius: "10px", textAlign: "center", fontSize: "13.5px", fontWeight: "800" }}>
-                              {time}
+                              🕒 {time}
                             </div>
                           ))}
+                        </div>
+
+                        {scheduleResult.driverName && (
+                          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "14px", borderRadius: "14px" }}>
+                            <div style={{ fontWeight: "800", color: "#14532d", fontSize: "13px", marginBottom: "4px" }}>
+                              👤 Assigned Driver: {scheduleResult.driverName}
+                            </div>
+                            {scheduleResult.driverPhone && scheduleResult.driverPhone !== "N/A" && (
+                              <div style={{ fontSize: "12px", color: "#059669", fontWeight: "700" }}>
+                                📞 Contact: {scheduleResult.driverPhone}
+                              </div>
+                            )}
+                            {scheduleResult.driverLicense && scheduleResult.driverLicense !== "N/A" && (
+                              <div style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", marginTop: "2px" }}>
+                                License: {scheduleResult.driverLicense}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div style={{ marginTop: "18px" }}>
+                          <button
+                            onClick={() => navigate("/book-bus")}
+                            style={{ width: "100%", padding: "12px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #15803d)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "13.5px", cursor: "pointer" }}
+                          >
+                            Explore Full Fleet Schedules Directory →
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1004,88 +1140,27 @@ function Dashboard() {
             </div>
           )}
 
-          {/* TAB 4: INTERCITY TICKETS */}
+          {/* TAB 4: FLEET SCHEDULES EXPLORER */}
           {activeTab === "intercity" && (
-            <div className="fade-in-section">
-              <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Intercity Express Coach Reservation</h3>
-              <p style={{ color: "#64748b", fontSize: "13.5px", marginBottom: "24px" }}>
-                Reserve express coach tickets connecting Kerala district hubs.
+            <div className="fade-in-section" style={{ textAlign: "center", padding: "20px 0" }}>
+              <div style={{ width: "60px", height: "60px", borderRadius: "18px", background: "rgba(109, 40, 217, 0.1)", color: "#6d28d9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", margin: "0 auto 16px" }}>
+                🚌
+              </div>
+              <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Kerala Express Bus Fleet &amp; Driver Directory</h3>
+              <p style={{ color: "#64748b", fontSize: "14px", maxWidth: "600px", margin: "0 auto 24px" }}>
+                View all buses configured by MoveSmart Admin, check station departure times, view full route stops, and inspect verified driver credentials.
               </p>
-
-              {intercitySuccess ? (
-                <div style={{ border: "1px solid rgba(34, 197, 94, 0.3)", backgroundColor: "rgba(34, 197, 94, 0.08)", textAlign: "center", padding: "36px 20px", maxWidth: "600px", margin: "0 auto", borderRadius: "20px" }}>
-                  <div style={{ fontSize: "40px", marginBottom: "10px" }}>✓</div>
-                  <h4 style={{ color: "#15803d", fontWeight: "900", fontSize: "18px", marginBottom: "8px" }}>Reservation Confirmed!</h4>
-                  <p style={{ fontSize: "14px", color: "#334155", marginBottom: "12px" }}>
-                    Your ticket(s) from <strong>{intercityFrom}</strong> to <strong>{intercityTo}</strong> have been reserved.
-                  </p>
-                  <p style={{ fontSize: "12px", color: "#64748b" }}>
-                    Confirmation code registered to your account. View tickets in your Profile wallet.
-                  </p>
-                </div>
-              ) : (
-                <form onSubmit={handleIntercitySubmit} style={{ maxWidth: "600px", margin: "0 auto" }}>
-                  <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                    <label htmlFor="intercity-from-select" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>From (Origin District Hub)</label>
-                    <select
-                      id="intercity-from-select"
-                      className="rta-input-field"
-                      value={intercityFrom}
-                      onChange={(e) => setIntercityFrom(e.target.value)}
-                    >
-                      <option value="Ernakulam (Kaloor Bus Stand)">Ernakulam (Kaloor Bus Stand)</option>
-                      <option value="Thiruvananthapuram (Central Station)">Thiruvananthapuram (Central Station)</option>
-                      <option value="Kozhikode (Private Bus Stand)">Kozhikode (Private Bus Stand)</option>
-                      <option value="Thrissur (Sakthan Stand)">Thrissur (Sakthan Stand)</option>
-                      <option value="Kottayam (Central Terminal)">Kottayam (Central Terminal)</option>
-                    </select>
-                  </div>
-
-                  <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                    <label htmlFor="intercity-to-select" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>To (Destination District Hub)</label>
-                    <select
-                      id="intercity-to-select"
-                      className="rta-input-field"
-                      value={intercityTo}
-                      onChange={(e) => setIntercityTo(e.target.value)}
-                    >
-                      <option value="Thiruvananthapuram (Central Bus Station)">Thiruvananthapuram (Central Bus Station)</option>
-                      <option value="Kozhikode (Mofussil Bus Stand)">Kozhikode (Mofussil Bus Stand)</option>
-                      <option value="Thrissur (Central Station)">Thrissur (Central Station)</option>
-                      <option value="Kollam (Central Bus Station)">Kollam (Central Bus Station)</option>
-                      <option value="Kannur (Central Bus Stand)">Kannur (Central Bus Stand)</option>
-                      <option value="Palakkad (Central Terminal)">Palakkad (Central Terminal)</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "20px" }}>
-                    <div className="rta-input-group">
-                      <label htmlFor="intercity-date" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Departure Date</label>
-                      <input id="intercity-date" type="date" className="rta-input-field" defaultValue={planDate} />
-                    </div>
-                    <div className="rta-input-group">
-                      <label htmlFor="intercity-seats-select" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Number of Seats</label>
-                      <select
-                        id="intercity-seats-select"
-                        className="rta-input-field"
-                        value={intercitySeats}
-                        onChange={(e) => setIntercitySeats(e.target.value)}
-                      >
-                        <option value="1">1 Passenger</option>
-                        <option value="2">2 Passengers</option>
-                        <option value="3">3 Passengers</option>
-                        <option value="4">4 Passengers</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <button type="submit" style={{ width: "100%", height: "48px", borderRadius: "14px", background: "linear-gradient(135deg, #16a34a, #15803d)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "14px", cursor: "pointer" }}>
-                    Confirm Reservation →
-                  </button>
-                </form>
-              )}
+              <button
+                type="button"
+                onClick={() => navigate("/book-bus")}
+                style={{ padding: "12px 28px", borderRadius: "14px", background: "linear-gradient(135deg, #2e1065, #6d28d9)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "14px", cursor: "pointer", boxShadow: "0 8px 20px rgba(46, 16, 101, 0.25)" }}
+              >
+                Open Bus Schedules &amp; Driver Directory →
+              </button>
             </div>
           )}
+
+
         </div>
 
         {/* Kerala Bus Grid Services Showcase */}

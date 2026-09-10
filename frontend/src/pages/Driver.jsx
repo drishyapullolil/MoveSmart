@@ -109,6 +109,7 @@ function Driver() {
       const script = document.createElement("script");
       script.id = "google-translate-script";
       script.type = "text/javascript";
+      script.async = true;
       script.src = "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit";
       document.body.appendChild(script);
     } else if (window.google && window.google.translate && window.googleTranslateElementInit) {
@@ -254,6 +255,76 @@ function Driver() {
   const [issueNotes, setIssueNotes] = useState("");
   const [toastMessage, setToastMessage] = useState("");
 
+  // ── Driver Lost & Found States ──────────────────────────────
+  const DRV_LF_CATEGORIES = [
+    "Mobile Phone", "Wallet/Purse", "ID Card", "Bag",
+    "Keys", "Documents", "Electronics", "Clothing", "Other",
+  ];
+  const [drvLfSubTab, setDrvLfSubTab] = useState("reportFound"); // reportFound | myFound
+  const [drvLfLoading, setDrvLfLoading] = useState(false);
+  const [drvLfToast, setDrvLfToast] = useState("");
+  const drvLfToastTimerRef = useState(null);
+
+  const showDrvLfToast = (msg) => {
+    setDrvLfToast(msg);
+    clearTimeout(drvLfToastTimerRef[0]);
+    drvLfToastTimerRef[0] = setTimeout(() => setDrvLfToast(""), 4000);
+  };
+
+  const [drvFoundForm, setDrvFoundForm] = useState({
+    itemName: "",
+    category: "Mobile Phone",
+    description: "",
+    dateFound: new Date().toISOString().split("T")[0],
+    timeFound: "",
+    busNumber: "",
+    locationFound: "",
+    contactInfo: "",
+  });
+  const [drvFoundImage, setDrvFoundImage] = useState("");
+  const [drvFoundSuccess, setDrvFoundSuccess] = useState("");
+  const [drvMyFoundItems, setDrvMyFoundItems] = useState([]);
+
+  const fetchDrvMyFound = async () => {
+    try {
+      const token = getStoredToken();
+      const res = await axios.get("/api/lostfound/my-found", { headers: { Authorization: `Bearer ${token}` } });
+      setDrvMyFoundItems(res.data.items || []);
+    } catch (e) { console.warn("fetchDrvMyFound:", e.message); }
+  };
+
+  const handleDrvImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { showDrvLfToast("Image must be under 3 MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => setDrvFoundImage(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleDrvSubmitFound = async (e) => {
+    e.preventDefault();
+    if (!drvFoundForm.itemName || !drvFoundForm.category || !drvFoundForm.dateFound || !drvFoundForm.contactInfo) {
+      showDrvLfToast("Please fill all required fields."); return;
+    }
+    setDrvLfLoading(true);
+    try {
+      const token = getStoredToken();
+      const payload = {
+        ...drvFoundForm,
+        busNumber: drvFoundForm.busNumber || assignedBus?.busNumber || user?.busNumber || "",
+        imageBase64: drvFoundImage,
+      };
+      const res = await axios.post("/api/lostfound/found", payload, { headers: { Authorization: `Bearer ${token}` } });
+      setDrvFoundSuccess(res.data.reportId || "Submitted!");
+      setDrvFoundForm(f => ({ ...f, itemName: "", description: "", locationFound: "" }));
+      setDrvFoundImage("");
+    } catch (err) {
+      showDrvLfToast(err.response?.data?.message || "Submission failed. Try again.");
+    } finally { setDrvLfLoading(false); }
+  };
+  // ── End Driver Lost & Found States ───────────────────────────
+
   // In-App Reusable Modal Dialog State
   const [dialogState, setDialogState] = useState({
     isOpen: false,
@@ -328,6 +399,7 @@ function Driver() {
   });
 
   const assignedBus = filteredBuses[activeTripIndex] || filteredBuses[0] || null;
+  const drvLfBusNumber = assignedBus?.busNumber || user?.busNumber || "";
   const totalCapacity = assignedBus?.totalSeats || user?.assignedBus?.totalSeats || 32;
   const dailyEarnings = paymentsLog.reduce((acc, p) => acc + (parseFloat(p.numericAmount) || 0), 0) + (passengersOnboard * (assignedBus?.price || 35));
 
@@ -2947,6 +3019,9 @@ function Driver() {
               <button className={`driver-nav-tab touch-target ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
                 Collections
               </button>
+              <button className={`driver-nav-tab touch-target ${activeTab === "lostfound" ? "active" : ""}`} onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}>
+                📦 Lost &amp; Found
+              </button>
             </>
           )}
         </div>
@@ -3853,6 +3928,125 @@ function Driver() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 8: DRIVER LOST & FOUND */}
+        {activeTab === "lostfound" && (
+          <div className="card-shadow">
+            {drvLfToast && (
+              <div style={{ background: "#2e1065", color: "#fff", padding: "12px 18px", borderRadius: "12px", marginBottom: "16px", fontSize: "13.5px", fontWeight: "700" }}>{drvLfToast}</div>
+            )}
+            <h3 style={{ ...styles.cardTitle, marginBottom: "4px" }}>📦 Lost &amp; Found — Report Found Item</h3>
+            <p style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginBottom: "20px" }}>Found something on your bus? Report it here so passengers can claim it through MoveSmart.</p>
+
+            {/* Sub-tabs */}
+            <div style={{ display: "flex", gap: "10px", marginBottom: "22px" }}>
+              {[{id:"reportFound",label:"📦 Report Found Item"},{id:"myFound",label:"📁 My Found Reports"}].map(st => (
+                <button key={st.id} type="button" onClick={() => { setDrvLfSubTab(st.id); if (st.id === "myFound") fetchDrvMyFound(); }}
+                  style={{ padding: "9px 18px", borderRadius: "12px", border: `2px solid ${drvLfSubTab === st.id ? "#7c3aed" : "#e2e8f0"}`, background: drvLfSubTab === st.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : "#f8fafc", color: drvLfSubTab === st.id ? "#fff" : "#475569", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
+                  {st.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Report Found Form */}
+            {drvLfSubTab === "reportFound" && (
+              drvFoundSuccess ? (
+                <div style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid #93c5fd", borderRadius: "20px", padding: "32px", textAlign: "center", maxWidth: "480px" }}>
+                  <div style={{ fontSize: "44px", marginBottom: "10px" }}>📦</div>
+                  <h4 style={{ fontSize: "18px", fontWeight: "900", color: "#1d4ed8", marginBottom: "6px" }}>Found Report Submitted!</h4>
+                  <p style={{ fontSize: "13px", color: "#1e40af", marginBottom: "6px" }}>Report ID:</p>
+                  <div style={{ background: "#fff", border: "1px solid #93c5fd", borderRadius: "10px", padding: "12px 18px", fontSize: "18px", fontWeight: "900", color: "#1d4ed8", letterSpacing: "1px", marginBottom: "16px" }}>{drvFoundSuccess}</div>
+                  <p style={{ fontSize: "12.5px", color: "#3b5998", marginBottom: "16px" }}>Admin will publish this so the passenger can claim it.</p>
+                  <button type="button" onClick={() => { setDrvFoundSuccess(""); setDrvLfSubTab("myFound"); fetchDrvMyFound(); }}
+                    style={{ padding: "10px 24px", borderRadius: "10px", background: "#1d4ed8", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>View My Reports →</button>
+                </div>
+              ) : (
+                <form onSubmit={handleDrvSubmitFound} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", maxWidth: "860px" }}>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <label style={styles.formLabel}>Item Name *</label>
+                    <input style={styles.formInput} type="text" placeholder="e.g. Black Samsung phone" required value={drvFoundForm.itemName} onChange={e => setDrvFoundForm(f => ({ ...f, itemName: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Category *</label>
+                    <select style={styles.formInput} value={drvFoundForm.category} onChange={e => setDrvFoundForm(f => ({ ...f, category: e.target.value }))}>
+                      {DRV_LF_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Date Found *</label>
+                    <input style={styles.formInput} type="date" required value={drvFoundForm.dateFound} onChange={e => setDrvFoundForm(f => ({ ...f, dateFound: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Approx. Time Found</label>
+                    <input style={styles.formInput} type="time" value={drvFoundForm.timeFound} onChange={e => setDrvFoundForm(f => ({ ...f, timeFound: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Bus Number {drvLfBusNumber && <span style={{ color: "#16a34a", fontSize: "11px" }}>(auto-filled)</span>}</label>
+                    <input style={styles.formInput} type="text" placeholder="e.g. KL-07-MS-1008" value={drvFoundForm.busNumber || drvLfBusNumber} onChange={e => setDrvFoundForm(f => ({ ...f, busNumber: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Location Found</label>
+                    <input style={styles.formInput} type="text" placeholder="e.g. Seat row 5, back compartment" value={drvFoundForm.locationFound} onChange={e => setDrvFoundForm(f => ({ ...f, locationFound: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={styles.formLabel}>Your Contact Info *</label>
+                    <input style={styles.formInput} type="text" placeholder="Phone or email" required value={drvFoundForm.contactInfo} onChange={e => setDrvFoundForm(f => ({ ...f, contactInfo: e.target.value }))} />
+                  </div>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <label style={styles.formLabel}>Description</label>
+                    <textarea style={{ ...styles.formInput, resize: "vertical" }} rows={3} placeholder="Colour, brand, condition, contents..." value={drvFoundForm.description} onChange={e => setDrvFoundForm(f => ({ ...f, description: e.target.value }))} />
+                  </div>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <label style={styles.formLabel}>Item Photo (optional, max 3 MB)</label>
+                    <input style={{ ...styles.formInput, padding: "10px" }} type="file" accept="image/*" onChange={handleDrvImageUpload} />
+                    {drvFoundImage && <img src={drvFoundImage} alt="preview" style={{ marginTop: "10px", maxHeight: "110px", borderRadius: "10px", objectFit: "cover" }} />}
+                  </div>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <button type="submit" disabled={drvLfLoading} className="btn-purple-gradient touch-target"
+                      style={{ padding: "13px 28px", fontSize: "14px", opacity: drvLfLoading ? 0.7 : 1, cursor: drvLfLoading ? "not-allowed" : "pointer" }}>
+                      {drvLfLoading ? "Submitting…" : "📦 Submit Found Report →"}
+                    </button>
+                  </div>
+                </form>
+              )
+            )}
+
+            {/* My Found Reports */}
+            {drvLfSubTab === "myFound" && (
+              drvMyFoundItems.length === 0
+                ? <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", fontSize: "14px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0" }}>No found item reports yet. Use the &quot;Report Found Item&quot; tab to log one.</div>
+                : <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["Report ID", "Item", "Category", "Date Found", "Bus No.", "Status"].map(h => (
+                            <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: "800", color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {drvMyFoundItems.map((item, i) => (
+                          <tr key={item._id} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                            <td style={{ padding: "12px 14px", fontWeight: "700", color: "#1d4ed8", fontFamily: "monospace" }}>{item.reportId}</td>
+                            <td style={{ padding: "12px 14px", fontWeight: "700", color: "#0f172a" }}>{item.itemName}</td>
+                            <td style={{ padding: "12px 14px", color: "#475569" }}>{item.category}</td>
+                            <td style={{ padding: "12px 14px", color: "#475569" }}>{item.dateFound}</td>
+                            <td style={{ padding: "12px 14px", color: "#475569" }}>{item.busNumber || "—"}</td>
+                            <td style={{ padding: "12px 14px" }}>
+                              <span style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "11.5px", fontWeight: "800",
+                                background: item.status === "Unclaimed" ? "rgba(59,130,246,0.12)" : item.status === "Claimed" ? "rgba(34,197,94,0.15)" : "rgba(167,139,250,0.15)",
+                                color: item.status === "Unclaimed" ? "#1d4ed8" : item.status === "Claimed" ? "#15803d" : "#6d28d9" }}>
+                                {item.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
             )}
           </div>
         )}

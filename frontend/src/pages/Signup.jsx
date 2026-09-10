@@ -17,6 +17,9 @@ function Signup() {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
+  // Real-time email validation status: "idle" | "checking" | "available" | "taken" | "invalid"
+  const [emailStatus, setEmailStatus] = useState("idle");
+
   // UI status states
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -39,6 +42,63 @@ function Signup() {
     };
   }, [resendTimer]);
 
+  // Real-time on-the-fly email availability checker (Fast & Instant)
+  useEffect(() => {
+    const trimmed = email.trim();
+
+    if (!trimmed) {
+      setEmailStatus("idle");
+      setEmailError("");
+      return;
+    }
+
+    const formatErr = validateEmailFormat(trimmed);
+    if (formatErr) {
+      setEmailStatus("invalid");
+      setEmailError(formatErr);
+      return;
+    }
+
+    setEmailStatus("checking");
+    setEmailError("");
+
+    const controller = new AbortController();
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        const response = await axios.get(
+          `/api/auth/check-email?email=${encodeURIComponent(trimmed.toLowerCase())}`,
+          { signal: controller.signal }
+        );
+        if (response.data.exists) {
+          setEmailStatus("taken");
+          setEmailError("An account with this email already exists. Please login.");
+        } else {
+          setEmailStatus("available");
+          setEmailError("");
+        }
+      } catch (err) {
+        if (axios.isCancel(err) || err.name === "CanceledError" || err.name === "AbortError") {
+          return; // Request was aborted by newer keystroke, ignore
+        }
+        if (err.response?.data?.exists) {
+          setEmailStatus("taken");
+          setEmailError("An account with this email already exists. Please login.");
+        } else if (err.response?.data?.message && !err.response?.data?.message?.toLowerCase().includes("server")) {
+          setEmailStatus("invalid");
+          setEmailError(err.response.data.message);
+        } else {
+          setEmailStatus("idle");
+        }
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [email]);
+
   // ===== Validators =====
 
   const validateName = (val) => {
@@ -52,12 +112,12 @@ function Signup() {
   };
 
   const validateEmailFormat = (val) => {
-    const trimmed = val.trim();
+    const trimmed = (val || "").trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
     if (!trimmed) return "Email is required";
     if (/\s/.test(val)) return "Email cannot contain spaces";
-    if (!emailRegex.test(trimmed)) return "Please enter a valid email address";
-    if (/\.\.@|@\.|\.@/.test(trimmed)) return "Please enter a valid email address";
+    if (!emailRegex.test(trimmed)) return "Please enter a valid email address.";
+    if (/\.\.@|@\.|\.@/.test(trimmed)) return "Please enter a valid email address.";
     return "";
   };
 
@@ -102,7 +162,6 @@ function Signup() {
   const handleEmailChange = (e) => {
     const val = e.target.value;
     setEmail(val);
-    setEmailError(validateEmailFormat(val));
     if (otpSent) {
       setOtpSent(false);
       setOtpVerified(false);
@@ -138,6 +197,16 @@ function Signup() {
       return;
     }
 
+    if (emailStatus === "taken") {
+      setEmailError("An account with this email already exists. Please login.");
+      return;
+    }
+
+    if (emailStatus === "checking") {
+      setAlertInfo({ message: "Checking email availability, please wait a moment...", type: "error" });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -157,6 +226,10 @@ function Signup() {
         ? "Email delivery is not configured. Set a valid SMTP app password in the backend environment and restart the server."
         : errMsg;
       setAlertInfo({ message: detailedMessage, type: "error" });
+      if (errMsg.toLowerCase().includes("already exists") || errMsg.toLowerCase().includes("already registered")) {
+        setEmailStatus("taken");
+        setEmailError("An account with this email already exists. Please login.");
+      }
     } finally {
       setLoading(false);
     }
@@ -410,13 +483,55 @@ function Signup() {
                 placeholder="name@example.com"
                 autoComplete="email"
                 onChange={handleEmailChange}
-                className={emailError ? "error-state" : ""}
+                className={
+                  emailError
+                    ? "error-state"
+                    : emailStatus === "available"
+                      ? "valid-state"
+                      : ""
+                }
+                style={{ paddingRight: "42px" }}
                 disabled={loading}
                 aria-invalid={!!emailError}
-                aria-describedby={emailError ? "email-error" : undefined}
+                aria-describedby={
+                  emailError
+                    ? "email-error"
+                    : emailStatus === "available"
+                      ? "email-success"
+                      : undefined
+                }
                 required
               />
+
+              {/* Real-time status indicator on right side */}
+              <div className="input-status-indicator">
+                {emailStatus === "checking" && (
+                  <span className="spinner-inline" title="Checking email availability..."></span>
+                )}
+                {emailStatus === "available" && (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+                {emailStatus === "taken" && (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#e11d48" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="15" y1="9" x2="9" y2="15" />
+                    <line x1="9" y1="9" x2="15" y2="15" />
+                  </svg>
+                )}
+              </div>
             </div>
+
+            {/* Email Checking message */}
+            {emailStatus === "checking" && (
+              <div className="checking-msg" id="email-checking">
+                <span className="spinner-mini"></span>
+                <span>Checking email...</span>
+              </div>
+            )}
+
+            {/* Email Error message */}
             {emailError && (
               <div className="error-msg" id="email-error">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -424,10 +539,41 @@ function Signup() {
                   <line x1="12" y1="8" x2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
-                {emailError}
+                <span>{emailError}</span>
+                {emailStatus === "taken" && (
+                  <button
+                    type="button"
+                    onClick={() => navigate("/login")}
+                    style={{
+                      marginLeft: "6px",
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      color: "var(--accent-purple, #8b5cf6)",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                      fontSize: "12px",
+                      display: "inline"
+                    }}
+                  >
+                    Login
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Email Available Success message */}
+            {!emailError && emailStatus === "available" && (
+              <div className="success-msg" id="email-success">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>Email is available</span>
               </div>
             )}
           </div>
+
 
           {/* OTP input */}
           {otpSent && (
@@ -565,7 +711,23 @@ function Signup() {
           </div>
 
           {/* Submit button */}
-          <button type="submit" style={{ marginTop: "24px" }} disabled={loading}>
+          <button
+            type="submit"
+            style={{ marginTop: "24px" }}
+            disabled={
+              loading ||
+              (!otpSent && (
+                emailStatus === "checking" ||
+                emailStatus === "taken" ||
+                !!emailError ||
+                !email.trim() ||
+                !!nameError ||
+                !name.trim() ||
+                !!passwordError ||
+                !password
+              ))
+            }
+          >
             {loading ? (
               <>
                 <div className="spinner"></div>
@@ -612,10 +774,10 @@ function Signup() {
           }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
-            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.15C3.26 21.3 7.35 24 12 24z"/>
-            <path fill="#FBBC05" d="M5.28 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.99-3.15z"/>
-            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.7 1.29 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.72-4.96z"/>
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.15C3.26 21.3 7.35 24 12 24z" />
+            <path fill="#FBBC05" d="M5.28 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.99-3.15z" />
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.7 1.29 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.72-4.96z" />
           </svg>
           Sign Up with Google
         </button>

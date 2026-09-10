@@ -36,18 +36,22 @@ function Login() {
 
   useEffect(() => {
     const checkRedirect = async () => {
-      const redirectRes = await checkFirebaseRedirectResult();
-      if (redirectRes.success && redirectRes.user) {
-        await processGoogleUser(redirectRes.user);
-        return;
+      try {
+        const redirectRes = await checkFirebaseRedirectResult();
+        if (redirectRes?.success && redirectRes?.user) {
+          await processGoogleUser(redirectRes.user);
+          return;
+        }
+      } catch (err) {
+        console.warn("Firebase redirect check notice:", err);
       }
 
       const savedUser = getStoredUser();
       const savedToken = getStoredToken();
-      if (savedUser || savedToken) {
-        const role = savedUser?.role?.toLowerCase();
+      if (savedUser && savedToken && savedUser.email) {
+        const role = (savedUser?.role || "").toLowerCase().trim();
         const targetPath = role === "admin" ? "/admin" : role === "driver" ? "/dashboard/driver" : "/dashboard";
-        navigate(targetPath);
+        navigate(targetPath, { replace: true });
       }
     };
     checkRedirect();

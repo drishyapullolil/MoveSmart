@@ -146,14 +146,10 @@ router.get("/admin/drivers", async (req, res) => {
       }).select("-password").sort({ createdAt: -1 });
     }
 
-    if (!drivers || drivers.length === 0) {
-      return res.json({ success: true, count: DEFAULT_FALLBACK_DRIVERS.length, drivers: DEFAULT_FALLBACK_DRIVERS });
-    }
-
-    res.json({ success: true, count: drivers.length, drivers });
+    res.json({ success: true, count: drivers.length, drivers: drivers || [] });
   } catch (error) {
     console.error("Error fetching drivers for admin verification:", error);
-    res.json({ success: true, count: DEFAULT_FALLBACK_DRIVERS.length, drivers: DEFAULT_FALLBACK_DRIVERS });
+    res.status(500).json({ success: false, message: error.message, drivers: [] });
   }
 });
 

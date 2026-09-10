@@ -12,6 +12,7 @@ import DriverNotifications from "./pages/DriverNotifications";
 import DriverApply from "./pages/DriverApply";
 import BusBooking from "./pages/BusBooking";
 import Wallet from "./pages/Wallet";
+import LostFound from "./pages/LostFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App(){
@@ -24,6 +25,8 @@ function App(){
         
         {/* Passenger / User Routes */}
         <Route path="/dashboard" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><Dashboard /></ProtectedRoute>} />
+        <Route path="/lost-found" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><LostFound /></ProtectedRoute>} />
+        <Route path="/dashboard/lost-found" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><LostFound /></ProtectedRoute>} />
         <Route path="/dashboard/card-application" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><CardApplication /></ProtectedRoute>} />
         <Route path="/apply-card" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><CardApplication /></ProtectedRoute>} />
         <Route path="/card-application" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><CardApplication /></ProtectedRoute>} />
@@ -35,6 +38,7 @@ function App(){
         {/* Driver Only Routes */}
         <Route path="/dashboard/driver" element={<ProtectedRoute allowedRoles={["driver"]}><Driver /></ProtectedRoute>} />
         <Route path="/driver" element={<ProtectedRoute allowedRoles={["driver"]}><Driver /></ProtectedRoute>} />
+        <Route path="/driver/lost-found" element={<ProtectedRoute allowedRoles={["driver"]}><Driver defaultTab="lostfound" /></ProtectedRoute>} />
         <Route path="/driver/notifications" element={<ProtectedRoute allowedRoles={["driver"]}><DriverNotifications /></ProtectedRoute>} />
         <Route path="/dashboard/driver/notifications" element={<ProtectedRoute allowedRoles={["driver"]}><DriverNotifications /></ProtectedRoute>} />
 
@@ -42,6 +46,7 @@ function App(){
         <Route path="/admin" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="overview" /></ProtectedRoute>} />
         <Route path="/admin/bus-routes" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
         <Route path="/admin/add-bus-route" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
+        <Route path="/admin/lost-found" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="lostFound" /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   );

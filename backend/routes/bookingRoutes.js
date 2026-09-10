@@ -7,264 +7,18 @@ const Route = require("../models/Route");
 const Schedule = require("../models/Schedule");
 const User = require("../models/User");
 
-// Initial Seed Data for testing
-const defaultBuses = [
-  {
-    busNumber: "KL-07-MS-1008",
-    busName: "MoveSmart Greenline Express",
-    busType: "AC Seater / Sleeper (2+2)",
-    operator: "MoveSmart Fleet Ops",
-    fromLocation: "Kochi",
-    toLocation: "Trivandrum",
-    departureTime: "06:30 AM",
-    arrivalTime: "11:15 AM",
-    duration: "4h 45m",
-    totalSeats: 32,
-    availableSeats: 26,
-    price: 450,
-    rating: 4.9,
-    amenities: ["Wi-Fi", "Charging Port", "Live Tracking", "Water Bottle", "AC"],
-    bookedSeats: ["1A", "1B", "3C", "5A", "7B", "8D"],
-    driverName: "Not Assigned",
-    driverPhone: "N/A",
-    driverLicense: "N/A",
-    driverExperience: 0,
-    driverVerified: false,
-    stops: ["Kochi", "Vyttila", "Tripunithura", "Cherthala", "Alappuzha", "Ambalapuzha", "Haripad", "Kayamkulam", "Karunagappally", "Kollam", "Attingal", "Kazhakkoottam", "Trivandrum"],
-  },
-  {
-    busNumber: "KL-14-MS-2045",
-    busName: "SwiftConnect Multi-Axle Volvo",
-    busType: "AC Luxury Seater (2+2)",
-    operator: "MoveSmart Express Connect",
-    fromLocation: "Kochi",
-    toLocation: "Trivandrum",
-    departureTime: "08:15 AM",
-    arrivalTime: "01:00 PM",
-    duration: "4h 45m",
-    totalSeats: 36,
-    availableSeats: 31,
-    price: 520,
-    rating: 4.8,
-    amenities: ["Wi-Fi", "Reclining Seats", "Charging Port", "Reading Light"],
-    bookedSeats: ["2A", "2B", "4C", "6D", "7A"],
-    driverName: "Anil Kumar",
-    driverPhone: "+91 98472 55667",
-    driverLicense: "KL-14-2017-44321",
-    driverExperience: 10,
-    driverVerified: true,
-    stops: ["Kochi", "Vyttila", "Cherthala", "Alappuzha", "Haripad", "Kayamkulam", "Kollam", "Attingal", "Kazhakkoottam", "Trivandrum"],
-  },
-  {
-    busNumber: "KL-11-MS-3310",
-    busName: "Malabar Super Fast Express",
-    busType: "Non-AC Deluxe Seater (2+2)",
-    operator: "MoveSmart Regional Ops",
-    fromLocation: "Kochi",
-    toLocation: "Calicut",
-    departureTime: "07:00 AM",
-    arrivalTime: "11:30 AM",
-    duration: "4h 30m",
-    totalSeats: 36,
-    availableSeats: 30,
-    price: 320,
-    rating: 4.6,
-    amenities: ["Charging Port", "Live Tracking", "Emergency Exit"],
-    bookedSeats: ["1C", "3A", "3B", "5D", "8A", "8B"],
-    driverName: "Ramesh Pillai",
-    driverPhone: "+91 98473 88990",
-    driverLicense: "KL-11-2016-11223",
-    driverExperience: 12,
-    driverVerified: true,
-    stops: ["Kochi", "Aluva", "Angamaly", "Chalakkudy", "Thrissur", "Wadakkanchery", "Kuttippuram", "Valanchery", "Ramanattukara", "Calicut"],
-  },
-  {
-    busNumber: "KL-01-MS-4099",
-    busName: "Trivandrum Night Rider Sleeper",
-    busType: "AC Sleeper (2+1)",
-    operator: "MoveSmart Premium Transit",
-    fromLocation: "Trivandrum",
-    toLocation: "Kochi",
-    departureTime: "09:30 PM",
-    arrivalTime: "02:15 AM",
-    duration: "4h 45m",
-    totalSeats: 30,
-    availableSeats: 25,
-    price: 680,
-    rating: 4.9,
-    amenities: ["Blanket & Pillow", "Wi-Fi", "Charging Port", "Live Tracking"],
-    bookedSeats: ["1A", "2A", "3B", "4C", "5C"],
-    driverName: "Vijayan Nair",
-    driverPhone: "+91 98474 33445",
-    driverLicense: "KL-01-2015-77889",
-    driverExperience: 15,
-    driverVerified: true,
-    stops: ["Trivandrum", "Kazhakkoottam", "Attingal", "Kollam", "Karunagappally", "Kayamkulam", "Haripad", "Ambalapuzha", "Alappuzha", "Cherthala", "Vyttila", "Kochi"],
-  },
-  {
-    busNumber: "KL-08-MS-5521",
-    busName: "Highrange Deluxe Air Bus",
-    busType: "AC Pushback Seater (2+2)",
-    operator: "Highrange Travel Lines",
-    fromLocation: "Kochi",
-    toLocation: "Calicut",
-    departureTime: "02:30 PM",
-    arrivalTime: "07:15 PM",
-    duration: "4h 45m",
-    totalSeats: 32,
-    availableSeats: 28,
-    price: 490,
-    rating: 4.7,
-    amenities: ["AC", "Charging Port", "Live Tracking", "Music System"],
-    bookedSeats: ["2C", "2D", "6A", "6B"],
-    driverName: "Mohan Varghese",
-    driverPhone: "+91 98475 66778",
-    driverLicense: "KL-08-2020-55667",
-    driverExperience: 6,
-    driverVerified: true,
-    stops: ["Kochi", "Aluva", "Angamaly", "Thrissur", "Guruvayur", "Kuttippuram", "Calicut"],
-  },
-  {
-    busNumber: "KL-05-MS-7712",
-    busName: "Kottayam Royal City Cruiser",
-    busType: "AC Executive Seater (2+2)",
-    operator: "MoveSmart City Lines",
-    fromLocation: "Kochi",
-    toLocation: "Erattupetta",
-    departureTime: "10:00 AM",
-    arrivalTime: "01:15 PM",
-    duration: "3h 15m",
-    totalSeats: 32,
-    availableSeats: 29,
-    price: 280,
-    rating: 4.8,
-    amenities: ["AC", "Charging Port", "Pushback Seats"],
-    bookedSeats: ["1A", "4D", "5C"],
-    driverName: "Joseph Thomas",
-    driverPhone: "+91 98476 99001",
-    driverLicense: "KL-05-2018-33445",
-    driverExperience: 9,
-    driverVerified: true,
-    stops: ["Kochi", "Tripunithura", "Mulanthuruthy", "Piravom", "Ettumanoor", "Kottayam", "Manarcadu", "Malam", "Anichuvadu", "Kidangoor", "Pala", "Erattupetta"],
-  },
-  {
-    busNumber: "KL-05-MS-8820",
-    busName: "Highland Shuttle Express",
-    busType: "Non-AC Deluxe Seater (2+2)",
-    operator: "MoveSmart Regional Ops",
-    fromLocation: "Kottayam",
-    toLocation: "Erattupetta",
-    departureTime: "11:30 AM",
-    arrivalTime: "01:00 PM",
-    duration: "1h 30m",
-    totalSeats: 36,
-    availableSeats: 32,
-    price: 120,
-    rating: 4.7,
-    amenities: ["Live Tracking", "Emergency Exit"],
-    bookedSeats: ["2A", "3B"],
-    driverName: "Mathew Jacob",
-    driverPhone: "+91 98477 11223",
-    driverLicense: "KL-05-2016-99887",
-    driverExperience: 11,
-    driverVerified: true,
-    stops: ["Kottayam", "Manarcadu", "Malam", "Anichuvadu", "Vengotta", "Kidangoor", "Pala", "Bharananganam", "Plassanal", "Erattupetta"],
-  },
-  {
-    busNumber: "KL-09-MS-6100",
-    busName: "Palghat Rider Super Fast",
-    busType: "AC Seater (2+2)",
-    operator: "MoveSmart Transit Lines",
-    fromLocation: "Kochi",
-    toLocation: "Palakkad",
-    departureTime: "09:00 AM",
-    arrivalTime: "01:30 PM",
-    duration: "4h 30m",
-    totalSeats: 36,
-    availableSeats: 30,
-    price: 380,
-    rating: 4.8,
-    amenities: ["AC", "Charging Port", "Live Tracking", "Wi-Fi"],
-    bookedSeats: ["3A", "4B"],
-    driverName: "Unnikrishnan P",
-    driverPhone: "+91 98478 44556",
-    driverLicense: "KL-09-2019-12345",
-    driverExperience: 10,
-    driverVerified: true,
-    stops: ["Kochi", "Aluva", "Angamaly", "Chalakkudy", "Thrissur", "Vadakkencherry", "Alathur", "Palakkad"],
-  },
-  {
-    busNumber: "KL-13-MS-9011",
-    busName: "North Malabar Volvo Line",
-    busType: "AC Multi-Axle Sleeper (2+1)",
-    operator: "MoveSmart Premium Transit",
-    fromLocation: "Kochi",
-    toLocation: "Kannur",
-    departureTime: "10:15 PM",
-    arrivalTime: "05:00 AM",
-    duration: "6h 45m",
-    totalSeats: 30,
-    availableSeats: 26,
-    price: 750,
-    rating: 4.9,
-    amenities: ["Blanket & Pillow", "Wi-Fi", "Charging Port", "Live Tracking", "AC"],
-    bookedSeats: ["1B", "2C", "5A"],
-    driverName: "Santhosh Kumar",
-    driverPhone: "+91 98479 77889",
-    driverLicense: "KL-13-2017-67890",
-    driverExperience: 14,
-    driverVerified: true,
-    stops: ["Kochi", "Aluva", "Thrissur", "Kuttippuram", "Calicut", "Koyilandy", "Vadakara", "Thalassery", "Kannur"],
-  }
-];
-
-// Seed default routes if empty
-const defaultRoutes = [
-  {
-    routeId: "RT-101",
-    routeName: "Kochi ➔ Trivandrum Express",
-    fromLocation: "Kochi",
-    toLocation: "Trivandrum",
-    distanceKm: 205,
-    duration: "4h 45m",
-    frequency: "Every 30 mins",
-    stops: ["Kochi", "Vyttila", "Tripunithura", "Cherthala", "Alappuzha", "Ambalapuzha", "Haripad", "Kayamkulam", "Karunagappally", "Kollam", "Attingal", "Kazhakkoottam", "Trivandrum"],
-    fare: 450,
-    status: "Active",
-  },
-  {
-    routeId: "RT-102",
-    routeName: "Kochi ➔ Calicut Direct",
-    fromLocation: "Kochi",
-    toLocation: "Calicut",
-    distanceKm: 180,
-    duration: "4h 30m",
-    frequency: "Every 1 hour",
-    stops: ["Kochi", "Aluva", "Angamaly", "Chalakkudy", "Thrissur", "Wadakkanchery", "Kuttippuram", "Valanchery", "Ramanattukara", "Calicut"],
-    fare: 320,
-    status: "Active",
-  },
-  {
-    routeId: "RT-103",
-    routeName: "Kochi ➔ Kottayam ➔ Erattupetta Corridor",
-    fromLocation: "Kochi",
-    toLocation: "Erattupetta",
-    distanceKm: 95,
-    duration: "3h 15m",
-    frequency: "Every 20 mins",
-    stops: ["Kochi", "Tripunithura", "Mulanthuruthy", "Piravom", "Ettumanoor", "Kottayam", "Manarcadu", "Malam", "Anichuvadu", "Vengotta", "Kidangoor", "Pala", "Bharananganam", "Plassanal", "Erattupetta"],
-    fare: 280,
-    status: "Active",
-  },
-];
-
 // Helper to extract stations/stops list from doc
 const extractStopsFromDoc = (doc) => {
   if (Array.isArray(doc.route) && doc.route.length > 0) {
     return doc.route.map((s) => String(s).trim());
   }
   if (Array.isArray(doc.stops) && doc.stops.length > 0) {
-    return doc.stops.map((s) => String(s).trim());
+    return doc.stops.map((s) => {
+      if (typeof s === "object" && s !== null) {
+        return String(s.name || s.stopName || s.stop || "").trim();
+      }
+      return String(s).trim();
+    }).filter(Boolean);
   }
   const scheduleStations = [];
   if (Array.isArray(doc.schedule)) {
@@ -287,22 +41,47 @@ const extractStopsFromDoc = (doc) => {
 };
 
 // Normalize any bus object (from Bus collection or Route.buses)
-const normalizeBusDocument = (doc, parentRoute = null) => {
+const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map(), routeList = []) => {
   const busNumber =
     doc.busNumber ||
     doc.vehicleNumber ||
     doc["Vehicle Number"] ||
-    (doc._id ? `MS-${String(doc._id).substring(18).toUpperCase()}` : "KL-07-MS-1001");
+    (doc._id ? `MS-${String(doc._id).substring(18).toUpperCase()}` : "KL-01-MS-1001");
 
-  const stops = extractStopsFromDoc(doc);
-  const fromLocation = doc.fromLocation || parentRoute?.fromLocation || (stops.length > 0 ? stops[0] : "Kochi");
+  let stops = extractStopsFromDoc(doc);
+
+  // If bus has minimal stops but matches a parentRoute or known route, enrich stops
+  if (stops.length <= 2 && routeList.length > 0) {
+    const matchedRoute = routeList.find((r) => {
+      if (doc.routeId && (r.routeId === doc.routeId || String(r._id) === String(doc.routeId))) return true;
+      if (doc.fromLocation && doc.toLocation && r.fromLocation && r.toLocation) {
+        return (
+          matchLocationStr(r.fromLocation, doc.fromLocation) &&
+          matchLocationStr(r.toLocation, doc.toLocation)
+        );
+      }
+      return false;
+    });
+
+    if (matchedRoute) {
+      const routeStops = extractStopsFromDoc(matchedRoute);
+      if (routeStops.length > stops.length) {
+        stops = routeStops;
+      }
+    }
+  }
+
+  const fromLocation =
+    doc.fromLocation ||
+    parentRoute?.fromLocation ||
+    (stops.length > 0 ? stops[0] : "");
   const toLocation =
     doc.toLocation ||
     parentRoute?.toLocation ||
-    (stops.length > 1 ? stops[stops.length - 1] : stops.length === 1 ? stops[0] : "Trivandrum");
+    (stops.length > 1 ? stops[stops.length - 1] : stops.length === 1 ? stops[0] : "");
 
-  let departureTime = doc.departureTime || "07:00 AM";
-  let arrivalTime = doc.arrivalTime || "11:30 AM";
+  let departureTime = doc.departureTime || "08:00 AM";
+  let arrivalTime = doc.arrivalTime || "12:00 PM";
 
   if (Array.isArray(doc.schedule) && doc.schedule.length > 0) {
     const firstTrip = doc.schedule[0];
@@ -316,15 +95,40 @@ const normalizeBusDocument = (doc, parentRoute = null) => {
     }
   }
 
-  const busType = doc.busType || doc.type || "AC Deluxe Seater / Express";
-  const operator = doc.operator || "MoveSmart Transit Lines";
-  const price = doc.price || doc.fare || (stops.length > 1 ? stops.length * 45 + 50 : 250);
+  const busType = doc.busType || doc.type || "Express / City Transit";
+  const operator = doc.operator || "MoveSmart Fleet";
+  const price = doc.price || doc.fare || (stops.length > 1 ? stops.length * 35 + 40 : 200);
   const totalSeats = doc.totalSeats || 32;
-  const availableSeats = doc.availableSeats !== undefined ? doc.availableSeats : 28;
+  const availableSeats = doc.availableSeats !== undefined ? doc.availableSeats : 32;
   const rating = doc.rating || 4.8;
-  const amenities = doc.amenities || ["Wi-Fi", "Charging Port", "Live Tracking", "AC"];
+  const amenities = doc.amenities || ["Live Tracking", "Emergency Contact"];
   const bookedSeats = doc.bookedSeats || [];
   const busName = doc.busName || `${operator} (${busNumber})`;
+
+  // Driver details resolution
+  let driverId = doc.driverId ? String(doc.driverId) : null;
+  let driverUser = driverId ? driverUserMap.get(driverId) : null;
+
+  let driverName = doc.driverName;
+  let driverPhone = doc.driverPhone || "N/A";
+  let driverEmail = doc.driverEmail || "";
+  let driverLicense = doc.driverLicense || "N/A";
+  let driverPhoto = doc.driverPhoto || "";
+  let driverVerified = doc.driverVerified !== undefined ? doc.driverVerified : false;
+  let driverExperience = doc.driverExperience || 0;
+
+  if (driverUser) {
+    driverName = driverUser.name || driverName;
+    driverPhone = driverUser.phone || driverPhone;
+    driverEmail = driverUser.email || driverEmail;
+    driverLicense = driverUser.licenseNumber || driverLicense;
+    driverPhoto = driverUser.profilePic || driverUser.licenseImage || driverPhoto;
+    driverVerified = driverUser.verificationStatus === "Approved" || driverVerified;
+    driverExperience = driverUser.experienceYears || driverExperience;
+  }
+
+  const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+  const finalDriverName = !isGeneric(driverName) ? driverName : "Not Assigned";
 
   return {
     _id: doc._id || new mongoose.Types.ObjectId(),
@@ -343,11 +147,15 @@ const normalizeBusDocument = (doc, parentRoute = null) => {
     rating,
     amenities,
     bookedSeats,
-    driverName: doc.driverName && !["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver"].includes(String(doc.driverName).toLowerCase().trim()) ? doc.driverName : "Not Assigned",
-    driverPhone: doc.driverPhone || "N/A",
-    driverLicense: doc.driverLicense || "N/A",
-    driverVerified: doc.driverVerified !== undefined ? doc.driverVerified : false,
-    driverExperience: doc.driverExperience || 0,
+    driverId,
+    driverName: finalDriverName,
+    driverPhone: finalDriverName !== "Not Assigned" ? driverPhone : "N/A",
+    driverEmail,
+    driverLicense: finalDriverName !== "Not Assigned" ? driverLicense : "N/A",
+    driverPhoto: finalDriverName !== "Not Assigned" ? driverPhoto : "",
+    driverVerified: finalDriverName !== "Not Assigned" ? driverVerified : false,
+    driverExperience: finalDriverName !== "Not Assigned" ? driverExperience : 0,
+    is_active: doc.is_active !== undefined ? doc.is_active : true,
     stops,
     route: doc.route || stops,
     schedule: doc.schedule || [],
@@ -355,77 +163,88 @@ const normalizeBusDocument = (doc, parentRoute = null) => {
   };
 };
 
-// Fetch all normalized buses across all DB collections
-// Fetch all normalized buses across all DB collections AND default fleet
+// Fetch all normalized buses strictly from MongoDB collections
 const fetchAllNormalizedBuses = async () => {
   const normalizedBuses = [];
   const seenNumbers = new Set();
 
+  let driverUserMap = new Map();
+  try {
+    const drivers = await User.find({ role: { $regex: /^driver$/i } }).lean();
+    drivers.forEach((d) => {
+      driverUserMap.set(String(d._id), d);
+    });
+  } catch (err) {
+    console.warn("User.find drivers notice:", err.message);
+  }
+
+  let rawRoutes = [];
+  try {
+    rawRoutes = await Route.find().lean();
+  } catch (err) {
+    console.warn("DB Route.find query error:", err.message);
+  }
+
   try {
     const rawBuses = await Bus.find().lean();
     for (const b of rawBuses) {
-      const norm = normalizeBusDocument(b);
+      const norm = normalizeBusDocument(b, null, driverUserMap, rawRoutes);
       if (!seenNumbers.has(norm.busNumber)) {
         seenNumbers.add(norm.busNumber);
         normalizedBuses.push(norm);
       }
     }
   } catch (err) {
-    console.warn("DB Bus.find query notice (using default fleet fallback):", err.message);
+    console.warn("DB Bus.find query error:", err.message);
   }
 
-  try {
-    const rawRoutes = await Route.find().lean();
-    for (const r of rawRoutes) {
-      if (Array.isArray(r.buses)) {
-        for (const b of r.buses) {
-          const norm = normalizeBusDocument(b, r);
-          if (!seenNumbers.has(norm.busNumber)) {
-            seenNumbers.add(norm.busNumber);
-            normalizedBuses.push(norm);
-          }
+  for (const r of rawRoutes) {
+    if (Array.isArray(r.buses) && r.buses.length > 0) {
+      for (const b of r.buses) {
+        const norm = normalizeBusDocument(b, r, driverUserMap, rawRoutes);
+        if (!seenNumbers.has(norm.busNumber)) {
+          seenNumbers.add(norm.busNumber);
+          normalizedBuses.push(norm);
         }
       }
-    }
-  } catch (err) {
-    console.warn("DB Route.find query notice (using default fleet fallback):", err.message);
-  }
-
-  // Include default bus fleet so major routes (Kochi -> Trivandrum, Calicut, etc.) are always searchable
-  for (const dbBus of defaultBuses) {
-    const norm = normalizeBusDocument(dbBus);
-    if (!seenNumbers.has(norm.busNumber)) {
-      seenNumbers.add(norm.busNumber);
-      normalizedBuses.push(norm);
+    } else {
+      // Admin route with defined stops and schedule
+      const stops = extractStopsFromDoc(r);
+      const routeBusNumber = r.routeId || `RT-${String(r._id).substring(18).toUpperCase()}`;
+      if (!seenNumbers.has(routeBusNumber)) {
+        const norm = normalizeBusDocument(
+          {
+            _id: r._id,
+            busNumber: routeBusNumber,
+            busName: r.routeName || `${r.fromLocation || "Route"} ➔ ${r.toLocation || "Destination"}`,
+            busType: "Standard Route Transit",
+            operator: "MoveSmart Transit Ops",
+            fromLocation: r.fromLocation || (stops.length > 0 ? stops[0] : ""),
+            toLocation: r.toLocation || (stops.length > 1 ? stops[stops.length - 1] : ""),
+            departureTime: r.base_start_time || "08:00 AM",
+            arrivalTime: "11:30 AM",
+            duration: r.duration || "3h 30m",
+            price: r.fare || 150,
+            totalSeats: 32,
+            availableSeats: 32,
+            rating: 4.8,
+            stops: stops,
+            driverName: r.driverName || "Assigned by Admin",
+            driverPhone: r.driverPhone || "N/A",
+            driverLicense: r.driverLicense || "N/A",
+            driverId: r.driverId || null,
+          },
+          r,
+          driverUserMap,
+          rawRoutes
+        );
+        seenNumbers.add(routeBusNumber);
+        normalizedBuses.push(norm);
+      }
     }
   }
 
   return normalizedBuses;
-};
-
-// Helper to seed buses if DB has none
-const seedBusesIfEmpty = async () => {
-  try {
-    const count = await Bus.countDocuments();
-    if (count === 0) {
-      await Bus.insertMany(defaultBuses);
-      console.log("Seed buses inserted into MongoDB successfully! 🚌");
-    }
-  } catch (err) {
-    console.error("Error seeding buses:", err.message);
-  }
-};
-
-const seedRoutesIfEmpty = async () => {
-  try {
-    const count = await Route.countDocuments();
-    if (count === 0) {
-      await Route.insertMany(defaultRoutes);
-      console.log("Seed routes inserted into MongoDB successfully! 🛣️");
-    }
-  } catch (err) {
-    console.error("Error seeding routes:", err.message);
-  }
 };
 
 // GET /locations (Get all unique stations/locations from DB)
@@ -468,41 +287,21 @@ router.get("/locations", async (req, res) => {
 // GET /routes (Public endpoint to fetch active routes)
 router.get("/routes", async (req, res) => {
   try {
-    await seedRoutesIfEmpty();
     const rawRoutes = await Route.find().lean();
-    const allBuses = await fetchAllNormalizedBuses();
 
     const formattedRoutes = rawRoutes.map((r) => ({
       _id: r._id,
       routeId: r.routeId || `RT-${String(r._id).substring(18).toUpperCase()}`,
       routeName: r.routeName || `${r.fromLocation || "Route"} ➔ ${r.toLocation || "Destination"}`,
-      fromLocation: r.fromLocation || (r.stops && r.stops[0]) || "Kochi",
-      toLocation: r.toLocation || (r.stops && r.stops[r.stops.length - 1]) || "Trivandrum",
-      distanceKm: r.distanceKm || 150,
+      fromLocation: r.fromLocation || (r.stops && r.stops[0]?.name) || "Origin",
+      toLocation: r.toLocation || (r.stops && r.stops[r.stops.length - 1]?.name) || "Destination",
+      distanceKm: r.distanceKm || r.totalDistance || 150,
       duration: r.duration || "3h 30m",
       frequency: r.frequency || "Every 30 mins",
       stops: r.stops || [],
       fare: r.fare || 350,
       status: r.status || "Active",
     }));
-
-    if (formattedRoutes.length === 0 && allBuses.length > 0) {
-      allBuses.forEach((b, idx) => {
-        formattedRoutes.push({
-          _id: b._id,
-          routeId: `RT-10${idx + 1}`,
-          routeName: `${b.fromLocation} ➔ ${b.toLocation}`,
-          fromLocation: b.fromLocation,
-          toLocation: b.toLocation,
-          distanceKm: b.stops ? b.stops.length * 25 : 120,
-          duration: b.duration,
-          frequency: "Every 45 mins",
-          stops: b.stops,
-          fare: b.price,
-          status: "Active",
-        });
-      });
-    }
 
     res.json({ success: true, count: formattedRoutes.length, routes: formattedRoutes });
   } catch (error) {
@@ -511,18 +310,20 @@ router.get("/routes", async (req, res) => {
   }
 });
 
-// Helper to normalize location strings for accurate comparison
+// Helper to normalize location strings for accurate comparison with typo & spelling tolerance
 const normalizeLocation = (loc) => {
   if (!loc) return "";
   return String(loc)
     .toLowerCase()
     .replace(/\(.*?\)/g, "") // strip parenthetical annotations e.g. (Vyttila)
+    .replace(/sub-stop|sub stop|junction|bus stand|stand|road|stop/gi, " ")
     .replace(/[^a-z0-9\s]/gi, " ") // replace special chars with spaces
+    .replace(/(.)\1+/g, "$1") // collapse repeated chars e.g. "errattupetta" -> "eratupeta", "erattupetta" -> "eratupeta"
     .trim()
     .replace(/\s+/g, " ");
 };
 
-// Accurate location string matching (exact, normalized, or whole-word match)
+// Accurate location string matching (exact, normalized, substring, or whole-word match)
 const matchLocationStr = (locationInDB, searchQuery) => {
   if (!searchQuery) return true;
   const rawDb = String(locationInDB || "").trim().toLowerCase();
@@ -532,14 +333,17 @@ const matchLocationStr = (locationInDB, searchQuery) => {
   // Exact raw match
   if (rawDb === rawQ) return true;
 
+  // Raw substring match (e.g. "Erumely" inside "Chenappady - Erumely Road")
+  if (rawDb.includes(rawQ) || rawQ.includes(rawDb)) return true;
+
   const dbNorm = normalizeLocation(locationInDB);
   const qNorm = normalizeLocation(searchQuery);
   if (!dbNorm || !qNorm) return false;
 
-  // Exact normalized match
-  if (dbNorm === qNorm) return true;
+  // Exact normalized match or normalized substring
+  if (dbNorm === qNorm || dbNorm.includes(qNorm) || qNorm.includes(dbNorm)) return true;
 
-  // Whole-word regex match to prevent false partial matches e.g. "Pala" matching "Palakkad"
+  // Whole-word regex match
   const regexDb = new RegExp(`\\b${dbNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
   const regexQ = new RegExp(`\\b${qNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
 
@@ -573,6 +377,23 @@ const buildCompleteStopsList = (bus) => {
     }
   }
 
+  // Also include schedule stations if any
+  if (Array.isArray(bus.schedule)) {
+    bus.schedule.forEach((trip) => {
+      if (Array.isArray(trip.stations)) {
+        trip.stations.forEach((st) => {
+          const stName = typeof st === "object" && st !== null ? (st.station || st.name) : st;
+          if (stName) {
+            const trimmed = String(stName).trim();
+            if (!list.some((existing) => matchLocationStr(existing, trimmed))) {
+              list.push(trimmed);
+            }
+          }
+        });
+      }
+    });
+  }
+
   return list;
 };
 
@@ -601,8 +422,7 @@ router.get("/buses", async (req, res) => {
       const s = String(str).trim().toLowerCase();
       return (
         s === "" ||
-        s.includes("all") ||
-        s.includes("any") ||
+        s === "all" ||
         s.includes("select") ||
         s === "undefined" ||
         s === "null"
@@ -831,7 +651,6 @@ router.get("/bookings/user/:userId", async (req, res) => {
 // GET /admin/buses (Fetch all buses for admin sorted newest first)
 router.get("/admin/buses", async (req, res) => {
   try {
-    await seedBusesIfEmpty();
     const buses = await Bus.find().sort({ createdAt: -1 });
     res.json({ success: true, count: buses.length, buses });
   } catch (error) {
@@ -1148,7 +967,6 @@ router.delete("/admin/buses/:id", async (req, res) => {
 // GET /admin/routes (Fetch all routes)
 router.get("/admin/routes", async (req, res) => {
   try {
-    await seedRoutesIfEmpty();
     const routes = await Route.find().sort({ createdAt: -1 });
     res.json({ success: true, count: routes.length, routes });
   } catch (error) {
@@ -1396,7 +1214,7 @@ function normalizeTimeStr(timeStr) {
   const cleanStr = timeStr.trim().toUpperCase();
   const isPM = cleanStr.includes("PM");
   const isAM = cleanStr.includes("AM");
-  
+
   const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
   if (!match) return cleanStr;
 

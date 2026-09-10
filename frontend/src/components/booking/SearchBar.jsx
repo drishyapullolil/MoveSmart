@@ -1,47 +1,54 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Calendar, ArrowRightLeft, Search, Sparkles, Bus, Clock } from "lucide-react";
+import { MapPin, Calendar, ArrowRightLeft, Search, Sparkles, Bus, Clock, X } from "lucide-react";
 import axios from "axios";
 
-export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo = "Trivandrum", initialDate = "" }) {
+// Helper for fuzzy normalization (handles repeated characters e.g. errattupetta -> eratupeta)
+const normalizeFuzzy = (s) => {
+  if (!s) return "";
+  return String(s)
+    .toLowerCase()
+    .replace(/\(.*?\)/g, "")
+    .replace(/sub-stop|sub stop|junction|bus stand|stand|road|stop/gi, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .replace(/(.)\1+/g, "$1");
+};
+
+const filterLocations = (locations, query) => {
+  if (!query || !query.trim()) return locations.slice(0, 18);
+  const qClean = query.trim().toLowerCase();
+  const qFuzzy = normalizeFuzzy(query);
+
+  return locations
+    .filter((loc) => {
+      const locClean = loc.toLowerCase();
+      const locFuzzy = normalizeFuzzy(loc);
+      return (
+        locClean.includes(qClean) ||
+        qClean.includes(locClean) ||
+        locFuzzy.includes(qFuzzy) ||
+        qFuzzy.includes(locFuzzy)
+      );
+    })
+    .slice(0, 18);
+};
+
+export default function SearchBar({ onSearch, initialFrom = "", initialTo = "", initialDate = "" }) {
   const [fromLocation, setFromLocation] = useState(initialFrom);
   const [toLocation, setToLocation] = useState(initialTo);
   const [travelDate, setTravelDate] = useState(initialDate || new Date().toISOString().split("T")[0]);
   const [fromSuggestions, setFromSuggestions] = useState(false);
   const [toSuggestions, setToSuggestions] = useState(false);
-
-  const defaultCities = [
-    "Kochi",
-    "Trivandrum",
-    "Calicut",
-    "Kottayam",
-    "Thrissur",
-    "Palakkad",
-    "Alappuzha",
-    "Kannur",
-    "Erattupetta",
-    "Pala",
-    "Changanassery",
-    "Vengotta",
-    "Manarcadu",
-    "Malam",
-    "Anichuvadu",
-    "Koothattukulam",
-    "Kanjirappally",
-    "Chenappady"
-  ];
-
-  const [availableLocations, setAvailableLocations] = useState(defaultCities);
+  const [availableLocations, setAvailableLocations] = useState([]);
 
   useEffect(() => {
     const fetchLocations = async () => {
       try {
         const res = await axios.get("/api/locations");
-        if (res.data && res.data.success && Array.isArray(res.data.locations) && res.data.locations.length > 0) {
-          const merged = Array.from(new Set([...res.data.locations, ...defaultCities])).sort();
-          setAvailableLocations(merged);
+        if (res.data && res.data.success && Array.isArray(res.data.locations)) {
+          setAvailableLocations(res.data.locations);
         }
       } catch (err) {
-        console.warn("Using default locations list for search bar:", err.message);
+        console.warn("Error fetching stations:", err.message);
       }
     };
     fetchLocations();
@@ -60,20 +67,29 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
   };
 
   const handleSubmit = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     onSearch({ from: fromLocation, to: toLocation, date: travelDate });
   };
+
+  const handleClear = () => {
+    setFromLocation("");
+    setToLocation("");
+    onSearch({ from: "", to: "", date: travelDate });
+  };
+
+  const fromMatches = filterLocations(availableLocations, fromLocation);
+  const toMatches = filterLocations(availableLocations, toLocation);
 
   return (
     <div className="smart-search-card">
       <div className="search-card-header">
         <div className="search-card-title">
           <Bus style={{ color: "var(--primary)" }} />
-          <span>Search Smart Bus Routes</span>
+          <span>Search Bus Schedules &amp; Stops</span>
         </div>
         <span className="search-badge-pill">
           <Sparkles style={{ width: 14, height: 14, display: "inline-block", marginRight: 4 }} />
-          Live IoT Occupancy
+          Main &amp; Sub-Stations
         </span>
       </div>
 
@@ -81,7 +97,7 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
         <div className="search-form-row">
           {/* From Location */}
           <div className="input-field-group">
-            <label>From Location</label>
+            <label>Origin / Boarding Station</label>
             <div className="input-with-icon">
               <MapPin className="input-icon" size={18} />
               <input
@@ -89,28 +105,45 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
                 value={fromLocation}
                 onChange={(e) => setFromLocation(e.target.value)}
                 onFocus={() => setFromSuggestions(true)}
-                onBlur={() => setTimeout(() => setFromSuggestions(false), 200)}
-                placeholder="Leaving from..."
-                required
+                onBlur={() => setTimeout(() => setFromSuggestions(false), 250)}
+                placeholder="e.g. Erattupetta, Kanjirappally, Kochi..."
                 className="search-input"
+                autoComplete="off"
               />
+              {fromLocation && (
+                <button
+                  type="button"
+                  onClick={() => setFromLocation("")}
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#94a3b8",
+                  }}
+                  title="Clear"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
-            {fromSuggestions && (
-              <div className="search-suggestions-drop">
-                {availableLocations
-                  .filter((city) => city.toLowerCase().includes(fromLocation.toLowerCase()))
-                  .slice(0, 10)
-                  .map((city, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onMouseDown={() => setFromLocation(city)}
-                      className="suggestion-item"
-                    >
-                      <span>{city}</span>
-                      <MapPin size={14} style={{ color: "var(--primary)" }} />
-                    </button>
-                  ))}
+            {fromSuggestions && fromMatches.length > 0 && (
+              <div className="search-suggestions-drop" style={{ maxHeight: 240, overflowY: "auto" }}>
+                {fromMatches.map((city, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onMouseDown={() => {
+                      setFromLocation(city);
+                      setFromSuggestions(false);
+                    }}
+                    className="suggestion-item"
+                  >
+                    <span>{city}</span>
+                    <MapPin size={14} style={{ color: "var(--primary)" }} />
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -122,7 +155,7 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
 
           {/* To Location */}
           <div className="input-field-group">
-            <label>To Location</label>
+            <label>Destination / Drop Station</label>
             <div className="input-with-icon">
               <MapPin className="input-icon purple-icon" size={18} />
               <input
@@ -130,28 +163,45 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
                 value={toLocation}
                 onChange={(e) => setToLocation(e.target.value)}
                 onFocus={() => setToSuggestions(true)}
-                onBlur={() => setTimeout(() => setToSuggestions(false), 200)}
-                placeholder="Going to..."
-                required
+                onBlur={() => setTimeout(() => setToSuggestions(false), 250)}
+                placeholder="e.g. Erattupetta, Erumely, Kottayam..."
                 className="search-input"
+                autoComplete="off"
               />
+              {toLocation && (
+                <button
+                  type="button"
+                  onClick={() => setToLocation("")}
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#94a3b8",
+                  }}
+                  title="Clear"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
-            {toSuggestions && (
-              <div className="search-suggestions-drop">
-                {availableLocations
-                  .filter((city) => city.toLowerCase().includes(toLocation.toLowerCase()))
-                  .slice(0, 10)
-                  .map((city, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onMouseDown={() => setToLocation(city)}
-                      className="suggestion-item"
-                    >
-                      <span>{city}</span>
-                      <MapPin size={14} style={{ color: "var(--accent-purple)" }} />
-                    </button>
-                  ))}
+            {toSuggestions && toMatches.length > 0 && (
+              <div className="search-suggestions-drop" style={{ maxHeight: 240, overflowY: "auto" }}>
+                {toMatches.map((city, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onMouseDown={() => {
+                      setToLocation(city);
+                      setToSuggestions(false);
+                    }}
+                    className="suggestion-item"
+                  >
+                    <span>{city}</span>
+                    <MapPin size={14} style={{ color: "var(--accent-purple)" }} />
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -166,7 +216,6 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
                 value={travelDate}
                 min={new Date().toISOString().split("T")[0]}
                 onChange={(e) => setTravelDate(e.target.value)}
-                required
                 className="search-input"
               />
             </div>
@@ -190,10 +239,31 @@ export default function SearchBar({ onSearch, initialFrom = "Kochi", initialTo =
             </button>
           </div>
 
-          <button type="submit" className="submit-search-btn">
-            <Search size={18} />
-            <span>Search Buses</span>
-          </button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {(fromLocation || toLocation) && (
+              <button
+                type="button"
+                onClick={handleClear}
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  border: "1.5px solid #cbd5e1",
+                  background: "#ffffff",
+                  color: "#64748b",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Clear Search
+              </button>
+            )}
+
+            <button type="submit" className="submit-search-btn">
+              <Search size={18} />
+              <span>Search Buses</span>
+            </button>
+          </div>
         </div>
       </form>
     </div>
