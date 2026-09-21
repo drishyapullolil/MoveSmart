@@ -31,6 +31,16 @@ const KERALA_ROUTE_WAYPOINTS = [
   { lat: 10.1076, lng: 76.3516, name: "Aluva Bus Stand Terminal", x: 90, y: 15 },
 ];
 
+// MoveSmart Kerala Transit Stops for RFID Tap & Fare Integration
+const KERALA_STOPS = [
+  { code: "STOP_VYTTILA", name: "Vyttila Mobility Hub" },
+  { code: "STOP_KALOOR", name: "Kaloor Junction" },
+  { code: "STOP_EDAPPALLY", name: "Edappally Toll" },
+  { code: "STOP_ALUVA", name: "Aluva Bus Stand" },
+  { code: "STOP_ANGAMALY", name: "Angamaly Central" },
+  { code: "STOP_KAKKANAD", name: "Kakkanad InfoPark" },
+];
+
 function Driver() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,12 +48,13 @@ function Driver() {
   // 1. User / Driver Authentication check
   const initialUser = getStoredUser();
   const [user, setUser] = useState(() => initialUser || {
-    _id: "drv-sample-01",
-    name: "Drishya (Driver)",
-    email: "driver@movesmart.in",
+    _id: "",
+    name: "Driver",
+    email: "",
     role: "driver",
-    phone: "+91 98470 12345",
-    licenseNumber: "KL-07-2022-009876",
+    phone: "",
+    licenseNumber: "",
+    busNumber: "",
     verificationStatus: "Approved",
   });
   const [authStatus, setAuthStatus] = useState("Approved");
@@ -248,6 +259,33 @@ function Driver() {
       return [];
     }
   });
+
+  // 10. ESP32 + RC522 RFID Hardware Device State & Provisioning
+  const [rfidDevice, setRfidDevice] = useState({
+    deviceId: "MS-RFID-5326",
+    status: "Not Connected", // "Connected" | "Connecting" | "Not Connected" | "Connection Failed"
+    busNumber: initialUser?.busNumber || "",
+    stopCode: "STOP_VYTTILA",
+    ipAddress: "",
+    lastHeartbeat: null,
+    readerActive: false,
+  });
+  const [showRfidModal, setShowRfidModal] = useState(false);
+  const [rfidForm, setRfidForm] = useState({
+    ssid: "",
+    password: "",
+    serverApiUrl: `http://${window.location.hostname || "localhost"}:5000/api/rfid/tap`,
+    stopCode: "STOP_VYTTILA",
+    busNumber: initialUser?.busNumber || "",
+    deviceId: "MS-RFID-5326",
+  });
+  const [rfidProvisioningStatus, setRfidProvisioningStatus] = useState("idle"); // "idle" | "submitting" | "success" | "error"
+  const [rfidProvisioningMsg, setRfidProvisioningMsg] = useState("");
+
+  // 10b. Real-Time RFID Tap Monitor Feed
+  const [latestRfidTap, setLatestRfidTap] = useState(null);
+  const [recentRfidTaps, setRecentRfidTaps] = useState([]);
+  const [loadingRecentTaps, setLoadingRecentTaps] = useState(false);
 
   // Issue Reporting Modal State
   const [showIssueModal, setShowIssueModal] = useState(false);
@@ -576,7 +614,32 @@ function Driver() {
     fetchDriverFaceProfile();
   }, [fetchDriverFaceProfile]);
 
-  // Real-Time Driver Safety Socket Connection (Video streaming & event telemetry)
+  // Fetch initial RFID device status for driver / assigned bus
+  useEffect(() => {
+    const fetchDeviceStatus = async () => {
+      const driverId = user?._id || user?.id || "drv-sample-01";
+      const busNum = assignedBus?.busNumber || user?.busNumber || "";
+      try {
+        const res = await axios.get(`/api/rfid/device/status?driverId=${encodeURIComponent(driverId)}&busNumber=${encodeURIComponent(busNum)}`);
+        if (res.data?.success && res.data.device) {
+          setRfidDevice(res.data.device);
+          setRfidForm((prev) => ({
+            ...prev,
+            busNumber: res.data.device.busNumber || busNum,
+            stopCode: res.data.device.stopCode || prev.stopCode,
+            deviceId: res.data.device.deviceId || prev.deviceId,
+          }));
+        }
+      } catch (err) {
+        // Silently handled
+      }
+    };
+    if (user?._id || user?.id) {
+      fetchDeviceStatus();
+    }
+  }, [user?._id, user?.id, assignedBus?.busNumber, user?.busNumber]);
+
+  // Real-Time Driver Safety & RFID Device Socket Connection
   useEffect(() => {
     const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
     const socket = io(socketUrl, {
@@ -587,7 +650,7 @@ function Driver() {
     safetySocketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("✓ Driver Safety Socket Connected:", socket.id);
+      console.log("✓ Driver Safety & RFID Socket Connected:", socket.id);
       const driverId = user?._id || user?.id || "drv-sample-01";
       socket.emit("join-driver-room", { driverId });
       if (assignedBus?._id) {
@@ -595,10 +658,103 @@ function Driver() {
       }
     });
 
+    // Real-Time ESP32 RFID Device Telemetry Listener
+    socket.on("rfid:device-status", (data) => {
+      if (data) {
+        setRfidDevice((prev) => ({ ...prev, ...data }));
+        if (data.status === "Connected") {
+          showToast(`ESP32 RFID Reader (${data.deviceId}) Connected!`);
+        }
+      }
+    });
+
+    // Real-Time RFID Card Tap Listener
+    socket.on("rfid:tap-event", (data) => {
+      if (data && data.success) {
+        showToast(`RFID Card Tapped: ${data.passengerName || "Passenger"} (${data.tapType}) - ₹${data.fareDeducted || 0}`);
+        if (data.tapType === "TAP-IN") {
+          setPassengersOnboard((prev) => prev + 1);
+        } else if (data.tapType === "TAP-OUT") {
+          setPassengersOnboard((prev) => Math.max(0, prev - 1));
+        }
+        if (data.fareDeducted > 0) {
+          const newPayment = {
+            id: `PAY-${Date.now().toString().slice(-4)}`,
+            trip: assignedBus?.busName || `Bus ${assignedBus?.busNumber || "KL"}`,
+            time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            amount: `₹ ${Number(data.fareDeducted).toFixed(2)}`,
+            numericAmount: Number(data.fareDeducted),
+            method: `RFID Smart Card (${data.cardCategory || "Pass"})`,
+            status: "Paid",
+          };
+          setPaymentsLog((prev) => {
+            const updated = [newPayment, ...prev];
+            try { localStorage.setItem("moveSmart_driverPayments", JSON.stringify(updated.slice(0, 50))); } catch (e) {}
+            return updated;
+          });
+        }
+      }
+    });
+
     return () => {
       if (socket) socket.disconnect();
     };
-  }, [user?._id, user?.id, assignedBus?._id]);
+  }, [user?._id, user?.id, assignedBus?._id, assignedBus?.busName, assignedBus?.busNumber]);
+
+  // Provision / Configure ESP32 RFID Device over Wi-Fi AP
+  const handleConfigureRfidDevice = async (e) => {
+    e.preventDefault();
+    if (!rfidForm.ssid || !rfidForm.password) {
+      setRfidProvisioningMsg("Please provide Wi-Fi SSID and Password.");
+      return;
+    }
+    setRfidProvisioningStatus("submitting");
+    setRfidProvisioningMsg("Transmitting Wi-Fi configuration to ESP32 (192.168.4.1)...");
+
+    try {
+      const payload = {
+        ssid: rfidForm.ssid,
+        password: rfidForm.password,
+        serverUrl: rfidForm.serverApiUrl,
+        stopCode: rfidForm.stopCode,
+        deviceId: rfidForm.deviceId || "MS-RFID-5326",
+        busNumber: assignedBus?.busNumber || rfidForm.busNumber || "KL-07-MS-1008",
+      };
+
+      await axios.post("http://192.168.4.1/configure", payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 6000,
+      });
+
+      setRfidProvisioningStatus("success");
+      setRfidProvisioningMsg("Configuration sent! ESP32 is connecting to Wi-Fi...");
+      setRfidDevice((prev) => ({ ...prev, status: "Connecting" }));
+      setTimeout(() => {
+        setShowRfidModal(false);
+        setRfidProvisioningStatus("idle");
+        setRfidProvisioningMsg("");
+      }, 3000);
+    } catch (err) {
+      console.warn("Direct ESP32 AP post failed, opening direct fallback:", err.message);
+      setRfidProvisioningStatus("error");
+      setRfidProvisioningMsg("Could not reach ESP32 directly at 192.168.4.1. Please ensure your laptop/phone is connected to the 'MoveSmart-RFID-xxxx' Wi-Fi network, or open http://192.168.4.1 directly in your browser.");
+    }
+  };
+
+  const handleUnlinkRfidDevice = async () => {
+    try {
+      const driverId = user?._id || user?.id || "drv-sample-01";
+      await axios.post("/api/rfid/device/unlink", {
+        deviceId: rfidDevice.deviceId,
+        driverId,
+        busNumber: assignedBus?.busNumber || user?.busNumber || "",
+      });
+      setRfidDevice((prev) => ({ ...prev, status: "Not Connected", ipAddress: "" }));
+      showToast("RFID device unlinked from vehicle.");
+    } catch (err) {
+      showToast("Failed to unlink RFID device.");
+    }
+  };
 
   // Capture Driver Photo & Extract Detailed Facial Metrics
   const handleTakeDriverPhoto = async () => {
@@ -1819,6 +1975,24 @@ function Driver() {
       return;
     }
 
+    const broadcastGpsUpdate = (lat, lng, speed, heading = 90) => {
+      if (safetySocketRef.current && assignedBus?._id && tripStatus === "in_progress") {
+        safetySocketRef.current.emit("driver:locationUpdate", {
+          busId: String(assignedBus._id),
+          tripId: String(assignedBus._id),
+          driverId: user?.id || user?._id || "drv-01",
+          driverName: user?.name || "Driver",
+          busNumber: assignedBus.busNumber || "KL-07-MS-1008",
+          routeName: assignedBus.routeName || `${assignedBus.fromLocation} ➔ ${assignedBus.toLocation}`,
+          latitude: lat,
+          longitude: lng,
+          speed: speed,
+          heading: heading,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    };
+
     if (useRealDeviceGps && navigator.geolocation) {
       if (simIntervalRef.current) {
         clearInterval(simIntervalRef.current);
@@ -1827,26 +2001,28 @@ function Driver() {
 
       watchPositionIdRef.current = navigator.geolocation.watchPosition(
         (pos) => {
-          const { latitude, longitude, speed, accuracy } = pos.coords;
+          const { latitude, longitude, speed, accuracy, heading } = pos.coords;
           const speedKmh = speed ? Math.round(speed * 3.6) : (tripStatus === "in_progress" ? 38 : 0);
+          const computedHeading = heading !== null && !isNaN(heading) ? Math.round(heading) : 90;
           const updatedGps = {
             lat: latitude,
             lng: longitude,
             speed: speedKmh,
-            heading: 90,
+            heading: computedHeading,
             accuracy: Math.round(accuracy) || 5,
             address: `Lat: ${latitude.toFixed(4)}, Lng: ${longitude.toFixed(4)}`,
             stepIndex: 2,
           };
           setCurrentGps(updatedGps);
           updateMapMarker(updatedGps.lat, updatedGps.lng);
+          broadcastGpsUpdate(latitude, longitude, speedKmh, computedHeading);
         },
         (err) => {
           console.warn("Real GPS access error/denied:", err.message);
           setUseRealDeviceGps(false);
           showToast("Device GPS offline. Switched to route tracking mode.");
         },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
       );
     } else {
       if (watchPositionIdRef.current && navigator.geolocation) {
@@ -1870,6 +2046,7 @@ function Driver() {
             stepIndex: nextIndex,
           };
           updateMapMarker(updated.lat, updated.lng);
+          broadcastGpsUpdate(targetWp.lat, targetWp.lng, nextSpeed, 90);
           return updated;
         });
       }, 4000);
@@ -1883,7 +2060,7 @@ function Driver() {
         clearInterval(simIntervalRef.current);
       }
     };
-  }, [gpsActive, useRealDeviceGps, tripStatus]);
+  }, [gpsActive, useRealDeviceGps, tripStatus, assignedBus, user]);
 
   const updateMapMarker = (lat, lng) => {
     if (busMarkerRef.current) {
@@ -1964,15 +2141,99 @@ function Driver() {
     }
   };
 
+  const fetchRecentRfidTaps = async () => {
+    setLoadingRecentTaps(true);
+    try {
+      const res = await axios.get("/api/rfid/taps/recent?limit=25");
+      if (res.data?.taps) {
+        setRecentRfidTaps(res.data.taps);
+        if (res.data.taps.length > 0) {
+          setLatestRfidTap((prev) => prev || res.data.taps[0]);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load recent RFID taps:", err.message);
+    } finally {
+      setLoadingRecentTaps(false);
+    }
+  };
+
   useEffect(() => {
     if (user && authStatus !== "loading") {
       Promise.allSettled([
         fetchDbBuses(),
         fetchDriverLeaves(),
         fetchProfileStatus(),
+        fetchRecentRfidTaps(),
       ]);
     }
   }, [user?.email, authStatus]);
+
+  // Real-Time Socket.IO Listener for RFID Tap Events & Hardware Device Telemetry
+  useEffect(() => {
+    const socket = io();
+
+    socket.on("connect", () => {
+      const drvId = user?._id || user?.id;
+      if (drvId) {
+        socket.emit("join-driver-room", drvId);
+      }
+    });
+
+    socket.on("rfid:tap-event", (data) => {
+      if (!data) return;
+
+      const pName = data.passengerName || data.passenger?.name || "Passenger";
+      const cardMask = data.card?.rfidTag
+        ? `****${data.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}`
+        : (data.card?.cardNumber ? `****${data.card.cardNumber.slice(-4)}` : "RFID Card");
+      const stopName = data.stop?.name || (data.stop?.code ? data.stop.code.replace("STOP_", "") : "Station Stop");
+
+      setLatestRfidTap({
+        ...data,
+        passengerName: pName,
+        timestamp: data.timestamp || new Date().toISOString(),
+      });
+
+      setRecentRfidTaps((prev) => [
+        {
+          id: data.id || `tap-${Date.now()}`,
+          ...data,
+          passengerName: pName,
+          timestamp: data.timestamp || new Date().toISOString(),
+        },
+        ...prev.slice(0, 29),
+      ]);
+
+      // Dynamic Toast Notification with Sound Chime
+      if (data.action === "TAP_IN") {
+        showToast(`✓ RFID TAP-IN: ${pName} (${cardMask}) boarded at ${stopName}.`);
+        setPassengersOnboard((prev) => Math.min(totalCapacity, prev + 1));
+      } else if (data.action === "TAP_OUT") {
+        const fareStr = data.fare !== undefined ? ` | Fare: ₹${Number(data.fare).toFixed(2)}` : "";
+        const balStr = data.balance !== undefined ? ` | Balance: ₹${Number(data.balance).toFixed(2)}` : "";
+        showToast(`✓ RFID TAP-OUT: ${pName} (${cardMask}) completed journey at ${stopName}${fareStr}${balStr}.`);
+        setPassengersOnboard((prev) => Math.max(0, prev - 1));
+      } else if (data.action === "REJECTED") {
+        showToast(`⚠️ RFID TAP REJECTED: ${data.reason || data.message || "Card not allowed"}`);
+      }
+    });
+
+    // Hardware status & heartbeat
+    socket.on("rfid:device-status", (devData) => {
+      if (devData) {
+        setRfidDevice((prev) => ({
+          ...prev,
+          ...devData,
+          lastHeartbeat: devData.lastHeartbeat || new Date().toISOString(),
+        }));
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user?._id, user?.id, totalCapacity]);
 
   useEffect(() => {
     if (assignedBus) {
@@ -2130,7 +2391,25 @@ function Driver() {
     if (tripStatus === "idle" || tripStatus === "completed") {
       setTripStatus("in_progress");
       setGpsActive(true);
+      setUseRealDeviceGps(true);
       showToast("Trip started. GPS broadcasting & Driver Safety Monitoring active.");
+
+      // Broadcast startTracking via Socket.IO
+      if (safetySocketRef.current && assignedBus?._id) {
+        safetySocketRef.current.emit("driver:startTracking", {
+          busId: String(assignedBus._id),
+          tripId: String(assignedBus._id),
+          driverId: user?.id || user?._id || "drv-01",
+          driverName: user?.name || "Driver",
+          busNumber: assignedBus.busNumber || "KL-07-MS-1008",
+          routeName: assignedBus.routeName || `${assignedBus.fromLocation} ➔ ${assignedBus.toLocation}`,
+          latitude: currentGps.lat,
+          longitude: currentGps.lng,
+          speed: 0,
+          heading: currentGps.heading || 90,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Start Backend Monitoring Session
       try {
@@ -2149,7 +2428,17 @@ function Driver() {
       }
     } else {
       setTripStatus("completed");
+      setGpsActive(false);
       showToast("Trip completed. Safety summary recorded.");
+
+      // Broadcast stopTracking via Socket.IO
+      if (safetySocketRef.current && assignedBus?._id) {
+        safetySocketRef.current.emit("driver:stopTracking", {
+          busId: String(assignedBus._id),
+          tripId: String(assignedBus._id),
+          driverId: user?.id || user?._id || "drv-01",
+        });
+      }
 
       // Stop Backend Monitoring Session
       try {
@@ -2194,30 +2483,24 @@ function Driver() {
     showToast(`Attendance marked for today at ${nowTime}`);
   };
 
-  const handleSimulateTap = () => {
-    if (passengersOnboard >= totalCapacity) {
-      showToast("Bus is at maximum capacity");
-      return;
-    }
-    const fare = assignedBus?.price || 35.0;
-    const newPassengerCount = passengersOnboard + 1;
-    setPassengersOnboard(newPassengerCount);
-
-    const newPayment = {
-      id: `PAY-${Date.now().toString().slice(-4)}`,
-      trip: assignedBus?.busName || (assignedBus ? `Bus ${assignedBus.busNumber}` : "Active Bus Trip"),
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      amount: `₹ ${fare.toFixed(2)}`,
-      numericAmount: fare,
-      method: "RFID Smart Card Tap",
-      status: "Paid",
-    };
-    const updatedLog = [newPayment, ...paymentsLog];
-    setPaymentsLog(updatedLog);
+  const handleSimulateTap = async () => {
     try {
-      localStorage.setItem("moveSmart_driverPayments", JSON.stringify(updatedLog.slice(0, 50)));
-    } catch (e) { }
-    showToast(`Passenger tapped RFID Pass (+₹ ${fare.toFixed(2)})`);
+      const stopCodeToUse = rfidDevice.stopCode || "STOP_VYTTILA";
+      const busNumToUse = assignedBus?.busNumber || user?.busNumber || "KL-07-MS-1008";
+      
+      const res = await axios.post("/api/rfid/tap", {
+        rfidTag: "53262A56",
+        stopCode: stopCodeToUse,
+        busNumber: busNumToUse,
+      });
+
+      if (res.data) {
+        showToast(res.data.message || "RFID tap processed successfully");
+      }
+    } catch (err) {
+      console.error("RFID Tap Simulation Error:", err);
+      showToast(err.response?.data?.message || "RFID tap simulation rejected");
+    }
   };
 
   const handleSubmitIssue = (e) => {
@@ -2985,42 +3268,113 @@ function Driver() {
           </div>
         </section>
 
-        {/* Sub-Navigation Tabs */}
+        {/* QUICK LAUNCH ACTIONS (Clean, spacious 2-card banner) */}
+        {authStatus !== "Unverified" && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+            <div 
+              onClick={() => navigate("/driver/live-drive")}
+              style={{
+                background: "linear-gradient(135deg, #15803d 0%, #16a34a 100%)",
+                color: "#ffffff",
+                padding: "20px 24px",
+                borderRadius: "18px",
+                cursor: "pointer",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                boxShadow: "0 6px 20px rgba(22, 163, 74, 0.25)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(22, 163, 74, 0.35)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(22, 163, 74, 0.25)"; }}
+            >
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.5px", color: "#bbf7d0" }}>
+                  Live Navigation
+                </div>
+                <div style={{ fontSize: "18px", fontWeight: "900", marginTop: "2px" }}>
+                  🚍 Live Drive Cockpit
+                </div>
+                <div style={{ fontSize: "12.5px", color: "#dcfce7", marginTop: "4px", fontWeight: "600" }}>
+                  Start active trip, live route map &amp; next stop control
+                </div>
+              </div>
+              <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", flexShrink: 0 }}>
+                ➔
+              </div>
+            </div>
+
+            <div 
+              onClick={() => navigate("/driver/rfid-device")}
+              style={{
+                background: "linear-gradient(135deg, #1e40af 0%, #2563eb 100%)",
+                color: "#ffffff",
+                padding: "20px 24px",
+                borderRadius: "18px",
+                cursor: "pointer",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                boxShadow: "0 6px 20px rgba(37, 99, 235, 0.25)",
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(37, 99, 235, 0.35)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(37, 99, 235, 0.25)"; }}
+            >
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.5px", color: "#bfdbfe" }}>
+                  Hardware Telemetry
+                </div>
+                <div style={{ fontSize: "18px", fontWeight: "900", marginTop: "2px" }}>
+                  📡 RFID Reader Device
+                </div>
+                <div style={{ fontSize: "12.5px", color: "#dbeafe", marginTop: "4px", fontWeight: "600" }}>
+                  ESP32 hardware sync, connection status &amp; tap test
+                </div>
+              </div>
+              <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", flexShrink: 0 }}>
+                ➔
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Clean, Organized Navigation Tabs */}
         <div style={styles.tabsContainer}>
           {authStatus !== "Unverified" && (
             <>
               <button className={`driver-nav-tab touch-target ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
-                Dashboard
+                📊 Dashboard
               </button>
               <button className={`driver-nav-tab touch-target ${activeTab === "buses" ? "active" : ""}`} onClick={() => setActiveTab("buses")}>
-                My Bus ({filteredBuses.length})
+                🚌 My Bus ({filteredBuses.length})
+              </button>
+              <button className={`driver-nav-tab touch-target ${activeTab === "trips" ? "active" : ""}`} onClick={() => setActiveTab("trips")}>
+                ⏰ Trips ({dynamicSchedules.length})
               </button>
               <button className={`driver-nav-tab touch-target ${activeTab === "leave" ? "active" : ""}`} onClick={() => setActiveTab("leave")}>
-                Apply Leave ({driverLeaves.length})
+                📅 Leave ({driverLeaves.length})
+              </button>
+              <button className={`driver-nav-tab touch-target ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
+                💰 Collections
               </button>
             </>
           )}
           <button className={`driver-nav-tab touch-target ${activeTab === "verification" ? "active" : ""}`} onClick={() => setActiveTab("verification")}>
-            Profile & License
+            👤 Profile &amp; License
           </button>
           {authStatus !== "Unverified" && (
             <>
+              <button className={`driver-nav-tab touch-target ${activeTab === "lostfound" ? "active" : ""}`} onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}>
+                📦 Lost &amp; Found
+              </button>
               <button className={`driver-nav-tab touch-target ${activeTab === "notifications" ? "active" : ""}`} onClick={() => setActiveTab("notifications")}>
-                Notifications
+                🔔 Notifications
                 {unreadNotifCount > 0 && (
-                  <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", marginLeft: "6px" }}>
+                  <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 7px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", marginLeft: "6px" }}>
                     {unreadNotifCount}
                   </span>
                 )}
-              </button>
-              <button className={`driver-nav-tab touch-target ${activeTab === "trips" ? "active" : ""}`} onClick={() => setActiveTab("trips")}>
-                Scheduled Trips ({dynamicSchedules.length})
-              </button>
-              <button className={`driver-nav-tab touch-target ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
-                Collections
-              </button>
-              <button className={`driver-nav-tab touch-target ${activeTab === "lostfound" ? "active" : ""}`} onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}>
-                📦 Lost &amp; Found
               </button>
             </>
           )}
@@ -3069,19 +3423,409 @@ function Driver() {
 
                 {/* Primary Actions */}
                 <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                  <button 
+                    className="btn-green-gradient touch-target" 
+                    onClick={() => navigate("/driver/live-drive")}
+                    style={{ 
+                      flex: 1.2, 
+                      minWidth: "220px", 
+                      justifyContent: "center", 
+                      padding: "16px 20px", 
+                      fontSize: "15.5px",
+                      background: "linear-gradient(135deg, #15803d 0%, #16a34a 100%)",
+                      boxShadow: "0 4px 16px rgba(22, 163, 74, 0.35)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "8px"
+                    }}
+                  >
+                    <span>🚍</span>
+                    <span>Start Live Drive (Map &amp; Sim) ➔</span>
+                  </button>
+
                   {tripStatus !== "in_progress" ? (
-                    <button className="btn-green-gradient touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "200px", justifyContent: "center", padding: "16px", fontSize: "16px" }}>
+                    <button className="btn-purple-gradient touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "160px", justifyContent: "center", padding: "16px", fontSize: "15px" }}>
                       ▶ Start Trip
                     </button>
                   ) : (
-                    <button className="btn-purple-gradient touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "200px", justifyContent: "center", padding: "16px", fontSize: "16px" }}>
-                      ⏹ End Current Trip
+                    <button className="btn-red-outline touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "160px", justifyContent: "center", padding: "16px", fontSize: "15px" }}>
+                      ⏹ End Trip
                     </button>
                   )}
 
                   <button className="touch-target" onClick={handleSimulateTap} style={{ padding: "14px 20px", borderRadius: "14px", border: "1.5px solid #cbd5e1", background: "#ffffff", fontWeight: "700", fontSize: "14px", color: "#334155", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    Simulate RFID Card Tap
+                    Simulate RFID Tap
                   </button>
+                </div>
+              </div>
+
+              {/* 📡 ESP32 + RC522 RFID READER HARDWARE STATUS & LIVE TAP MONITOR */}
+              <div className="card-shadow" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(240,253,244,0.7) 100%)", border: "1.5px solid rgba(22, 163, 74, 0.3)", position: "relative", overflow: "hidden" }}>
+                
+                {/* 1. RFID DEVICE STATUS HEADER */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
+                      📡
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                        MoveSmart RFID Device &amp; Tap Monitor
+                      </h3>
+                      <p style={{ margin: "2px 0 0", fontSize: "12.5px", color: "#64748b", fontWeight: "600" }}>
+                        Real-time ESP32 + RC522 passenger smart card boarding and tap-out validation feed
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: "12px",
+                        fontSize: "12.5px",
+                        fontWeight: "800",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        background:
+                          rfidDevice.status === "Connected"
+                            ? "#f0fdf4"
+                            : rfidDevice.status === "Connecting"
+                              ? "#fffbeb"
+                              : rfidDevice.status === "Connection Failed"
+                                ? "#fef2f2"
+                                : "#f1f5f9",
+                        color:
+                          rfidDevice.status === "Connected"
+                            ? "#15803d"
+                            : rfidDevice.status === "Connecting"
+                              ? "#b45309"
+                              : rfidDevice.status === "Connection Failed"
+                                ? "#dc2626"
+                                : "#64748b",
+                        border: `1.5px solid ${
+                          rfidDevice.status === "Connected"
+                            ? "#bbf7d0"
+                            : rfidDevice.status === "Connecting"
+                              ? "#fde68a"
+                              : rfidDevice.status === "Connection Failed"
+                                ? "#fecaca"
+                                : "#e2e8f0"
+                        }`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "50%",
+                          background:
+                            rfidDevice.status === "Connected"
+                              ? "#16a34a"
+                              : rfidDevice.status === "Connecting"
+                                ? "#f59e0b"
+                                : rfidDevice.status === "Connection Failed"
+                                  ? "#ef4444"
+                                  : "#94a3b8",
+                        }}
+                      ></span>
+                      {rfidDevice.status === "Connected"
+                        ? "● CONNECTED (ONLINE)"
+                        : rfidDevice.status === "Connecting"
+                          ? "● CONNECTING..."
+                          : rfidDevice.status === "Connection Failed"
+                            ? "● CONNECTION FAILED"
+                            : "○ NOT CONNECTED"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* RFID Device Metrics Grid */}
+                <div className="dashboard-metrics-grid" style={{ background: "rgba(255, 255, 255, 0.8)", padding: "16px", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                  <div>
+                    <div style={styles.metricLabel}>Device Hardware ID</div>
+                    <div style={{ ...styles.metricVal, fontFamily: "monospace", color: "#6d28d9" }}>{rfidDevice.deviceId || "MS-RFID-5326"}</div>
+                  </div>
+                  <div>
+                    <div style={styles.metricLabel}>Assigned Bus</div>
+                    <div style={styles.metricVal}>{assignedBus?.busNumber || rfidDevice.busNumber || user?.busNumber || "KL-07-MS-1008"}</div>
+                  </div>
+                  <div>
+                    <div style={styles.metricLabel}>Current Stop</div>
+                    <div style={{ ...styles.metricVal, color: "#166534" }}>{rfidDevice.stopCode ? rfidDevice.stopCode.replace("STOP_", "") : "Vyttila Mobility Hub"}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px", marginBottom: "18px", fontSize: "12.5px" }}>
+                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                    <span style={{ color: "#64748b", fontWeight: "600" }}>Reader Sensor: </span>
+                    <strong style={{ color: rfidDevice.status === "Connected" ? "#15803d" : "#64748b" }}>
+                      {rfidDevice.status === "Connected" ? "RC522 Scanning Active ✓" : "Sensor Inactive"}
+                    </strong>
+                  </div>
+                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                    <span style={{ color: "#64748b", fontWeight: "600" }}>Device IP: </span>
+                    <strong style={{ fontFamily: "monospace" }}>{rfidDevice.ipAddress || "192.168.1.5"}</strong>
+                  </div>
+                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                    <span style={{ color: "#64748b", fontWeight: "600" }}>Last Communication: </span>
+                    <strong>{rfidDevice.lastHeartbeat ? new Date(rfidDevice.lastHeartbeat).toLocaleTimeString() : "Just now (Live)"}</strong>
+                  </div>
+                </div>
+
+                {/* 2. LATEST RFID TAP SECTION */}
+                <div style={{ marginBottom: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>
+                      ⚡ Latest RFID Tap
+                    </h4>
+                    {latestRfidTap && (
+                      <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
+                        {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString() : "Live"}
+                      </span>
+                    )}
+                  </div>
+
+                  {latestRfidTap ? (
+                    <div
+                      style={{
+                        background: latestRfidTap.action === "TAP_IN"
+                          ? "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)"
+                          : latestRfidTap.action === "TAP_OUT"
+                            ? "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)"
+                            : "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)",
+                        border: `1.5px solid ${
+                          latestRfidTap.action === "TAP_IN"
+                            ? "#86efac"
+                            : latestRfidTap.action === "TAP_OUT"
+                              ? "#c4b5fd"
+                              : "#fca5a5"
+                        }`,
+                        borderRadius: "16px",
+                        padding: "16px 20px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a" }}>
+                              {latestRfidTap.passengerName || latestRfidTap.passenger?.name || "Passenger"}
+                            </span>
+                            <span
+                              style={{
+                                padding: "4px 10px",
+                                borderRadius: "8px",
+                                fontSize: "12px",
+                                fontWeight: "800",
+                                background: latestRfidTap.action === "TAP_IN" ? "#16a34a" : latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#dc2626",
+                                color: "#ffffff",
+                              }}
+                            >
+                              {latestRfidTap.action === "TAP_IN" ? "TAP-IN" : latestRfidTap.action === "TAP_OUT" ? "TAP-OUT" : "REJECTED"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "12.5px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>
+                            {latestRfidTap.passengerEmail || latestRfidTap.passenger?.email || ""}
+                          </div>
+                        </div>
+
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ padding: "4px 10px", borderRadius: "10px", background: "rgba(255,255,255,0.8)", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: "800", color: "#1e293b", fontFamily: "monospace" }}>
+                            Card: {latestRfidTap.card?.rfidTag ? `****${latestRfidTap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}` : (latestRfidTap.card?.cardNumber ? `****${latestRfidTap.card.cardNumber.slice(-4)}` : "RFID Card")}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px", background: "rgba(255,255,255,0.7)", padding: "12px 16px", borderRadius: "12px", border: "1px solid rgba(0,0,0,0.06)" }}>
+                        <div>
+                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Stop</div>
+                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                            {latestRfidTap.stop?.name || (latestRfidTap.stop?.code ? latestRfidTap.stop.code.replace("STOP_", "") : "Vyttila Mobility Hub")}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Time</div>
+                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                            {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Fare Charged</div>
+                          <div style={{ fontSize: "14px", fontWeight: "800", color: latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#64748b", marginTop: "2px" }}>
+                            {latestRfidTap.action === "TAP_OUT" && latestRfidTap.fare !== undefined ? `₹${Number(latestRfidTap.fare).toFixed(2)}` : "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Card Balance</div>
+                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#15803d", marginTop: "2px" }}>
+                            {latestRfidTap.balance !== undefined ? `₹${Number(latestRfidTap.balance).toFixed(2)}` : (latestRfidTap.card?.balance ? `₹${Number(latestRfidTap.card.balance).toFixed(2)}` : "₹86.88")}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Status</div>
+                          <div style={{ fontSize: "13px", fontWeight: "800", color: latestRfidTap.status === "Rejected" ? "#dc2626" : "#15803d", marginTop: "2px" }}>
+                            {latestRfidTap.status === "Rejected" ? (latestRfidTap.reason || "Rejected") : "✓ Tap accepted"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ background: "#f8fafc", borderRadius: "14px", padding: "20px", border: "1.5px dashed #cbd5e1", textAlign: "center", color: "#64748b" }}>
+                      <div style={{ fontWeight: "700", fontSize: "14px", color: "#334155" }}>Ready for passenger card taps</div>
+                      <div style={{ fontSize: "12.5px", marginTop: "4px" }}>Tap an authorized MoveSmart RFID pass on the reader to view passenger details</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. RECENT RFID TAPS TABLE */}
+                <div style={{ marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>
+                      📋 Recent RFID Taps ({recentRfidTaps.length})
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={fetchRecentRfidTaps}
+                      style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
+                    >
+                      {loadingRecentTaps ? "Refreshing..." : "↻ Refresh Feed"}
+                    </button>
+                  </div>
+
+                  <div style={{ overflowX: "auto", borderRadius: "14px", border: "1px solid #e2e8f0", background: "#ffffff" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc", borderBottom: "1.5px solid #e2e8f0", color: "#475569", fontWeight: "800", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                          <th style={{ padding: "10px 14px" }}>Time</th>
+                          <th style={{ padding: "10px 14px" }}>Passenger</th>
+                          <th style={{ padding: "10px 14px" }}>Card</th>
+                          <th style={{ padding: "10px 14px" }}>Action</th>
+                          <th style={{ padding: "10px 14px" }}>Stop</th>
+                          <th style={{ padding: "10px 14px" }}>Fare</th>
+                          <th style={{ padding: "10px 14px" }}>Balance</th>
+                          <th style={{ padding: "10px 14px" }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentRfidTaps.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} style={{ padding: "24px", textAlign: "center", color: "#64748b", fontWeight: "600" }}>
+                              No recent RFID tap records logged yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          recentRfidTaps.map((tap, idx) => {
+                            const pName = tap.passengerName || tap.passenger?.name || "Passenger";
+                            const cardId = tap.card?.rfidTag
+                              ? `****${tap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}`
+                              : (tap.card?.cardNumber ? `****${tap.card.cardNumber.slice(-4)}` : "RFID Card");
+                            const timeStr = tap.timestamp ? new Date(tap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+                            const stopName = tap.stop?.name || (tap.stop?.code ? tap.stop.code.replace("STOP_", "") : "Station Stop");
+                            const isTapIn = tap.action === "TAP_IN";
+                            const isTapOut = tap.action === "TAP_OUT";
+
+                            return (
+                              <tr
+                                key={tap.id || idx}
+                                style={{
+                                  borderBottom: "1px solid #f1f5f9",
+                                  background: idx % 2 === 0 ? "#ffffff" : "#fbfcfe",
+                                  transition: "background 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 0 ? "#ffffff" : "#fbfcfe")}
+                              >
+                                <td style={{ padding: "10px 14px", fontWeight: "700", color: "#64748b", whiteSpace: "nowrap" }}>
+                                  {timeStr}
+                                </td>
+                                <td style={{ padding: "10px 14px", fontWeight: "800", color: "#0f172a" }}>
+                                  {pName}
+                                </td>
+                                <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#6d28d9", fontWeight: "700" }}>
+                                  {cardId}
+                                </td>
+                                <td style={{ padding: "10px 14px" }}>
+                                  <span
+                                    style={{
+                                      padding: "3px 8px",
+                                      borderRadius: "6px",
+                                      fontSize: "11px",
+                                      fontWeight: "800",
+                                      background: isTapIn ? "#dcfce7" : isTapOut ? "#ede9fe" : "#fee2e2",
+                                      color: isTapIn ? "#15803d" : isTapOut ? "#6d28d9" : "#be123c",
+                                      border: `1px solid ${isTapIn ? "#bbf7d0" : isTapOut ? "#ddd6fe" : "#fecaca"}`,
+                                    }}
+                                  >
+                                    {isTapIn ? "TAP-IN" : isTapOut ? "TAP-OUT" : "REJECTED"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "10px 14px", color: "#334155", fontWeight: "600" }}>
+                                  {stopName}
+                                </td>
+                                <td style={{ padding: "10px 14px", fontWeight: "800", color: isTapOut ? "#7c3aed" : "#94a3b8" }}>
+                                  {isTapOut && tap.fare !== undefined ? `₹${Number(tap.fare).toFixed(2)}` : "—"}
+                                </td>
+                                <td style={{ padding: "10px 14px", fontWeight: "700", color: "#15803d" }}>
+                                  {tap.balance !== undefined ? `₹${Number(tap.balance).toFixed(2)}` : (tap.card?.balance ? `₹${Number(tap.card.balance).toFixed(2)}` : "—")}
+                                </td>
+                                <td style={{ padding: "10px 14px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: "700", color: tap.status === "Rejected" ? "#dc2626" : "#15803d" }}>
+                                    {tap.status === "Rejected" ? "Rejected" : "Accepted ✓"}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Device Configuration & Action Buttons */}
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #e2e8f0", paddingTop: "14px" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRfidForm((prev) => ({
+                        ...prev,
+                        busNumber: assignedBus?.busNumber || user?.busNumber || prev.busNumber,
+                        deviceId: rfidDevice.deviceId || prev.deviceId,
+                        stopCode: rfidDevice.stopCode || prev.stopCode,
+                      }));
+                      setShowRfidModal(true);
+                    }}
+                    className="btn-green-gradient touch-target"
+                    style={{ padding: "10px 18px", fontSize: "13.5px", borderRadius: "12px", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}
+                  >
+                    <span>📶</span>
+                    {rfidDevice.status === "Connected" ? "Reconfigure RFID Device" : "Connect RFID Device"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSimulateTap}
+                    className="touch-target"
+                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#334155", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                  >
+                    ⚡ Test Tap (53262A56)
+                  </button>
+
+                  {rfidDevice.status !== "Not Connected" && (
+                    <button
+                      type="button"
+                      onClick={handleUnlinkRfidDevice}
+                      className="touch-target"
+                      style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                    >
+                      🔌 Unlink Device
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -4334,6 +5078,224 @@ function Driver() {
         </div>
       )}
 
+      {/* 📡 ESP32 RFID DEVICE CONNECTION & WI-FI PROVISIONING MODAL */}
+      {showRfidModal && (
+        <div style={styles.modalOverlay}>
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "24px",
+              padding: "28px",
+              maxWidth: "620px",
+              width: "100%",
+              boxShadow: "0 24px 50px rgba(0, 0, 0, 0.25)",
+              border: "1.5px solid #e2e8f0",
+              maxHeight: "92vh",
+              overflowY: "auto",
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px", borderBottom: "1px solid #e2e8f0", paddingBottom: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" }}>
+                  📡
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "19px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                    Connect &amp; Provision RFID Device
+                  </h3>
+                  <div style={{ fontSize: "12.5px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>
+                    Configure Wi-Fi credentials for onboard ESP32 + RC522 reader
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRfidModal(false);
+                  setRfidProvisioningMsg("");
+                }}
+                style={{ background: "#f1f5f9", border: "none", width: "32px", height: "32px", borderRadius: "50%", cursor: "pointer", fontWeight: "800", fontSize: "16px", color: "#64748b" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Step-by-Step Instructions Banner */}
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: "14px", padding: "14px 16px", marginBottom: "20px", fontSize: "13px", color: "#166534" }}>
+              <div style={{ fontWeight: "800", marginBottom: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span>💡</span> Easy 2-Step Device Connection
+              </div>
+              <ol style={{ margin: "0 0 0 18px", padding: 0, lineHeight: "1.6", fontWeight: "600" }}>
+                <li>Power ON your ESP32 device and connect your phone/laptop to Wi-Fi: <strong>MoveSmart-RFID-xxxx</strong> (Password: <code>MoveSmart123</code>).</li>
+                <li>Enter your vehicle/hotspot Wi-Fi details below and click <strong>Transmit Configuration</strong>.</li>
+              </ol>
+            </div>
+
+            {/* Provisioning Status Feedback */}
+            {rfidProvisioningMsg && (
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: "12px",
+                  marginBottom: "18px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  background:
+                    rfidProvisioningStatus === "success"
+                      ? "#f0fdf4"
+                      : rfidProvisioningStatus === "error"
+                        ? "#fef2f2"
+                        : "#f5f3ff",
+                  color:
+                    rfidProvisioningStatus === "success"
+                      ? "#15803d"
+                      : rfidProvisioningStatus === "error"
+                        ? "#dc2626"
+                        : "#6d28d9",
+                  border: `1.5px solid ${
+                    rfidProvisioningStatus === "success"
+                      ? "#86efac"
+                      : rfidProvisioningStatus === "error"
+                        ? "#fca5a5"
+                        : "#ddd6fe"
+                  }`,
+                }}
+              >
+                {rfidProvisioningStatus === "submitting" && "⏳ "}
+                {rfidProvisioningStatus === "success" && "✓ "}
+                {rfidProvisioningStatus === "error" && "⚠ "}
+                {rfidProvisioningMsg}
+              </div>
+            )}
+
+            {/* Configuration Form */}
+            <form onSubmit={handleConfigureRfidDevice} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div>
+                  <label style={styles.formLabel}>Wi-Fi Network Name (SSID) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Bus_Hotspot_5G"
+                    value={rfidForm.ssid}
+                    onChange={(e) => setRfidForm({ ...rfidForm, ssid: e.target.value })}
+                    style={styles.formInput}
+                  />
+                </div>
+
+                <div>
+                  <label style={styles.formLabel}>Wi-Fi Password *</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter Wi-Fi password"
+                    value={rfidForm.password}
+                    onChange={(e) => setRfidForm({ ...rfidForm, password: e.target.value })}
+                    style={styles.formInput}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={styles.formLabel}>MoveSmart Server API URL</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="http://192.168.1.5:5000/api/rfid/tap"
+                  value={rfidForm.serverApiUrl}
+                  onChange={(e) => setRfidForm({ ...rfidForm, serverApiUrl: e.target.value })}
+                  style={styles.formInput}
+                />
+                <span style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+                  Backend LAN address accessible by the ESP32 on your Wi-Fi network.
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div>
+                  <label style={styles.formLabel}>Active Kerala Bus Stop</label>
+                  <select
+                    value={rfidForm.stopCode}
+                    onChange={(e) => setRfidForm({ ...rfidForm, stopCode: e.target.value })}
+                    style={styles.formInput}
+                  >
+                    {KERALA_STOPS.map((st) => (
+                      <option key={st.code} value={st.code}>
+                        {st.name} ({st.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={styles.formLabel}>Assigned Bus Number</label>
+                  <input
+                    type="text"
+                    value={rfidForm.busNumber || assignedBus?.busNumber || "KL-07-MS-1008"}
+                    onChange={(e) => setRfidForm({ ...rfidForm, busNumber: e.target.value })}
+                    style={styles.formInput}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={styles.formLabel}>Hardware Device Identifier</label>
+                <input
+                  type="text"
+                  value={rfidForm.deviceId || "MS-RFID-5326"}
+                  onChange={(e) => setRfidForm({ ...rfidForm, deviceId: e.target.value })}
+                  style={{ ...styles.formInput, fontFamily: "monospace" }}
+                />
+              </div>
+
+              {/* Modal Actions */}
+              <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", flexWrap: "wrap", borderTop: "1px solid #e2e8f0", paddingTop: "18px", marginTop: "6px" }}>
+                <a
+                  href="http://192.168.4.1"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="touch-target"
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: "10px",
+                    border: "1.5px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#475569",
+                    fontWeight: "700",
+                    fontSize: "13px",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  🌐 Open 192.168.4.1 Direct Setup
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setShowRfidModal(false)}
+                  className="touch-target"
+                  style={{ padding: "10px 16px", borderRadius: "10px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={rfidProvisioningStatus === "submitting"}
+                  className="btn-green-gradient touch-target"
+                  style={{ padding: "10px 22px", fontSize: "13.5px", borderRadius: "10px", border: "none", cursor: rfidProvisioningStatus === "submitting" ? "not-allowed" : "pointer" }}
+                >
+                  {rfidProvisioningStatus === "submitting" ? "⏳ Transmitting..." : "🚀 Transmit Configuration"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <footer style={{ backgroundColor: "#13112b", color: "#b7aed6", padding: "24px 5%", borderTop: "3px solid #6d28d9", marginTop: "auto" }}>
         <div style={{ maxWidth: "1200px", margin: "0 auto", textAlign: "center", fontSize: "13px", color: "#94a3b8", fontWeight: "600" }}>
           © {new Date().getFullYear()} MoveSmart Fleet Operations. Authorized Driver Console.
@@ -4427,10 +5389,10 @@ const styles = {
   },
   tabsContainer: {
     display: "flex",
-    gap: "12px",
-    marginBottom: "24px",
-    overflowX: "auto",
-    paddingBottom: "4px"
+    flexWrap: "wrap",
+    gap: "10px",
+    marginBottom: "28px",
+    alignItems: "center"
   },
   cardTitle: {
     fontSize: "18px",

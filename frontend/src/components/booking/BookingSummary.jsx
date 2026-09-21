@@ -68,7 +68,10 @@ export default function BookingSummary({
 
   const [passengerName, setPassengerName] = useState(currentUser?.name || "");
   const [passengerEmail, setPassengerEmail] = useState(currentUser?.email || "");
-  const [passengerPhone, setPassengerPhone] = useState(currentUser?.phone || "+91 98765 43210");
+  const [passengerPhone, setPassengerPhone] = useState(() => {
+    const raw = (currentUser?.phone || "").replace(/\D/g, "");
+    return raw.length === 12 && raw.startsWith("91") ? raw.slice(2) : (raw.length === 10 ? raw : "");
+  });
   const [paymentMethod, setPaymentMethod] = useState("rfid");
   const [couponCode, setCouponCode] = useState("");
   const [discountPercent, setDiscountPercent] = useState(0);
@@ -97,6 +100,26 @@ export default function BookingSummary({
     e.preventDefault();
     if (!passengerName.trim() || !passengerEmail.trim()) {
       setFormError("Please enter passenger name and email.");
+      return;
+    }
+    if (!passengerPhone.trim()) {
+      setFormError("Please enter passenger phone number.");
+      return;
+    }
+    if (/[a-zA-Z]/.test(passengerPhone.trim())) {
+      setFormError("❌ Phone number cannot contain alphabets/letters. Only numbers (0-9) are allowed.");
+      return;
+    }
+    if (/[^\d]/.test(passengerPhone.trim())) {
+      setFormError("❌ Phone number cannot contain symbols or special characters. Only numbers (0-9) are allowed.");
+      return;
+    }
+    if (passengerPhone.trim().length !== 10) {
+      setFormError("⚠️ Indian phone number must be exactly 10 digits.");
+      return;
+    }
+    if (!/^[6-9]/.test(passengerPhone.trim())) {
+      setFormError("❌ Indian mobile numbers must start with 6, 7, 8, or 9.");
       return;
     }
     if (seatCount === 0) {
@@ -250,10 +273,14 @@ export default function BookingSummary({
         <div className="input-with-icon">
           <Phone className="input-icon" size={16} style={{ color: "#94a3b8" }} />
           <input
-            type="text"
+            type="tel"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={10}
             value={passengerPhone}
-            onChange={(e) => setPassengerPhone(e.target.value)}
-            placeholder="Phone Number"
+            onChange={(e) => setPassengerPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+            placeholder="Phone Number (10 digits, numbers only)"
+            required
             className="passenger-input"
             style={{ paddingLeft: 40 }}
           />

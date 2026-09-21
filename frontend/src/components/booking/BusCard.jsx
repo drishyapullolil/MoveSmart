@@ -17,8 +17,11 @@ import {
   ArrowRight
 } from "lucide-react";
 
+import LiveBusMap from "../common/LiveBusMap";
+
 export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
   const [showDetails, setShowDetails] = useState(false);
+  const [showLiveMap, setShowLiveMap] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [selectedStationIndex, setSelectedStationIndex] = useState(null);
 
@@ -126,16 +129,48 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
   const startStation = stationList.length > 0 ? stationList[0] : { name: fromLocation, departureTime };
   const endStation = stationList.length > 0 ? stationList[stationList.length - 1] : { name: toLocation, arrivalTime };
 
+  const cleanTokens = (str) => {
+    if (!str) return [];
+    return String(str).toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  };
+
   const findStationByQuery = (query, defaultStation) => {
     if (!query) return defaultStation;
     const q = String(query).trim().toLowerCase();
     if (q.includes("all") || q.includes("any") || q === "") return defaultStation;
-    const found = stationList.find((st) => st.name.toLowerCase().includes(q) || q.includes(st.name.toLowerCase()));
+
+    const qTokens = cleanTokens(query);
+    const found = stationList.find((st) => {
+      const stTokens = cleanTokens(st.name);
+      return (
+        st.name.toLowerCase() === q ||
+        qTokens.every((qt) => stTokens.some((stt) => stt === qt || stt.includes(qt) || qt.includes(stt)))
+      );
+    });
     return found || defaultStation;
   };
 
-  const displayStartStation = findStationByQuery(searchFrom, startStation);
-  const displayEndStation = findStationByQuery(searchTo, endStation);
+  const searchedBoarding = bus?.searchContext?.boardingStationName
+    ? findStationByQuery(bus.searchContext.boardingStationName, startStation)
+    : findStationByQuery(searchFrom, startStation);
+
+  const searchedDrop = bus?.searchContext?.dropStationName
+    ? findStationByQuery(bus.searchContext.dropStationName, endStation)
+    : findStationByQuery(searchTo, endStation);
+
+  const displayStartStation = {
+    ...searchedBoarding,
+    name: bus?.searchContext?.boardingStationName || searchedBoarding.name || fromLocation,
+    departureTime: bus?.searchContext?.boardingDepartureTime || (searchedBoarding.departureTime !== "--" ? searchedBoarding.departureTime : departureTime),
+  };
+
+  const displayEndStation = {
+    ...searchedDrop,
+    name: bus?.searchContext?.dropStationName || searchedDrop.name || toLocation,
+    arrivalTime: bus?.searchContext?.dropArrivalTime || (searchedDrop.arrivalTime !== "--" ? searchedDrop.arrivalTime : arrivalTime),
+  };
+
+  const activeDuration = bus?.searchContext?.segmentDuration || duration;
 
   const isSubStationSegment =
     (searchFrom && !searchFrom.toLowerCase().includes("all") && displayStartStation.name !== startStation.name) ||
@@ -178,16 +213,20 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
               </span>
             </div>
 
-            {isSubStationSegment && (
-              <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", padding: "2px 8px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                <span>📍 Sub-Station Stop: <strong>{displayStartStation.name} ➔ {displayEndStation.name}</strong></span>
-                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(Route: {startStation.name} ➔ {endStation.name})</span>
+            {isSubStationSegment ? (
+              <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", padding: "3px 10px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span>📍 Segment: <strong>{displayStartStation.name} ➔ {displayEndStation.name}</strong></span>
+                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(Full Route: {startStation.name} ➔ {endStation.name})</span>
+              </div>
+            ) : (
+              <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: "#64748b" }}>
+                <span>Complete Route: {startStation.name} ➔ {endStation.name}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Route Timing Block - Shows Display Station (Sub-station or Terminal) */}
+        {/* Route Timing Block - Shows Queried Boarding & Drop Station or Terminals */}
         <div className="bus-route-timing">
           <div
             className="timing-block"
@@ -195,20 +234,23 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
             style={{ cursor: "pointer" }}
             title={`Click to view ${displayStartStation.name} station details`}
           >
-            <span className="time">{displayStartStation.departureTime || displayStartStation.arrivalTime || departureTime}</span>
+            <span className="time">{displayStartStation.departureTime || departureTime}</span>
             <span className="location" style={{ display: "flex", alignItems: "center", gap: 4 }}>
               🟢 {displayStartStation.name || fromLocation}
+              <span style={{ fontSize: 10, color: "#15803d", fontWeight: 800, background: "#dcfce7", padding: "1px 5px", borderRadius: 4 }}>
+                Boarding
+              </span>
             </span>
           </div>
 
           <div className="duration-connector">
-            <span className="duration-pill">{duration || "4h 30m"}</span>
+            <span className="duration-pill">{activeDuration || "3h 30m"}</span>
             <div className="route-line"></div>
             <span
               onClick={() => setShowDetails(!showDetails)}
               style={{ fontSize: 10, color: "var(--primary)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}
             >
-              {stationList.length} Stations ({showDetails ? "Hide" : "Show All"})
+              {stationList.length} Stations ({showDetails ? "Hide" : "View Timetable"})
             </span>
           </div>
 
@@ -218,25 +260,54 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
             style={{ cursor: "pointer" }}
             title={`Click to view ${displayEndStation.name} station details`}
           >
-            <span className="time">{displayEndStation.arrivalTime || displayEndStation.departureTime || arrivalTime}</span>
+            <span className="time">{displayEndStation.arrivalTime || arrivalTime}</span>
             <span className="location" style={{ color: "var(--accent-purple)", display: "flex", alignItems: "center", gap: 4 }}>
               🔴 {displayEndStation.name || toLocation}
+              <span style={{ fontSize: 10, color: "#86198f", fontWeight: 800, background: "#fae8ff", padding: "1px 5px", borderRadius: 4 }}>
+                Drop
+              </span>
             </span>
           </div>
         </div>
 
         {/* Price & Action */}
-        <div className="bus-price-action">
-          <div className="price-display">
-            <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fare / Ticket</span>
-            <span className="price-num">₹{price}</span>
+        <div className="bus-price-action" style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="price-display">
+              <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fare / Ticket</span>
+              <span className="price-num">₹{price}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowLiveMap(!showLiveMap)}
+              className="live-track-btn"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 12,
+                background: showLiveMap ? "linear-gradient(135deg, #059669, #10b981)" : "rgba(16, 185, 129, 0.12)",
+                color: showLiveMap ? "#ffffff" : "#059669",
+                border: showLiveMap ? "none" : "1.5px solid rgba(16, 185, 129, 0.35)",
+                fontWeight: 800,
+                fontSize: 12,
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+                boxShadow: showLiveMap ? "0 4px 12px rgba(16, 185, 129, 0.35)" : "none"
+              }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: showLiveMap ? "#ffffff" : "#10b981", display: "inline-block", animation: "pulse 1.5s infinite" }}></span>
+              <span>{showLiveMap ? "Hide Live Map" : "🛰️ Live Location"}</span>
+            </button>
           </div>
 
           <button
             type="button"
             onClick={() => setShowDetails(!showDetails)}
             className={`view-seats-btn ${showDetails ? "seats-active" : ""}`}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center" }}
           >
             <Clock size={16} />
             <span>{showDetails ? "Hide Timetable" : "View Timetable"}</span>
@@ -246,38 +317,47 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
       </div>
 
       {/* Intermediate Sub-Stations Chain Preview */}
-      {stationList.length > 2 && (
+      {stationList.length > 1 && (
         <div style={{ marginTop: 12, padding: "10px 14px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
             <MapPin size={13} style={{ color: "#7c3aed" }} />
-            <span>ROUTE STOPS &amp; SUB-STATIONS ({stationList.length} TOTAL STOPS):</span>
+            <span>ROUTE STOPS &amp; TIMETABLE ({stationList.length} TOTAL STOPS):</span>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {stationList.map((st, i) => (
-              <React.Fragment key={i}>
-                <span
-                  onClick={() => handleStationClick(i)}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: st.isStart || st.isEnd ? 800 : 600,
-                    padding: "3px 9px",
-                    borderRadius: 6,
-                    background: st.isStart ? "#dcfce7" : st.isEnd ? "#fae8ff" : "#ffffff",
-                    color: st.isStart ? "#15803d" : st.isEnd ? "#86198f" : "#334155",
-                    border: `1px solid ${st.isStart ? "#86efac" : st.isEnd ? "#f0abfc" : "#cbd5e1"}`,
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                  }}
-                  title={`Click to view timing for ${st.name}`}
-                >
-                  <span>{st.isStart ? "🟢" : st.isEnd ? "🔴" : "⚪"}</span>
-                  <span>{st.name}</span>
-                </span>
-                {i < stationList.length - 1 && <span style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>➔</span>}
-              </React.Fragment>
-            ))}
+            {stationList.map((st, i) => {
+              const isBoarding = displayStartStation.name && (st.name.toLowerCase() === displayStartStation.name.toLowerCase() || st.id === displayStartStation.id);
+              const isDrop = displayEndStation.name && (st.name.toLowerCase() === displayEndStation.name.toLowerCase() || st.id === displayEndStation.id);
+
+              return (
+                <React.Fragment key={i}>
+                  <span
+                    onClick={() => handleStationClick(i)}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: isBoarding || isDrop || st.isStart || st.isEnd ? 800 : 600,
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                      background: isBoarding ? "#dcfce7" : isDrop ? "#fae8ff" : st.isStart ? "#f0fdf4" : st.isEnd ? "#fdf4ff" : "#ffffff",
+                      color: isBoarding ? "#15803d" : isDrop ? "#86198f" : st.isStart ? "#166534" : st.isEnd ? "#701a75" : "#334155",
+                      border: isBoarding ? "2px solid #22c55e" : isDrop ? "2px solid #d946ef" : "1px solid #cbd5e1",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      boxShadow: isBoarding || isDrop ? "0 2px 4px rgba(0,0,0,0.06)" : "none",
+                    }}
+                    title={`Click to view timing for ${st.name} (${st.departureTime || st.arrivalTime})`}
+                  >
+                    <span>{isBoarding ? "🟢" : isDrop ? "🔴" : st.isStart ? "🏁" : st.isEnd ? "🏁" : "⚪"}</span>
+                    <span>{st.name}</span>
+                    <span style={{ fontSize: 10, opacity: 0.85, fontFamily: "monospace" }}>
+                      ({st.departureTime !== "--" ? st.departureTime : st.arrivalTime})
+                    </span>
+                  </span>
+                  {i < stationList.length - 1 && <span style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>➔</span>}
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
       )}
@@ -430,6 +510,38 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
           🚌 Fleet Bus #{busNumber}
         </div>
       </div>
+
+      {/* Live Interactive GPS Map Section */}
+      {showLiveMap && (
+        <div style={{ marginTop: 14, borderRadius: 16, overflow: "hidden", border: "2px solid #10b981", boxShadow: "0 8px 24px rgba(16, 185, 129, 0.15)" }}>
+          <div style={{ background: "linear-gradient(135deg, #064e3b, #047857)", color: "#ffffff", padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 18 }}>🛰️</span>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 900 }}>Live Telemetry &amp; GPS Radar — Bus {busNumber} ({busName})</div>
+                <div style={{ fontSize: 11, color: "#a7f3d0" }}>Route: {fromLocation} ➔ {toLocation} • Active Driver: {driverName}</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLiveMap(false)}
+              style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#ffffff", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+            >
+              ✕ Close Map
+            </button>
+          </div>
+          <div style={{ height: 380 }}>
+            <LiveBusMap
+              busId={_id}
+              busNumber={busNumber}
+              busName={busName}
+              routeSource={fromLocation}
+              routeDestination={toLocation}
+              routeStops={stationList.map((s) => s.name)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Expandable Route & All Station Timings */}
       {showDetails && (

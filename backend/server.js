@@ -56,7 +56,11 @@ mongoose.connection.on("reconnected", () => {
 
 mongoose.connect(mongoURI, {
     serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
+    socketTimeoutMS: 15000,
+    connectTimeoutMS: 10000,
+    maxPoolSize: 20,
+    minPoolSize: 2,
+    heartbeatFrequencyMS: 10000,
     family: 4, // Use IPv4, skip trying IPv6
 })
     .catch((error) => {

@@ -42,6 +42,28 @@ const journeySchema = new mongoose.Schema({
     type: String,
     enum: ["In-Progress", "Completed", "Expired"],
     default: "In-Progress"
+  },
+  busNumber: {
+    type: String,
+    default: ""
+  },
+  busName: {
+    type: String,
+    default: ""
+  },
+  busId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Bus",
+    default: null
+  },
+  driverId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null
+  },
+  driverEmail: {
+    type: String,
+    default: ""
   }
 }, { timestamps: true });
 

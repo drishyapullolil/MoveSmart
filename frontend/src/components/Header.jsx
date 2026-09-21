@@ -13,7 +13,9 @@ import {
   Navigation,
   UserCheck,
   Package,
-  Bell
+  Bell,
+  MapPin,
+  Radio
 } from "lucide-react";
 import { getStoredUser, clearStoredSession } from "../utils/session";
 
@@ -186,6 +188,84 @@ export default function Header() {
               </Link>
 
               <Link
+                to="/driver/live-drive"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 13px",
+                  borderRadius: "9px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  whiteSpace: "nowrap",
+                  background: isActive("/driver/live-drive")
+                    ? "linear-gradient(135deg, #059669, #10b981)"
+                    : "transparent",
+                  color: isActive("/driver/live-drive") ? "#ffffff" : "#475569",
+                  boxShadow: isActive("/driver/live-drive")
+                    ? "0 2px 10px rgba(16, 185, 129, 0.25)"
+                    : "none",
+                }}
+              >
+                <MapPin size={14} />
+                <span>Live Drive 📍</span>
+              </Link>
+
+              <Link
+                to="/driver/rfid-device"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 13px",
+                  borderRadius: "9px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  whiteSpace: "nowrap",
+                  background: isActive("/driver/rfid-device")
+                    ? "linear-gradient(135deg, #16a34a, #15803d)"
+                    : "transparent",
+                  color: isActive("/driver/rfid-device") ? "#ffffff" : "#475569",
+                  boxShadow: isActive("/driver/rfid-device")
+                    ? "0 2px 10px rgba(22, 163, 74, 0.25)"
+                    : "none",
+                }}
+              >
+                <Radio size={14} />
+                <span>RFID Reader</span>
+              </Link>
+
+              <Link
+                to="/driver/location-simulator"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 13px",
+                  borderRadius: "9px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  whiteSpace: "nowrap",
+                  background: isActive("/driver/location-simulator") || isActive("/driver/location-control")
+                    ? "linear-gradient(135deg, #2563eb, #1d4ed8)"
+                    : "transparent",
+                  color: isActive("/driver/location-simulator") || isActive("/driver/location-control") ? "#ffffff" : "#475569",
+                  boxShadow: isActive("/driver/location-simulator") || isActive("/driver/location-control")
+                    ? "0 2px 10px rgba(37, 99, 235, 0.25)"
+                    : "none",
+                }}
+              >
+                <MapPin size={14} />
+                <span>Route Simulator</span>
+              </Link>
+
+              <Link
                 to="/driver/notifications"
                 style={{
                   display: "inline-flex",
@@ -241,6 +321,33 @@ export default function Header() {
                 <span>Dashboard</span>
               </Link>
 
+              {/* My RFID Card */}
+              <Link
+                to="/my-rfid-card"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 13px",
+                  borderRadius: "9px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  whiteSpace: "nowrap",
+                  background: isActive("/my-rfid-card")
+                    ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+                    : "transparent",
+                  color: isActive("/my-rfid-card") ? "#ffffff" : "#475569",
+                  boxShadow: isActive("/my-rfid-card")
+                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    : "none",
+                }}
+              >
+                <CreditCard size={14} />
+                <span>My RFID Card</span>
+              </Link>
+
               {/* Bus Schedules */}
               <Link
                 to="/book-bus"
@@ -268,7 +375,7 @@ export default function Header() {
                 <span>Bus Schedules</span>
               </Link>
 
-              {/* RFID Pass */}
+              {/* RFID Pass Apply */}
               <Link
                 to="/dashboard/card-application"
                 style={{
@@ -292,7 +399,7 @@ export default function Header() {
                 }}
               >
                 <CreditCard size={14} />
-                <span>RFID Pass</span>
+                <span>Apply Pass</span>
               </Link>
 
               {/* Wallet */}
@@ -626,6 +733,24 @@ export default function Header() {
                 }}
               >
                 <Navigation size={16} /> Driver Console
+              </Link>
+              <Link
+                to="/driver/live-drive"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  textDecoration: "none",
+                  color: "#059669",
+                  background: "rgba(16, 185, 129, 0.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <MapPin size={16} /> Live Drive (Map & Simulation)
               </Link>
               <Link
                 to="/driver/notifications"

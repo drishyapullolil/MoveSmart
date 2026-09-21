@@ -4,6 +4,7 @@ import axios from "axios";
 import AdminHeader from "../components/AdminHeader";
 import AdminFooter from "../components/AdminFooter";
 import RouteMap from "../components/admin/RouteMap";
+import LiveBusMap from "../components/common/LiveBusMap";
 import { getStoredUser, getStoredToken } from "../utils/session";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
@@ -218,6 +219,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const [driversList, setDriversList] = useState([]);
   const [driverLeaves, setDriverLeaves] = useState([]);
   const [scheduleEditingId, setScheduleEditingId] = useState(null);
+  const [expandedLiveMapScheduleId, setExpandedLiveMapScheduleId] = useState(null);
 
   // Search & Filter
   const [busSearch, setBusSearch] = useState("");
@@ -2608,7 +2610,28 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", gap: "8px" }}>
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedLiveMapScheduleId(expandedLiveMapScheduleId === sch._id ? null : sch._id)}
+                            style={{
+                              padding: "8px 14px",
+                              borderRadius: "10px",
+                              background: expandedLiveMapScheduleId === sch._id ? "linear-gradient(135deg, #059669, #10b981)" : "rgba(16, 185, 129, 0.12)",
+                              color: expandedLiveMapScheduleId === sch._id ? "#ffffff" : "#059669",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              border: expandedLiveMapScheduleId === sch._id ? "none" : "1px solid rgba(16, 185, 129, 0.3)",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              boxShadow: expandedLiveMapScheduleId === sch._id ? "0 3px 10px rgba(16,185,129,0.35)" : "none"
+                            }}
+                          >
+                            <span>🛰️</span>
+                            <span>{expandedLiveMapScheduleId === sch._id ? "Hide Map" : "Live Location"}</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleEditSchedule(sch)}
@@ -2656,6 +2679,34 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Live Bus GPS Location Map */}
+                      {expandedLiveMapScheduleId === sch._id && (
+                        <div style={{ marginTop: "14px", borderRadius: "14px", overflow: "hidden", border: "2px solid #10b981", boxShadow: "0 6px 20px rgba(16, 185, 129, 0.15)" }}>
+                          <div style={{ background: "linear-gradient(135deg, #064e3b, #047857)", color: "#ffffff", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                            <div style={{ fontSize: "13px", fontWeight: "800" }}>
+                              🛰️ Live GPS Telemetry: {displayBusNumber} ({sch.start_time}) • {matchedRoute?.routeName || sch.routeName}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedLiveMapScheduleId(null)}
+                              style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#ffffff", borderRadius: "6px", padding: "3px 8px", fontSize: "11px", fontWeight: "800", cursor: "pointer" }}
+                            >
+                              ✕ Close
+                            </button>
+                          </div>
+                          <div style={{ height: "360px" }}>
+                            <LiveBusMap
+                              busId={matchedBus?._id || sch.bus_id?._id || sch.bus_id || sch._id}
+                              busNumber={displayBusNumber}
+                              busName={matchedRoute?.routeName || sch.routeName || "MoveSmart Express"}
+                              routeSource={matchedRoute?.fromLocation || "Origin"}
+                              routeDestination={matchedRoute?.toLocation || "Destination"}
+                              routeStops={routeStops.map((s) => (typeof s === "object" ? s.name : s))}
+                            />
                           </div>
                         </div>
                       )}

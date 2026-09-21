@@ -30,6 +30,14 @@ const busSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    routeName: {
+      type: String,
+      default: "",
+    },
+    stops: {
+      type: [String],
+      default: [],
+    },
     departureTime: {
       type: String,
       required: true,

@@ -1,71 +1,106 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { processRazorpayPayment } from "../utils/razorpay";
+import { io } from "socket.io-client";
+import {
+  Bus,
+  MapPin,
+  Clock,
+  ArrowRight,
+  Search,
+  Calendar,
+  CreditCard,
+  Wallet as WalletIcon,
+  ShieldCheck,
+  ArrowLeftRight,
+  Sparkles,
+  CheckCircle,
+  TrendingUp,
+  Ticket,
+  Filter,
+  Compass,
+  MessageSquare,
+  X,
+  ChevronRight,
+  AlertCircle,
+  Info,
+  RefreshCw,
+  Zap,
+  Check,
+  ExternalLink,
+  Shield,
+  Luggage,
+  Send,
+  Radio,
+  Navigation,
+  Layers,
+  ArrowUpRight,
+  LocateFixed,
+  Eye,
+  Maximize2
+} from "lucide-react";
 import { getStoredUser, getStoredToken } from "../utils/session";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import LiveBusMap from "../components/common/LiveBusMap";
 
-function Dashboard({ defaultTab }) {
+export default function Dashboard() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [activeTab, setActiveTab] = useState(() => {
-    return defaultTab || "planner";
-  });
   const [user, setUser] = useState(() => getStoredUser());
 
-  // Real RFID States
-  const [myCards, setMyCards] = useState([]);
-  const [loadingCards, setLoadingCards] = useState(false);
-  const [selectedCard, setSelectedCard] = useState(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-
-  const [bookRfidTag, setBookRfidTag] = useState("");
-  const [bookCardType, setBookCardType] = useState("Silver");
-  const [bookSuccess, setBookSuccess] = useState("");
-  const [bookError, setBookError] = useState("");
-  const [journeyHistory, setJourneyHistory] = useState([]);
-
-  // Wojhati Planner States
+  // Search & Planner States
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
-  const [planTime, setPlanTime] = useState("12:00");
-  const [plannerResults, setPlannerResults] = useState(null);
+  const [planDate, setPlanDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [dbLocations, setDbLocations] = useState([]);
+  const [originSuggestions, setOriginSuggestions] = useState([]);
+  const [destSuggestions, setDestSuggestions] = useState([]);
+  const [showOriginDropdown, setShowOriginDropdown] = useState(false);
+  const [showDestDropdown, setShowDestDropdown] = useState(false);
 
-  // Nol Balance Checker States
-  const [nolTagId, setNolTagId] = useState("");
-  const [balanceResult, setBalanceResult] = useState(null);
-  const [checkError, setCheckError] = useState("");
+  // Live Bus Results
+  const [searchedBuses, setSearchedBuses] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
 
-  // Nol Top Up States
-  const [topUpTagId, setTopUpTagId] = useState("");
-  const [topUpAmount, setTopUpAmount] = useState("50");
-  const [topUpSuccess, setTopUpSuccess] = useState(false);
+  // Active Fleet & Departures Board
+  const [allFleetBuses, setAllFleetBuses] = useState([]);
+  const [loadingFleet, setLoadingFleet] = useState(true);
+  const [fleetTimeFilter, setFleetTimeFilter] = useState("all"); // 'all', 'morning', 'afternoon', 'evening'
+  const [fleetSearchQuery, setFleetSearchQuery] = useState("");
 
-  // Bus Route Schedule Search States
-  const [routeQuery, setRouteQuery] = useState("");
-  const [scheduleResult, setScheduleResult] = useState(null);
+  // Live Tracking Search & Selected Bus State
+  const [trackingSearchQuery, setTrackingSearchQuery] = useState("");
+  const [selectedTrackingBus, setSelectedTrackingBus] = useState(null);
+  const [liveFleetMap, setLiveFleetMap] = useState({}); // Key: busId -> { isTracking, status, latitude, longitude, speed }
 
-  // Intercity Booking States
-  const [intercityFrom, setIntercityFrom] = useState("");
-  const [intercityTo, setIntercityTo] = useState("");
-  const [intercitySeats, setIntercitySeats] = useState("1");
-  const [intercitySuccess, setIntercitySuccess] = useState(false);
+  // User Stats & Dynamic Wallet/Passes
+  const [userWalletBalance, setUserWalletBalance] = useState(null);
+  const [activeCardsCount, setActiveCardsCount] = useState(0);
 
-  // Appu Chatbot States
+  // Appu Chatbot State
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
-    { sender: "bot", text: "Namaskaram! I am Appu, your MoveSmart Virtual Assistant. How can I help you navigate Kerala bus routes today?" }
+    {
+      sender: "bot",
+      text: "Namaskaram! 🌴 I am Appu, your MoveSmart AI Transit Assistant. How can I assist your journey today across Kerala?"
+    }
   ]);
   const [chatInput, setChatInput] = useState("");
+  const chatBottomRef = useRef(null);
 
-  const [plannerLoading, setPlannerLoading] = useState(false);
-  const [plannerError, setPlannerError] = useState("");
+  // Quick suggestions for chatbot
+  const quickChatPrompts = [
+    "🚍 Live buses active?",
+    "💳 How to recharge card?",
+    "🎫 Average route fares?",
+    "🧳 Lost item support"
+  ];
 
+  // Fetch Database Stations on Load
   useEffect(() => {
-    const fetchDbStations = async () => {
+    const fetchLocations = async () => {
       try {
         const res = await axios.get("/api/locations");
         if (res.data?.success && Array.isArray(res.data.locations)) {
@@ -75,1250 +110,2104 @@ function Dashboard({ defaultTab }) {
         console.warn("Could not load stations:", err.message);
       }
     };
-    fetchDbStations();
+    fetchLocations();
   }, []);
 
-  // Live Bus Route Search Handler
-  const handleSearchRoutes = async () => {
-    setPlannerLoading(true);
-    setPlannerError("");
+  // Fetch Live Fleet Buses & Real-Time Tracking Data from Database
+  const fetchFleetBuses = useCallback(async () => {
+    setLoadingFleet(true);
     try {
-      const res = await axios.get("/api/buses", {
-        params: { from: origin.trim(), to: destination.trim(), date: planDate }
-      });
-      const busesList = res.data?.buses || [];
-      const mapped = busesList.map((b) => ({
-        id: b._id,
-        mode: b.busType || "Express Bus",
-        busName: b.busName,
-        busNumber: b.busNumber,
-        source: b.fromLocation,
-        destination: b.toLocation,
-        departureTime: b.departureTime,
-        arrivalTime: b.arrivalTime,
-        duration: b.duration,
-        travelDate: planDate,
-        seatsAvailable: b.availableSeats !== undefined ? b.availableSeats : (b.totalSeats || 32),
-        fare: b.price || "250.00",
-        rating: b.rating || "4.8",
-        driverName: b.driverName,
-        driverPhone: b.driverPhone,
-        driverLicense: b.driverLicense,
-        driverVerified: b.driverVerified,
-        driverExperience: b.driverExperience,
-        driverPhoto: b.driverPhoto,
-        stops: b.stops || [],
-        status: b.availableSeats === 0 ? "Bus Full" : "Active Service",
-      }));
-      setPlannerResults(mapped);
-      if (mapped.length === 0) {
-        setPlannerError(`No active buses scheduled by admin for "${origin || 'All'} ➔ ${destination || 'All'}".`);
+      const res = await axios.get("/api/buses/live-fleet");
+      if (res.data?.fleet && Array.isArray(res.data.fleet)) {
+        setAllFleetBuses(res.data.fleet);
+        const map = {};
+        res.data.fleet.forEach((b) => {
+          map[String(b._id)] = {
+            isTracking: b.isTracking,
+            status: b.status,
+            latitude: b.latitude,
+            longitude: b.longitude,
+            speed: b.speed,
+            heading: b.heading,
+            lastUpdated: b.lastUpdated,
+          };
+        });
+        setLiveFleetMap(map);
+      } else {
+        const fallbackRes = await axios.get("/api/buses");
+        if (fallbackRes.data?.buses && Array.isArray(fallbackRes.data.buses)) {
+          setAllFleetBuses(fallbackRes.data.buses);
+        }
       }
     } catch (err) {
-      console.error("Error searching routes:", err);
-      setPlannerError("Failed to search buses. Please check server connection.");
+      console.warn("Failed to fetch fleet buses:", err.message);
     } finally {
-      setPlannerLoading(false);
+      setLoadingFleet(false);
     }
-  };
-
-  const fetchMyCards = useCallback(async () => {
-    if (!user?.email) return;
-
-    try {
-      setLoadingCards(true);
-      const res = await axios.get(`/api/rfid/my-cards?email=${user.email}`);
-      setMyCards(res.data.cards || []);
-    } catch (err) {
-      console.error("Error fetching cards:", err);
-    } finally {
-      setLoadingCards(false);
-    }
-  }, [user]);
+  }, []);
 
   useEffect(() => {
-    if (user?.role?.toLowerCase() === "driver") {
-      navigate("/dashboard/driver");
-      return;
-    }
-    if (user?.email) {
-      const timer = window.setTimeout(() => {
-        void fetchMyCards();
-      }, 0);
+    fetchFleetBuses();
+  }, [fetchFleetBuses]);
 
-      return () => window.clearTimeout(timer);
-    }
-  }, [user, fetchMyCards, navigate]);
-
-  const handleBookCard = async (e) => {
-    e.preventDefault();
-    setBookError("");
-    setBookSuccess("");
-    if (!bookRfidTag.trim()) {
-      setBookError("Please enter a valid RFID Tag ID.");
-      return;
-    }
-    try {
-      const res = await axios.post("/api/rfid/book", {
-        rfidTag: bookRfidTag.trim(),
-        cardType: bookCardType,
-        userEmail: user?.email,
-        initialBalance: 20.0
-      });
-      setBookSuccess(`Card registered successfully! Card: ${res.data.card.cardNumber}`);
-      setBookRfidTag("");
-      fetchMyCards();
-    } catch (err) {
-      setBookError(err.response?.data?.message || "Failed to register RFID card.");
-    }
-  };
-
-  const selectCard = async (card) => {
-    setSelectedCard(card);
-    setNolTagId(card.cardNumber);
-    setTopUpTagId(card.cardNumber);
-    try {
-      setLoadingHistory(true);
-      const historyRes = await axios.get(`/api/rfid/history/${card.cardNumber}`);
-      setJourneyHistory(historyRes.data.journeys || []);
-    } catch (err) {
-      console.error("Error fetching card history:", err);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
-
-  // Nol Balance Checker Handler
-  const handleCheckBalance = async () => {
-    setCheckError("");
-    setBalanceResult(null);
-
-    if (!nolTagId) {
-      setCheckError("Please enter your 10-digit Card Number or RFID Tag ID.");
-      return;
-    }
-
-    try {
-      const res = await axios.get(`/api/rfid/balance/${nolTagId.trim()}`);
-      setBalanceResult({
-        tagId: res.data.cardNumber,
-        rfidTag: res.data.rfidTag,
-        type: `${res.data.cardType} Smart Card`,
-        balance: res.data.balance.toFixed(2),
-        expiry: "12/2031",
-        status: res.data.status
-      });
-    } catch (err) {
-      setCheckError(err.response?.data?.message || "Smart Card not found in database.");
-    }
-  };
-
-  // Nol Top Up Handler via Razorpay
-  const handleTopUpSubmit = (e) => {
-    e.preventDefault();
-    if (!topUpTagId) {
-      alert("Please enter a valid Card Number or Tag ID.");
-      return;
-    }
-
-    processRazorpayPayment({
-      amount: Number(topUpAmount),
-      description: `MoveSmart Nol Transit Top-Up (${topUpTagId.trim()})`,
-      userEmail: user?.email || "",
-      userName: user?.name || "Transit Passenger",
-      paymentType: "topup",
-      tagId: topUpTagId.trim(),
-      onSuccess: (data) => {
-        setTopUpSuccess(true);
-        if (user && user.email) {
-          fetchMyCards();
-        }
-        if (selectedCard && data.card && (selectedCard.cardNumber === data.card.cardNumber || selectedCard.rfidTag === data.card.rfidTag)) {
-          selectCard(data.card);
-        }
-        setTimeout(() => {
-          setTopUpSuccess(false);
-          setTopUpTagId("");
-        }, 4000);
-      },
-      onError: (err) => {
-        if (!err.message?.includes("cancelled")) {
-          alert(`Top-Up Payment Error: ${err.message}`);
-        }
-      },
+  // Real-Time Socket.IO Listener for Fleet GPS Broadcasts
+  useEffect(() => {
+    const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
+    const socket = io(socketUrl, {
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 10,
     });
-  };
 
-  const [scheduleLoading, setScheduleLoading] = useState(false);
+    socket.on("connect", () => {
+      // Listen to global fleet live locations
+    });
 
-  // Real Bus Route Schedule Search Handler
-  const handleSearchSchedule = async () => {
-    if (!routeQuery) return;
-    const q = routeQuery.trim();
-    setScheduleLoading(true);
-    try {
-      const [routesRes, busesRes] = await Promise.all([
-        axios.get("/api/routes"),
-        axios.get("/api/buses")
-      ]);
-
-      const allRoutes = routesRes.data?.routes || [];
-      const allBuses = busesRes.data?.buses || [];
-
-      // Find matching route or bus
-      const matchedRoute = allRoutes.find(
-        (r) =>
-          r.routeId?.toLowerCase() === q.toLowerCase() ||
-          r.routeName?.toLowerCase().includes(q.toLowerCase()) ||
-          r.fromLocation?.toLowerCase().includes(q.toLowerCase()) ||
-          r.toLocation?.toLowerCase().includes(q.toLowerCase())
-      );
-
-      const matchedBus = allBuses.find(
-        (b) =>
-          b.busNumber?.toLowerCase() === q.toLowerCase() ||
-          b.busName?.toLowerCase().includes(q.toLowerCase()) ||
-          b.fromLocation?.toLowerCase().includes(q.toLowerCase()) ||
-          b.toLocation?.toLowerCase().includes(q.toLowerCase())
-      );
-
-      if (matchedRoute) {
-        const stopsList = Array.isArray(matchedRoute.stops)
-          ? matchedRoute.stops.map((s) => (typeof s === "object" ? s.name || s.stopName : s)).filter(Boolean)
-          : [matchedRoute.fromLocation, matchedRoute.toLocation];
-
-        const associatedBuses = allBuses.filter(
-          (b) =>
-            b.fromLocation?.toLowerCase() === matchedRoute.fromLocation?.toLowerCase() ||
-            b.toLocation?.toLowerCase() === matchedRoute.toLocation?.toLowerCase()
-        );
-
-        const timetable = associatedBuses.length > 0
-          ? associatedBuses.map((b) => b.departureTime)
-          : [matchedRoute.base_start_time || "08:00 AM", "11:30 AM", "02:30 PM", "06:00 PM"];
-
-        setScheduleResult({
-          route: matchedRoute.routeId,
-          name: matchedRoute.routeName,
-          frequency: matchedRoute.frequency || "Every 30 mins",
-          stops: stopsList.length > 0 ? stopsList : [matchedRoute.fromLocation, matchedRoute.toLocation],
-          timetable,
-          associatedBuses,
-        });
-      } else if (matchedBus) {
-        const stopsList = Array.isArray(matchedBus.stops) && matchedBus.stops.length > 0
-          ? matchedBus.stops.map((s) => (typeof s === "object" ? s.name || s.stopName : s)).filter(Boolean)
-          : [matchedBus.fromLocation, matchedBus.toLocation];
-
-        setScheduleResult({
-          route: matchedBus.busNumber,
-          name: `${matchedBus.busName} (${matchedBus.fromLocation} ➔ ${matchedBus.toLocation})`,
-          frequency: matchedBus.duration || "Direct Transit",
-          stops: stopsList,
-          timetable: [matchedBus.departureTime],
-          driverName: matchedBus.driverName,
-          driverPhone: matchedBus.driverPhone,
-          driverLicense: matchedBus.driverLicense,
-          driverVerified: matchedBus.driverVerified,
-        });
-      } else {
-        setScheduleResult({
-          route: q,
-          error: `No route or bus found matching "${q}". Try searching city names or route IDs.`,
-        });
+    socket.on("admin:fleet-location", (data) => {
+      if (data?.busId) {
+        setLiveFleetMap((prev) => ({
+          ...prev,
+          [String(data.busId)]: {
+            isTracking: data.isTracking !== false,
+            status: data.status || "LIVE",
+            latitude: data.latitude,
+            longitude: data.longitude,
+            speed: data.speed,
+            heading: data.heading,
+            lastUpdated: data.lastUpdated || Date.now(),
+          },
+        }));
       }
-    } catch (err) {
-      console.error("Error searching schedule:", err);
-      setScheduleResult({
-        route: q,
-        error: "Failed to fetch live schedule from server.",
-      });
-    } finally {
-      setScheduleLoading(false);
+    });
+
+    socket.on("bus:trackingStarted", (data) => {
+      if (data?.busId) {
+        setLiveFleetMap((prev) => ({
+          ...prev,
+          [String(data.busId)]: {
+            isTracking: true,
+            status: "LIVE",
+            latitude: data.latitude,
+            longitude: data.longitude,
+            speed: data.speed,
+            heading: data.heading,
+            lastUpdated: Date.now(),
+          },
+        }));
+      }
+    });
+
+    socket.on("bus:trackingStopped", (data) => {
+      if (data?.busId) {
+        setLiveFleetMap((prev) => ({
+          ...prev,
+          [String(data.busId)]: {
+            ...(prev[String(data.busId)] || {}),
+            isTracking: false,
+            status: "OFFLINE",
+          },
+        }));
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  // Fetch User Active Smart Cards & Balance Dynamically from Database
+  useEffect(() => {
+    const fetchUserStats = async () => {
+      const token = getStoredToken();
+      if (!token) return;
+      try {
+        const res = await axios.get("/api/cards/my-cards", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.data?.success && Array.isArray(res.data.cards)) {
+          setActiveCardsCount(res.data.cards.length);
+          const totalBal = res.data.cards.reduce((sum, c) => sum + (Number(c.balance) || 0), 0);
+          setUserWalletBalance(totalBal);
+        }
+      } catch (e) {
+        // Handled silently
+      }
+    };
+    fetchUserStats();
+  }, []);
+
+  // Dynamically extract unique active corridors from database buses
+  const dynamicCorridors = useMemo(() => {
+    const seen = new Set();
+    const corridors = [];
+    for (const bus of allFleetBuses) {
+      if (bus.fromLocation && bus.toLocation) {
+        const key = `${bus.fromLocation.trim()}-->${bus.toLocation.trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          corridors.push({
+            from: bus.fromLocation.trim(),
+            to: bus.toLocation.trim(),
+            busType: bus.busType || "Standard",
+            duration: bus.duration || "Direct",
+            fare: bus.ticketPrice || bus.fare,
+            departureTime: bus.departureTime
+          });
+        }
+      }
     }
+    return corridors;
+  }, [allFleetBuses]);
+
+  // Auto-scroll chatbot
+  useEffect(() => {
+    if (chatOpen && chatBottomRef.current) {
+      chatBottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, chatOpen]);
+
+  // Autocomplete filtering from DB locations
+  const handleOriginChange = (val) => {
+    setOrigin(val);
+    if (!val.trim()) {
+      setOriginSuggestions([]);
+      setShowOriginDropdown(false);
+      return;
+    }
+    const q = val.toLowerCase();
+    const matches = dbLocations.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 7);
+    setOriginSuggestions(matches);
+    setShowOriginDropdown(matches.length > 0);
   };
 
-  // Intercity Booking Handler
-  const handleIntercitySubmit = (e) => {
-    e.preventDefault();
-    setIntercitySuccess(true);
-    setTimeout(() => {
-      setIntercitySuccess(false);
-    }, 4000);
+  const handleDestChange = (val) => {
+    setDestination(val);
+    if (!val.trim()) {
+      setDestSuggestions([]);
+      setShowDestDropdown(false);
+      return;
+    }
+    const q = val.toLowerCase();
+    const matches = dbLocations.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 7);
+    setDestSuggestions(matches);
+    setShowDestDropdown(matches.length > 0);
   };
 
-  // Appu Chatbot Handler
-  const handleChatSend = (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-
-    const userText = chatInput;
-    const newMessages = [...chatMessages, { sender: "user", text: userText }];
-    setChatMessages(newMessages);
-    setChatInput("");
-
-    // Simulate smart bot typing answers
-    setTimeout(() => {
-      let botResponse = "I'm sorry, I didn't quite catch that. You can ask me to 'Check K01 schedule', 'Check Kerala bus routes' or 'Fares'.";
-      const q = userText.toLowerCase();
-
-      if (q.includes("k01") || q.includes("k02") || q.includes("k03")) {
-        botResponse = "You can search for live timetables on the Bus Schedule tab on the main page. K01 operates every 30 minutes from Kochi Bus Stand to Thiruvananthapuram.";
-      } else if (q.includes("rfid") || q.includes("card") || q.includes("nol")) {
-        botResponse = "MoveSmart supports virtual Nol RFID cards for seamless boarding across Kerala. You can top up or apply directly in the RFID Card tab above!";
-      } else if (q.includes("intercity") || q.includes("express")) {
-        botResponse = "Yes, intercity express coaches connect major hubs like Ernakulam, Kozhikode, Thrissur, and Thiruvananthapuram. Check out the Express Tickets tab!";
-      } else if (q.includes("fare") || q.includes("price")) {
-        botResponse = "Fares depend on transit distance. MoveSmart express services offer dynamic pricing based on your destination.";
-      }
-
-      setChatMessages(prev => [...prev, { sender: "bot", text: botResponse }]);
-    }, 600);
-  };
-
-  const swapPlannerAddresses = () => {
+  const swapStations = () => {
     const temp = origin;
     setOrigin(destination);
     setDestination(temp);
   };
 
-  const handleLogout = () => {
-    clearStoredSession();
-    setUser(null);
-    navigate("/");
+  // Perform Live Bus Search against backend database
+  const handleSearchBuses = async (orig = origin, dest = destination) => {
+    if (!orig.trim() || !dest.trim()) {
+      setSearchError("Please specify both Boarding (Origin) and Drop (Destination) stations.");
+      return;
+    }
+    setIsSearching(true);
+    setSearchError("");
+    setHasSearched(true);
+
+    try {
+      const res = await axios.get("/api/buses", {
+        params: {
+          from: orig.trim(),
+          to: dest.trim(),
+          date: planDate
+        }
+      });
+      const busesList = res.data?.buses || [];
+      setSearchedBuses(busesList);
+    } catch (err) {
+      setSearchError(err.response?.data?.message || "Error searching for bus routes. Please try again.");
+      setSearchedBuses([]);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
+  // 1-Click Dynamic Corridor Search
+  const handleQuickCorridor = (corr) => {
+    setOrigin(corr.from);
+    setDestination(corr.to);
+    handleSearchBuses(corr.from, corr.to);
+  };
+
+  // Dynamic Chatbot Handler (queries active database buses in real-time)
+  const handleSendMessage = (customText) => {
+    const textToSend = typeof customText === "string" ? customText : chatInput;
+    if (!textToSend.trim()) return;
+    const userText = textToSend.trim();
+    const newMsgs = [...chatMessages, { sender: "user", text: userText }];
+    setChatMessages(newMsgs);
+    setChatInput("");
+
+    setTimeout(() => {
+      const q = userText.toLowerCase();
+      let reply = "";
+
+      // Dynamic match against live fleet buses in memory
+      const matchingBuses = allFleetBuses.filter((b) => {
+        const from = (b.fromLocation || "").toLowerCase();
+        const to = (b.toLocation || "").toLowerCase();
+        const bName = (b.busName || "").toLowerCase();
+        const bNum = (b.busNumber || "").toLowerCase();
+        return q.includes(from) || q.includes(to) || q.includes(bName) || q.includes(bNum);
+      });
+
+      if (matchingBuses.length > 0) {
+        const b = matchingBuses[0];
+        reply = `Found ${matchingBuses.length} active service(s)! E.g. ${b.busName} (${b.busNumber}) connects ${b.fromLocation} ➔ ${b.toLocation}, departing at ${b.departureTime} with standard fare ₹${b.ticketPrice || b.fare || 0}.`;
+      } else if (q.includes("fare") || q.includes("ticket") || q.includes("price") || q.includes("cost")) {
+        const fares = allFleetBuses.map((b) => Number(b.ticketPrice || b.fare)).filter((f) => !isNaN(f) && f > 0);
+        const minFare = fares.length > 0 ? Math.min(...fares) : 15;
+        const maxFare = fares.length > 0 ? Math.max(...fares) : 120;
+        reply = `Transit fares across our active network range between ₹${minFare} and ₹${maxFare} depending on class and route distance. Contactless RFID cardholders get seamless tap boarding!`;
+      } else if (q.includes("bus") || q.includes("fleet") || q.includes("how many") || q.includes("count") || q.includes("active")) {
+        reply = `Currently, there are ${allFleetBuses.length} live scheduled buses actively operating across ${dbLocations.length} stations in Kerala. You can query any station above!`;
+      } else if (q.includes("wallet") || q.includes("recharge") || q.includes("top up") || q.includes("balance") || q.includes("card")) {
+        reply = "You can recharge your MoveSmart Nol Card instantly via Razorpay UPI & Net Banking in the MoveSmart Wallet section on your dashboard.";
+      } else if (q.includes("pass") || q.includes("rfid") || q.includes("student") || q.includes("apply")) {
+        reply = "You can submit an application for an RFID Smart Pass (Student, Senior Citizen, Concession, or General) directly through the Smart Pass Desk with quick status tracking.";
+      } else if (q.includes("lost") || q.includes("found") || q.includes("luggage") || q.includes("item")) {
+        reply = "Misplaced any belongings on a journey? Visit our dedicated Lost & Found Desk to submit a claim or browse depot-recovered items.";
+      } else {
+        reply = `We operate ${allFleetBuses.length} active bus services across ${dbLocations.length} Kerala transit stations. Type a city name or use our Route Finder to see live departures!`;
+      }
+
+      setChatMessages((prev) => [...prev, { sender: "bot", text: reply }]);
+    }, 400);
+  };
+
+  // Filter fleet buses for Timetable Radar
+  const filteredFleet = allFleetBuses.filter((bus) => {
+    if (fleetTimeFilter !== "all") {
+      const dep = bus.departureTime || "";
+      const match = dep.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (match) {
+        let hour = parseInt(match[1], 10);
+        const meridiem = (match[3] || "").toUpperCase();
+        if (meridiem === "PM" && hour < 12) hour += 12;
+        if (meridiem === "AM" && hour === 12) hour = 0;
+
+        if (fleetTimeFilter === "morning" && (hour < 5 || hour >= 12)) return false;
+        if (fleetTimeFilter === "afternoon" && (hour < 12 || hour >= 17)) return false;
+        if (fleetTimeFilter === "evening" && hour < 17) return false;
+      }
+    }
+    if (fleetSearchQuery.trim()) {
+      const q = fleetSearchQuery.toLowerCase();
+      const bNum = (bus.busNumber || "").toLowerCase();
+      const bName = (bus.busName || "").toLowerCase();
+      const bFrom = (bus.fromLocation || "").toLowerCase();
+      const bTo = (bus.toLocation || "").toLowerCase();
+      const bType = (bus.busType || "").toLowerCase();
+      return bNum.includes(q) || bName.includes(q) || bFrom.includes(q) || bTo.includes(q) || bType.includes(q);
+    }
+    return true;
+  });
+
+  // Filter buses for Live Bus Tracking Radar
+  const trackingMatchedBuses = useMemo(() => {
+    if (!trackingSearchQuery.trim()) {
+      return allFleetBuses.slice(0, 6);
+    }
+    const q = trackingSearchQuery.toLowerCase().trim();
+    return allFleetBuses.filter((b) => {
+      const bNum = (b.busNumber || "").toLowerCase();
+      const bName = (b.busName || "").toLowerCase();
+      const bFrom = (b.fromLocation || "").toLowerCase();
+      const bTo = (b.toLocation || "").toLowerCase();
+      const bRoute = `${bFrom} ${bTo}`;
+      return bNum.includes(q) || bName.includes(q) || bRoute.includes(q);
+    });
+  }, [allFleetBuses, trackingSearchQuery]);
+
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#1e293b", fontFamily: "'Inter', sans-serif", display: "flex", flexDirection: "column" }}>
-      {/* MoveSmart Header Navigation */}
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "linear-gradient(180deg, #fbfaff 0%, #f4fbf7 50%, #f9fafb 100%)",
+        color: "#1e293b",
+        fontFamily: "'Plus Jakarta Sans', 'Outfit', -apple-system, sans-serif",
+        position: "relative"
+      }}
+    >
+      {/* Decorative ambient background accents */}
+      <div
+        style={{
+          position: "fixed",
+          top: "5%",
+          left: "-5%",
+          width: "450px",
+          height: "450px",
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(168, 85, 247, 0.08) 0%, transparent 70%)",
+          filter: "blur(40px)",
+          pointerEvents: "none",
+          zIndex: 0
+        }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          top: "35%",
+          right: "-5%",
+          width: "500px",
+          height: "500px",
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(16, 185, 129, 0.09) 0%, transparent 70%)",
+          filter: "blur(50px)",
+          pointerEvents: "none",
+          zIndex: 0
+        }}
+      />
+
       <Header />
 
-      {/* Hero Portal Banner Section */}
-      <header style={{
-        background: "linear-gradient(135deg, #2e1065 0%, #1e1b4b 100%)",
-        padding: "36px 24px",
-        color: "#ffffff",
-        textAlign: "center",
-        boxShadow: "0 15px 35px rgba(46, 16, 101, 0.25)",
-        position: "relative",
-        overflow: "hidden",
-      }}>
-        <div style={{ position: "absolute", right: "-60px", top: "-60px", width: "260px", height: "260px", borderRadius: "50%", background: "radial-gradient(circle, rgba(74,222,128,0.15) 0%, rgba(167,139,250,0) 70%)", pointerEvents: "none" }} />
-        <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 14px", borderRadius: "999px", background: "rgba(255, 255, 255, 0.12)", backdropFilter: "blur(8px)", fontSize: "12px", fontWeight: "800", color: "#4ade80", marginBottom: "12px", border: "1px solid rgba(74, 222, 128, 0.3)" }}>
-            🚌 KERALA STATE BUS &amp; SMART RFID TRANSIT GRID
-          </div>
-          <h1 style={{ fontSize: "32px", fontWeight: "900", margin: 0, letterSpacing: "-0.5px" }}>
-            MoveSmart <span style={{ color: "#a78bfa" }}>Transit Portal</span>
-          </h1>
-          <p style={{ fontSize: "14.5px", color: "#cbd5e1", margin: "10px auto 0 auto", maxWidth: "700px", lineHeight: "1.6" }}>
-            Plan inter-district routes, manage your virtual RFID smart wallet, view live bus timetables, and book express coach lines across Kerala.
-          </p>
-        </div>
-      </header>
+      {/* Main Container */}
+      <main
+        style={{
+          flex: 1,
+          maxWidth: "1380px",
+          width: "100%",
+          margin: "0 auto",
+          padding: "32px 24px 64px",
+          boxSizing: "border-box",
+          position: "relative",
+          zIndex: 1
+        }}
+      >
+        {/* ========================================================= */}
+        {/* 1. HERO COMMUTER BANNER WITH LIGHT PURPLE & GREEN PALETTE */}
+        {/* ========================================================= */}
+        <section
+          style={{
+            background: "linear-gradient(135deg, #1e1b4b 0%, #0f172a 40%, #064e3b 100%)",
+            borderRadius: "24px",
+            padding: "36px 40px",
+            color: "#ffffff",
+            marginBottom: "36px",
+            boxShadow: "0 20px 40px -15px rgba(30, 27, 75, 0.4), 0 0 0 1px rgba(168, 85, 247, 0.2)",
+            position: "relative",
+            overflow: "hidden"
+          }}
+        >
+          {/* Subtle luminous aesthetic rings */}
+          <div
+            style={{
+              position: "absolute",
+              top: "-80px",
+              right: "-60px",
+              width: "320px",
+              height: "320px",
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(168, 85, 247, 0.3) 0%, rgba(16, 185, 129, 0.15) 50%, transparent 75%)",
+              filter: "blur(20px)",
+              pointerEvents: "none"
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: "-70px",
+              left: "20%",
+              width: "250px",
+              height: "250px",
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(16, 185, 129, 0.25) 0%, transparent 70%)",
+              filter: "blur(30px)",
+              pointerEvents: "none"
+            }}
+          />
 
-      {/* Main Content Area */}
-      <main style={{ maxWidth: "1100px", width: "100%", margin: "0 auto", padding: "28px 20px 60px 20px", flex: 1 }}>
-        <div style={{ background: "#ffffff", borderRadius: "24px", padding: "28px", border: "1px solid #e2e8f0", boxShadow: "0 10px 25px rgba(0, 0, 0, 0.04)" }}>
-
-          {/* Driver Recruitment Banner */}
-          {(user && user.role !== "driver" && user.role !== "admin") && (
-            <div style={{ background: "linear-gradient(135deg, rgba(167, 139, 250, 0.08) 0%, rgba(74, 222, 128, 0.08) 100%)", borderRadius: "20px", padding: "20px 24px", marginBottom: "28px", display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid rgba(139, 92, 246, 0.2)", flexWrap: "wrap", gap: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
-                <div style={{ width: "52px", height: "52px", background: "linear-gradient(135deg, #6d28d9, #2e1065)", color: "#ffffff", borderRadius: "16px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px", boxShadow: "0 8px 18px rgba(109, 40, 217, 0.25)" }}>
-                  🚌
-                </div>
-                <div>
-                  <h3 style={{ fontSize: "17px", fontWeight: "900", margin: "0 0 4px", color: "#1e293b" }}>Drive with MoveSmart Transit</h3>
-                  <p style={{ margin: 0, fontSize: "13.5px", color: "#64748b" }}>Earn competitive fares on Kerala state &amp; private express routes with automated RFID collection.</p>
-                </div>
-              </div>
-
-              {user.verificationStatus === "Pending" ? (
-                <div style={{ background: "rgba(217, 119, 6, 0.1)", color: "#d97706", padding: "10px 18px", borderRadius: "12px", fontWeight: "800", fontSize: "13px", border: "1px solid rgba(217, 119, 6, 0.3)", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>⏳</span> Application Under Review
-                </div>
-              ) : (
-                <Link to="/apply-driver" style={{ background: "linear-gradient(135deg, #16a34a, #15803d)", color: "#fff", padding: "12px 24px", borderRadius: "12px", textDecoration: "none", fontWeight: "800", fontSize: "13.5px", boxShadow: "0 8px 18px rgba(22, 163, 74, 0.25)", display: "inline-block", transition: "transform 0.2s" }} onMouseOver={(e) => e.currentTarget.style.transform = "translateY(-2px)"} onMouseOut={(e) => e.currentTarget.style.transform = "translateY(0)"}>
-                  Apply Now →
-                </Link>
-              )}
-            </div>
-          )}
-
-          {/* Tab Navigation Header with Icons */}
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "28px", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px" }}>
-            {[
-              { id: "planner", label: "🗺️ Journey Planner" },
-              { id: "nol", label: "🪪 RFID Card Portal" },
-              { id: "schedules", label: "⏱️ Bus Timetables" },
-              { id: "intercity", label: "🚌 Bus Fleet Directory" },
-            ].map((tab) => {
-              const isSelected = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "28px",
+              position: "relative",
+              zIndex: 2
+            }}
+          >
+            <div>
+              {/* Status Badge */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                <span
                   style={{
-                    padding: "10px 18px",
-                    borderRadius: "14px",
-                    border: `2px solid ${isSelected ? "#6d28d9" : "#e2e8f0"}`,
-                    background: isSelected ? "linear-gradient(135deg, #2e1065 0%, #4c1d95 100%)" : "#f8fafc",
-                    color: isSelected ? "#ffffff" : "#475569",
+                    fontSize: "12px",
                     fontWeight: "800",
-                    fontSize: "13.5px",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    boxShadow: isSelected ? "0 6px 16px rgba(46, 16, 101, 0.2)" : "none",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.8px",
+                    background: "rgba(16, 185, 129, 0.18)",
+                    color: "#34d399",
+                    padding: "5px 14px",
+                    borderRadius: "9999px",
+                    border: "1px solid rgba(52, 211, 153, 0.35)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    backdropFilter: "blur(6px)"
                   }}
                 >
-                  {tab.label}
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              onClick={() => navigate("/wallet")}
-              style={{
-                padding: "10px 18px",
-                borderRadius: "14px",
-                border: "2px solid #16a34a",
-                background: "rgba(22, 163, 74, 0.08)",
-                color: "#15803d",
-                fontWeight: "800",
-                fontSize: "13.5px",
-                cursor: "pointer",
-                marginLeft: "auto",
-                transition: "all 0.2s ease",
-              }}
-            >
-              💳 Main Wallet &amp; History
-            </button>
-          </div>
-
-          {/* TAB 1: KERALA JOURNEY PLANNER */}
-          {activeTab === "planner" && (
-            <div className="fade-in-section">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
-                <div className="rta-input-group">
-                  <label htmlFor="planner-origin" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Origin / Boarding Stop</label>
-                  <input
-                    id="planner-origin"
-                    type="text"
-                    className="rta-input-field"
-                    value={origin}
-                    list="db-locations-list"
-                    onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="e.g. Kochi, Malam, Vyttila..."
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: "#34d399",
+                      boxShadow: "0 0 10px #34d399"
+                    }}
                   />
-                </div>
+                  Smart Transit Online
+                </span>
 
-                <button
-                  type="button"
-                  onClick={swapPlannerAddresses}
-                  aria-label="Swap locations"
+                <span
                   style={{
+                    fontSize: "12px",
+                    fontWeight: "700",
+                    background: "rgba(168, 85, 247, 0.2)",
+                    color: "#d8b4fe",
+                    padding: "5px 14px",
+                    borderRadius: "9999px",
+                    border: "1px solid rgba(192, 132, 252, 0.35)",
+                    backdropFilter: "blur(6px)"
+                  }}
+                >
+                  ✨ {dbLocations.length > 0 ? `${dbLocations.length} Connected Stations` : "Network Active"}
+                </span>
+              </div>
+
+              <h1
+                style={{
+                  fontSize: "32px",
+                  fontWeight: "900",
+                  margin: "0 0 8px 0",
+                  color: "#ffffff",
+                  letterSpacing: "-0.5px",
+                  lineHeight: "1.2"
+                }}
+              >
+                Namaskaram,{" "}
+                <span
+                  style={{
+                    background: "linear-gradient(135deg, #a7f3d0 0%, #d8b4fe 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent"
+                  }}
+                >
+                  {user?.name || "Commuter"}
+                </span>{" "}
+                👋
+              </h1>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "15px",
+                  color: "#cbd5e1",
+                  maxWidth: "620px",
+                  lineHeight: "1.6"
+                }}
+              >
+                Your unified smart transit hub. Track live buses in real time on the map, check intermediate station arrivals, top up your wallet, and reserve seats.
+              </p>
+            </div>
+
+            {/* Dynamic Glassmorphic KPI Stat Cards */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "16px" }}>
+              
+              {/* Card 1: Live Active Fleet */}
+              <div
+                style={{
+                  background: "rgba(255, 255, 255, 0.07)",
+                  backdropFilter: "blur(14px)",
+                  WebkitBackdropFilter: "blur(14px)",
+                  border: "1px solid rgba(52, 211, 153, 0.3)",
+                  borderRadius: "18px",
+                  padding: "16px 22px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
+                  transition: "transform 0.2s"
+                }}
+              >
+                <div
+                  style={{
+                    width: "46px",
                     height: "46px",
-                    borderRadius: "12px",
-                    border: "1.5px solid #e2e8f0",
-                    background: "#f8fafc",
-                    color: "#6d28d9",
-                    fontWeight: "800",
-                    cursor: "pointer",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(5, 150, 105, 0.4) 100%)",
+                    border: "1px solid rgba(52, 211, 153, 0.4)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: "6px",
+                    color: "#34d399"
                   }}
                 >
-                  🔄 Swap
-                </button>
-
-                <div className="rta-input-group">
-                  <label htmlFor="planner-destination" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Destination Stop</label>
-                  <input
-                    id="planner-destination"
-                    type="text"
-                    className="rta-input-field"
-                    value={destination}
-                    list="db-locations-list"
-                    onChange={(e) => setDestination(e.target.value)}
-                    placeholder="e.g. Trivandrum, Pala, Erumely..."
-                  />
+                  <Bus size={24} />
                 </div>
-
-                <datalist id="db-locations-list">
-                  {dbLocations.map((loc, idx) => (
-                    <option key={idx} value={loc} />
-                  ))}
-                </datalist>
-
-                <div className="rta-input-group">
-                  <label htmlFor="planner-date" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Travel Date</label>
-                  <input
-                    id="planner-date"
-                    type="date"
-                    className="rta-input-field"
-                    value={planDate}
-                    onChange={(e) => setPlanDate(e.target.value)}
-                  />
-                </div>
-
-                <div className="rta-input-group">
-                  <label htmlFor="planner-time" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Departure Time</label>
-                  <input
-                    id="planner-time"
-                    type="time"
-                    className="rta-input-field"
-                    value={planTime}
-                    onChange={(e) => setPlanTime(e.target.value)}
-                  />
+                <div>
+                  <div style={{ fontSize: "11px", color: "#a7f3d0", textTransform: "uppercase", fontWeight: "700", letterSpacing: "0.5px" }}>
+                    Active Network Fleet
+                  </div>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#ffffff", marginTop: "2px" }}>
+                    {loadingFleet ? "Checking..." : `${allFleetBuses.length} Buses Live`}
+                  </div>
                 </div>
               </div>
 
-              <div style={{ marginTop: "24px", display: "flex", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  onClick={handleSearchRoutes}
+              {/* Card 2: Smart Pass / Wallet Balance */}
+              <div
+                style={{
+                  background: "rgba(255, 255, 255, 0.07)",
+                  backdropFilter: "blur(14px)",
+                  WebkitBackdropFilter: "blur(14px)",
+                  border: "1px solid rgba(192, 132, 252, 0.35)",
+                  borderRadius: "18px",
+                  padding: "16px 22px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
+                  transition: "transform 0.2s"
+                }}
+              >
+                <div
                   style={{
-                    padding: "12px 26px",
+                    width: "46px",
+                    height: "46px",
                     borderRadius: "14px",
-                    background: "linear-gradient(135deg, #2e1065 0%, #4c1d95 100%)",
-                    color: "#ffffff",
-                    border: "none",
-                    fontWeight: "800",
-                    fontSize: "14px",
-                    cursor: "pointer",
-                    boxShadow: "0 8px 20px rgba(46, 16, 101, 0.2)",
+                    background: "linear-gradient(135deg, rgba(168, 85, 247, 0.3) 0%, rgba(126, 34, 206, 0.4) 100%)",
+                    border: "1px solid rgba(192, 132, 252, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#d8b4fe"
                   }}
                 >
-                  Find Express Routes →
+                  <WalletIcon size={24} />
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "#e9d5ff", textTransform: "uppercase", fontWeight: "700", letterSpacing: "0.5px" }}>
+                    RFID Pass Balance
+                  </div>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#ffffff", marginTop: "2px" }}>
+                    {userWalletBalance !== null ? `₹${userWalletBalance.toFixed(2)}` : (activeCardsCount > 0 ? "Active" : "Apply Pass")}
+                  </div>
+                </div>
+                <Link
+                  to="/wallet"
+                  style={{
+                    color: "#a7f3d0",
+                    marginLeft: "8px",
+                    background: "rgba(255, 255, 255, 0.1)",
+                    borderRadius: "10px",
+                    padding: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    textDecoration: "none",
+                    transition: "all 0.2s"
+                  }}
+                  title="Open Wallet"
+                >
+                  <ArrowUpRight size={18} />
+                </Link>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        {/* ========================================================= */}
+        {/* 2. REAL-TIME LIVE BUS TRACKING & RADAR MAP SECTION        */}
+        {/* ========================================================= */}
+        <section
+          style={{
+            background: "linear-gradient(135deg, #ffffff 0%, #fbfaff 100%)",
+            borderRadius: "22px",
+            padding: "32px",
+            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            border: "1.5px solid #ede9fe",
+            marginBottom: "36px",
+            position: "relative"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #ecfdf5 0%, #f3e8ff 100%)",
+                    border: "1px solid #d1fae5",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#059669"
+                  }}
+                >
+                  <Radio size={20} className="animate-pulse" />
+                </div>
+                <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                  Live Bus Tracking &amp; GPS Radar
+                </h2>
+              </div>
+              <p style={{ margin: "4px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                Track moving vehicles on OpenStreetMap in real time with live speed and stop ETAs
+              </p>
+            </div>
+
+            {/* Bus Search Input for Quick Tracking */}
+            <div style={{ position: "relative", minWidth: "260px" }}>
+              <Search size={16} color="#8b5cf6" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)" }} />
+              <input
+                type="text"
+                placeholder="Search bus no. (e.g. MS-102, KL-07) or route..."
+                value={trackingSearchQuery}
+                onChange={(e) => setTrackingSearchQuery(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px 10px 38px",
+                  borderRadius: "12px",
+                  border: "1.5px solid #ddd6fe",
+                  background: "#ffffff",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  color: "#1e1b4b",
+                  boxSizing: "border-box",
+                  outline: "none"
+                }}
+                onFocusCapture={(e) => (e.currentTarget.style.borderColor = "#059669")}
+                onBlurCapture={(e) => (e.currentTarget.style.borderColor = "#ddd6fe")}
+              />
+            </div>
+          </div>
+
+          {/* Quick Bus Tracking Results / Selector Chips */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px", marginBottom: selectedTrackingBus ? "24px" : "0" }}>
+            {trackingMatchedBuses.map((bus) => {
+              const liveData = liveFleetMap[String(bus._id)] || {};
+              const isLive = Boolean(liveData.isTracking && liveData.status !== "OFFLINE");
+              const isSelected = selectedTrackingBus?._id === bus._id;
+
+              return (
+                <div
+                  key={bus._id}
+                  onClick={() => setSelectedTrackingBus(isSelected ? null : bus)}
+                  style={{
+                    background: isSelected ? "linear-gradient(135deg, #f5f3ff 0%, #ecfdf5 100%)" : "#ffffff",
+                    borderRadius: "14px",
+                    border: isSelected ? "2px solid #059669" : "1.5px solid #ede9fe",
+                    padding: "14px 16px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    boxShadow: isSelected ? "0 8px 20px rgba(5, 150, 105, 0.15)" : "0 2px 6px rgba(0,0,0,0.02)",
+                    transition: "all 0.2s"
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#8b5cf6";
+                      e.currentTarget.style.transform = "translateY(-2px)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#ede9fe";
+                      e.currentTarget.style.transform = "none";
+                    }
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                      <span style={{ fontWeight: "900", color: "#1e1b4b", fontSize: "14px" }}>
+                        {bus.busNumber}
+                      </span>
+                      {isLive ? (
+                        <span style={{ fontSize: "11px", fontWeight: "800", color: "#059669", background: "#ecfdf5", padding: "2px 8px", borderRadius: "9999px", display: "inline-flex", alignItems: "center", gap: "4px", border: "1px solid #a7f3d0" }}>
+                          <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
+                          LIVE
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748b", background: "#f1f5f9", padding: "2px 8px", borderRadius: "9999px" }}>
+                          STANDBY
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#64748b", fontWeight: "600", display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span>{bus.fromLocation}</span>
+                      <ArrowRight size={11} color="#94a3b8" />
+                      <span>{bus.toLocation}</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <button
+                      type="button"
+                      style={{
+                        background: isSelected ? "linear-gradient(135deg, #059669 0%, #10b981 100%)" : "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)",
+                        color: isSelected ? "#ffffff" : "#6d28d9",
+                        border: "none",
+                        padding: "7px 12px",
+                        borderRadius: "10px",
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "5px"
+                      }}
+                    >
+                      <Navigation size={13} />
+                      <span>{isSelected ? "Tracking Active" : "Track Bus"}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Embedded Real-Time Leaflet Bus Map */}
+          {selectedTrackingBus && (
+            <div style={{ marginTop: "16px", animation: "fadeIn 0.3s ease" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "13px", fontWeight: "800", color: "#059669" }}>
+                    🛰️ Live Map:
+                  </span>
+                  <span style={{ fontSize: "14px", fontWeight: "900", color: "#1e1b4b" }}>
+                    {selectedTrackingBus.busName} ({selectedTrackingBus.busNumber})
+                  </span>
+                  <span style={{ fontSize: "13px", color: "#64748b" }}>
+                    — {selectedTrackingBus.fromLocation} ➔ {selectedTrackingBus.toLocation}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSelectedTrackingBus(null)}
+                  style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "4px 10px", fontSize: "12px", fontWeight: "700", color: "#475569", cursor: "pointer" }}
+                >
+                  Close Map ✕
                 </button>
               </div>
 
-              {/* Planner Results */}
-              {plannerLoading && (
-                <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
-                  <div style={{ width: 36, height: 36, border: "3px solid #6d28d9", borderTopColor: "transparent", borderRadius: "50%", margin: "0 auto 12px", animation: "spin 1s linear infinite" }}></div>
-                  <strong style={{ fontSize: "14px", color: "#1e293b" }}>Searching Live Admin Bus Schedules...</strong>
+              <LiveBusMap
+                busId={selectedTrackingBus._id}
+                busData={selectedTrackingBus}
+                height="440px"
+                onClose={() => setSelectedTrackingBus(null)}
+              />
+            </div>
+          )}
+        </section>
+
+        {/* ========================================================= */}
+        {/* 3. LIVE BUS ROUTE FINDER & STOPS PLANNER                  */}
+        {/* ========================================================= */}
+        <section
+          style={{
+            background: "#ffffff",
+            borderRadius: "22px",
+            padding: "32px",
+            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            border: "1.5px solid #ede9fe",
+            marginBottom: "36px",
+            position: "relative"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", marginBottom: "24px" }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #ecfdf5 0%, #f3e8ff 100%)",
+                    border: "1px solid #d1fae5",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#059669"
+                  }}
+                >
+                  <Compass size={20} />
                 </div>
-              )}
+                <h2 style={{ fontSize: "22px", fontWeight: "800", color: "#1e1b4b", margin: 0 }}>
+                  Smart Route &amp; Stop Planner
+                </h2>
+              </div>
+              <p style={{ margin: "6px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                Search direct routes and intermediate stopping stations with live departure schedules
+              </p>
+            </div>
 
-              {plannerError && !plannerLoading && (
-                <div style={{ marginTop: "24px", padding: "16px", borderRadius: "14px", background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", fontSize: "13.5px", fontWeight: "700", textAlign: "center" }}>
-                  ⚠️ {plannerError}
+            {/* Dynamic Active Corridor Quick Chips */}
+            {dynamicCorridors.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  ⚡ Quick Routes:
+                </span>
+                {dynamicCorridors.slice(0, 4).map((corr, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleQuickCorridor(corr)}
+                    style={{
+                      background: "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)",
+                      border: "1px solid #ddd6fe",
+                      borderRadius: "9999px",
+                      padding: "6px 14px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      color: "#4338ca",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      boxShadow: "0 2px 6px rgba(168, 85, 247, 0.06)",
+                      transition: "all 0.2s"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "#ede9fe";
+                      e.currentTarget.style.borderColor = "#059669";
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)";
+                      e.currentTarget.style.borderColor = "#ddd6fe";
+                      e.currentTarget.style.transform = "none";
+                    }}
+                  >
+                    <span>{corr.from}</span>
+                    <ArrowRight size={12} color="#059669" />
+                    <span>{corr.to}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Search Inputs Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
+            
+            {/* Origin Stop Input */}
+            <div style={{ position: "relative" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#059669", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                🟢 Boarding From (Origin)
+              </label>
+              <div style={{ position: "relative" }}>
+                <div style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#059669", display: "flex" }}>
+                  <MapPin size={18} />
                 </div>
-              )}
+                <input
+                  type="text"
+                  placeholder="e.g. Ernakulam, Trivandrum..."
+                  value={origin}
+                  onChange={(e) => handleOriginChange(e.target.value)}
+                  onFocus={() => { if (originSuggestions.length > 0) setShowOriginDropdown(true); }}
+                  style={{
+                    width: "100%",
+                    padding: "14px 14px 14px 44px",
+                    borderRadius: "14px",
+                    border: "1.5px solid #d1fae5",
+                    background: "#fdfefe",
+                    fontSize: "14px",
+                    fontWeight: "700",
+                    color: "#0f172a",
+                    boxSizing: "border-box",
+                    outline: "none",
+                    transition: "all 0.2s"
+                  }}
+                  onFocusCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#10b981";
+                    e.currentTarget.style.boxShadow = "0 0 0 4px rgba(16, 185, 129, 0.15)";
+                  }}
+                  onBlurCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#d1fae5";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+              </div>
 
-              {plannerResults && !plannerLoading && (
-                <div style={{ marginTop: "32px", borderTop: "1px dashed #e2e8f0", paddingTop: "28px" }}>
-                  <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "18px", color: "#1e293b" }}>
-                    Available Bus Schedules ({plannerResults.length})
-                  </h3>
-                  {plannerResults.length === 0 ? (
-                    <div style={{ background: "#f8fafc", padding: "28px", borderRadius: "16px", textAlign: "center", border: "1px dashed #cbd5e1", color: "#64748b" }}>
-                      No buses registered by the admin for this route yet.
+              {/* Origin Autocomplete Dropdown */}
+              {showOriginDropdown && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#ffffff", borderRadius: "14px", marginTop: "6px", boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                  {originSuggestions.map((loc, i) => (
+                    <div
+                      key={i}
+                      onClick={() => { setOrigin(loc); setShowOriginDropdown(false); }}
+                      style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "700", color: "#1e293b", cursor: "pointer", borderBottom: "1px solid #f8fafc", display: "flex", alignItems: "center", gap: "10px" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f0fdf4")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
+                    >
+                      <MapPin size={15} color="#059669" /> {loc}
                     </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                      {plannerResults.map((res) => (
-                        <div
-                          key={res.id}
-                          style={{
-                            padding: "20px",
-                            borderRadius: "18px",
-                            background: "#ffffff",
-                            border: "1px solid #e2e8f0",
-                            boxShadow: "0 8px 20px rgba(0, 0, 0, 0.03)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "14px",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
-                            <div>
-                              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                                <span style={{ fontSize: "16px", fontWeight: "900", color: "#1e293b" }}>{res.busName}</span>
-                                <span style={{ fontSize: "11.5px", fontWeight: "800", color: "#6d28d9", background: "rgba(109, 40, 217, 0.08)", padding: "4px 10px", borderRadius: "999px" }}>
-                                  {res.busNumber}
-                                </span>
-                              </div>
-                              <div style={{ marginTop: "6px", fontSize: "13.5px", color: "#64748b" }}>
-                                🟢 {res.source} ➔ 🔴 {res.destination}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "rgba(34, 197, 94, 0.12)", color: "#16a34a", padding: "6px 12px", borderRadius: "999px", fontSize: "12px", fontWeight: "800" }}>
-                              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#22c55e" }} />
-                              {res.status}
-                            </div>
-                          </div>
-
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "10px" }}>
-                            <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Departure</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.departureTime}</div>
-                            </div>
-                            <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Arrival</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.arrivalTime}</div>
-                            </div>
-                            <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Duration</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#1e293b", marginTop: "3px" }}>{res.duration || "Direct"}</div>
-                            </div>
-                            <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px" }}>
-                              <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "700" }}>Fare</div>
-                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#6d28d9", marginTop: "3px" }}>₹ {res.fare}</div>
-                            </div>
-                          </div>
-
-                          {/* Driver Summary Banner */}
-                          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 14px", borderRadius: "12px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12.5px" }}>
-                              <span>👤 Assigned Driver: <strong style={{ color: "#14532d" }}>{res.driverName || "Not Assigned"}</strong></span>
-                              {res.driverVerified && (
-                                <span style={{ fontSize: "10.5px", background: "#dcfce7", color: "#15803d", padding: "1px 7px", borderRadius: "8px", fontWeight: "800" }}>
-                                  Verified ✅
-                                </span>
-                              )}
-                              {res.driverPhone && res.driverPhone !== "N/A" && (
-                                <span style={{ color: "#059669", fontWeight: "700" }}>📞 {res.driverPhone}</span>
-                              )}
-                            </div>
-                            {res.driverLicense && res.driverLicense !== "N/A" && (
-                              <span style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace" }}>
-                                License: {res.driverLicense}
-                              </span>
-                            )}
-                          </div>
-
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #f1f5f9" }}>
-                            <div style={{ display: "flex", gap: "10px" }}>
-                              <button onClick={() => navigate("/book-bus")} style={{ padding: "8px 18px", borderRadius: "10px", background: "#6d28d9", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>
-                                View Full Timetable &amp; Driver Profile →
-                              </button>
-                            </div>
-                            <div style={{ textAlign: "right" }}>
-                              <div style={{ fontSize: "11.5px", color: "#64748b" }}>⭐ {res.rating} • Live Fleet Tracking</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  ))}
                 </div>
               )}
             </div>
+
+            {/* Swap Button (desktop) */}
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", marginBottom: "6px" }}>
+              <button
+                type="button"
+                onClick={swapStations}
+                title="Swap Boarding &amp; Drop Stations"
+                style={{
+                  width: "46px",
+                  height: "46px",
+                  borderRadius: "14px",
+                  border: "1.5px solid #ddd6fe",
+                  background: "linear-gradient(135deg, #f5f3ff 0%, #ecfdf5 100%)",
+                  color: "#7c3aed",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 4px 10px rgba(124, 58, 237, 0.1)",
+                  transition: "all 0.2s"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "rotate(180deg) scale(1.05)";
+                  e.currentTarget.style.borderColor = "#059669";
+                  e.currentTarget.style.color = "#059669";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "none";
+                  e.currentTarget.style.borderColor = "#ddd6fe";
+                  e.currentTarget.style.color = "#7c3aed";
+                }}
+              >
+                <ArrowLeftRight size={18} />
+              </button>
+            </div>
+
+            {/* Destination Stop Input */}
+            <div style={{ position: "relative" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#7c3aed", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                🟣 Destination (Drop Stop)
+              </label>
+              <div style={{ position: "relative" }}>
+                <div style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#8b5cf6", display: "flex" }}>
+                  <MapPin size={18} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. Kozhikode, Thrissur..."
+                  value={destination}
+                  onChange={(e) => handleDestChange(e.target.value)}
+                  onFocus={() => { if (destSuggestions.length > 0) setShowDestDropdown(true); }}
+                  style={{
+                    width: "100%",
+                    padding: "14px 14px 14px 44px",
+                    borderRadius: "14px",
+                    border: "1.5px solid #ede9fe",
+                    background: "#fdfefe",
+                    fontSize: "14px",
+                    fontWeight: "700",
+                    color: "#0f172a",
+                    boxSizing: "border-box",
+                    outline: "none",
+                    transition: "all 0.2s"
+                  }}
+                  onFocusCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#8b5cf6";
+                    e.currentTarget.style.boxShadow = "0 0 0 4px rgba(139, 92, 246, 0.15)";
+                  }}
+                  onBlurCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#ede9fe";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+              </div>
+
+              {/* Destination Autocomplete Dropdown */}
+              {showDestDropdown && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#ffffff", borderRadius: "14px", marginTop: "6px", boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                  {destSuggestions.map((loc, i) => (
+                    <div
+                      key={i}
+                      onClick={() => { setDestination(loc); setShowDestDropdown(false); }}
+                      style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "700", color: "#1e293b", cursor: "pointer", borderBottom: "1px solid #f8fafc", display: "flex", alignItems: "center", gap: "10px" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f5f3ff")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
+                    >
+                      <MapPin size={15} color="#8b5cf6" /> {loc}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Travel Date */}
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                📅 Journey Date
+              </label>
+              <div style={{ position: "relative" }}>
+                <div style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#64748b", display: "flex" }}>
+                  <Calendar size={18} />
+                </div>
+                <input
+                  type="date"
+                  value={planDate}
+                  min={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setPlanDate(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "14px 14px 14px 44px",
+                    borderRadius: "14px",
+                    border: "1.5px solid #e2e8f0",
+                    fontSize: "14px",
+                    fontWeight: "700",
+                    color: "#0f172a",
+                    boxSizing: "border-box",
+                    outline: "none",
+                    transition: "all 0.2s"
+                  }}
+                  onFocusCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#7c3aed";
+                    e.currentTarget.style.boxShadow = "0 0 0 4px rgba(124, 58, 237, 0.12)";
+                  }}
+                  onBlurCapture={(e) => {
+                    e.currentTarget.style.borderColor = "#e2e8f0";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Search Action Button */}
+            <div>
+              <button
+                type="button"
+                onClick={() => handleSearchBuses()}
+                disabled={isSearching}
+                style={{
+                  width: "100%",
+                  padding: "15px 22px",
+                  borderRadius: "14px",
+                  background: "linear-gradient(135deg, #059669 0%, #10b981 50%, #7c3aed 100%)",
+                  color: "#ffffff",
+                  fontSize: "15px",
+                  fontWeight: "800",
+                  border: "none",
+                  cursor: isSearching ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "10px",
+                  boxShadow: "0 8px 20px rgba(5, 150, 105, 0.28)",
+                  transition: "all 0.2s"
+                }}
+                onMouseEnter={(e) => {
+                  if (!isSearching) {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                    e.currentTarget.style.boxShadow = "0 12px 26px rgba(124, 58, 237, 0.35)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "none";
+                  e.currentTarget.style.boxShadow = "0 8px 20px rgba(5, 150, 105, 0.28)";
+                }}
+              >
+                {isSearching ? (
+                  <>
+                    <RefreshCw size={18} className="animate-spin" /> Searching Fleet...
+                  </>
+                ) : (
+                  <>
+                    <Search size={18} /> Find Live Buses
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Search Error Message */}
+          {searchError && (
+            <div
+              style={{
+                marginTop: "20px",
+                padding: "14px 18px",
+                background: "linear-gradient(135deg, #fef2f2 0%, #fff1f2 100%)",
+                border: "1.5px solid #fecaca",
+                borderRadius: "12px",
+                color: "#b91c1c",
+                fontSize: "14px",
+                fontWeight: "600",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px"
+              }}
+            >
+              <AlertCircle size={20} />
+              <span>{searchError}</span>
+            </div>
           )}
 
-          {/* TAB 2: RFID CARD SERVICES (BALANCE CHECKER & TOP UP) */}
-          {activeTab === "nol" && (
-            <div className="fade-in-section">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "28px" }}>
+          {/* ========================================================= */}
+          {/* SEARCH RESULTS TRAY                                      */}
+          {/* ========================================================= */}
+          {hasSearched && !isSearching && (
+            <div style={{ marginTop: "32px", borderTop: "2px dashed #ede9fe", paddingTop: "28px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1e1b4b", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span>Matching Departures:</span>
+                  <span
+                    style={{
+                      color: "#059669",
+                      background: "linear-gradient(135deg, #ecfdf5 0%, #f5f3ff 100%)",
+                      padding: "4px 14px",
+                      borderRadius: "9999px",
+                      border: "1px solid #a7f3d0",
+                      fontSize: "14px",
+                      fontWeight: "800"
+                    }}
+                  >
+                    {origin} ➔ {destination}
+                  </span>
+                </h3>
+                <span style={{ fontSize: "13px", color: "#7c3aed", fontWeight: "800", background: "#f5f3ff", padding: "4px 12px", borderRadius: "8px" }}>
+                  {searchedBuses?.length || 0} buses found
+                </span>
+              </div>
 
-                {/* Left Column: Balance Checker & Booking */}
-                <div>
-                  {/* Balance Checker */}
-                  <div style={{ marginBottom: "32px", background: "#f8fafc", padding: "20px", borderRadius: "20px", border: "1px solid #e2e8f0" }}>
-                    <h3 style={{ fontSize: "17px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>🔍 Check Smart Card Balance</h3>
-                    <p style={{ color: "#64748b", fontSize: "12.5px", marginBottom: "16px" }}>
-                      Enter your 10-digit MoveSmart Nol Card Number or RFID Tag UID.
-                    </p>
-
-                    <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                      <label htmlFor="nol-tag-input" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Card Number / RFID Tag UID</label>
-                      <input
-                        id="nol-tag-input"
-                        type="text"
-                        className="rta-input-field"
-                        value={nolTagId}
-                        onChange={(e) => setNolTagId(e.target.value)}
-                        placeholder="e.g. 9842104910 or 4A:2B:3C:4D"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleCheckBalance}
-                      style={{
-                        padding: "10px 20px",
-                        borderRadius: "12px",
-                        background: "linear-gradient(135deg, #2e1065, #4c1d95)",
-                        color: "#ffffff",
-                        border: "none",
-                        fontWeight: "800",
-                        fontSize: "13px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Check Live Balance →
-                    </button>
-
-                    {checkError && (
-                      <div style={{ background: "rgba(225, 29, 72, 0.08)", border: "1px solid rgba(225, 29, 72, 0.3)", borderRadius: "12px", padding: "10px 14px", color: "#dc2626", fontSize: "13px", marginTop: "14px", fontWeight: "700" }}>
-                        ⚠️ {checkError}
-                      </div>
-                    )}
-
-                    {/* Balance Preview Card */}
-                    {balanceResult && (
-                      <div className="fade-in-section" style={{ marginTop: "20px" }}>
-                        <div style={{
-                          background: "linear-gradient(135deg, #1e1b4b 0%, #2e1065 100%)",
-                          borderRadius: "20px",
-                          padding: "20px",
-                          color: "#ffffff",
-                          boxShadow: "0 10px 25px rgba(30, 27, 75, 0.2)",
-                          border: "1px solid rgba(167, 139, 250, 0.3)",
-                        }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                            <span style={{ fontSize: "12px", fontWeight: "800", color: "#a78bfa", letterSpacing: "1px" }}>MOVESMART NOL CARD</span>
-                            <span style={{ background: "rgba(74, 222, 128, 0.15)", color: "#4ade80", border: "1px solid rgba(74, 222, 128, 0.3)", padding: "2px 8px", borderRadius: "999px", fontSize: "10.5px", fontWeight: "800" }}>
-                              {balanceResult.status || "Active"}
-                            </span>
-                          </div>
-
-                          <div style={{ fontSize: "11px", color: "#cbd5e1", textTransform: "uppercase" }}>Current Balance</div>
-                          <div style={{ fontSize: "32px", fontWeight: "900", color: "#ffffff", margin: "2px 0 10px 0" }}>
-                            ₹ {balanceResult.balance}
-                          </div>
-
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#94a3b8", fontFamily: "monospace" }}>
-                            <span>{balanceResult.tagId}</span>
-                            <span>Exp: {balanceResult.expiry}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Register/Book RFID Card Form */}
-                  <div style={{ background: "#ffffff", padding: "20px", borderRadius: "20px", border: "1px solid #e2e8f0" }}>
-                    <h3 style={{ fontSize: "17px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>🪪 Book / Register Physical RFID Card</h3>
-                    <p style={{ color: "#64748b", fontSize: "12.5px", marginBottom: "16px" }}>
-                      Link a physical RFID Tag UID to your account for automatic bus tap-ins.
-                    </p>
-
-                    <form onSubmit={handleBookCard}>
-                      <div className="rta-input-group" style={{ marginBottom: "14px" }}>
-                        <label htmlFor="book-rfid-tag" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>RFID Tag UID</label>
-                        <div style={{ display: "flex", gap: "10px" }}>
-                          <input
-                            id="book-rfid-tag"
-                            type="text"
-                            className="rta-input-field"
-                            value={bookRfidTag}
-                            onChange={(e) => setBookRfidTag(e.target.value.toUpperCase())}
-                            placeholder="e.g. 4A:2B:3C:4D or 047A221980"
-                            required
-                          />
-                          <button
-                            type="button"
-                            style={{ padding: "8px 14px", whiteSpace: "nowrap", fontSize: "12px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#6d28d9", fontWeight: "800", cursor: "pointer" }}
-                            onClick={() => {
-                              const bytes = Array.from({ length: 4 }, () =>
-                                Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0')
-                              );
-                              setBookRfidTag(bytes.join(":"));
-                            }}
-                          >
-                            Gen Tag
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                        <label htmlFor="book-card-type" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Select Class</label>
-                        <select
-                          id="book-card-type"
-                          className="rta-input-field"
-                          value={bookCardType}
-                          onChange={(e) => setBookCardType(e.target.value)}
-                        >
-                          <option value="Silver">Silver Pass (Standard Fare)</option>
-                          <option value="Gold">Gold Pass (1.5x Fare, Premium A/C Express)</option>
-                          <option value="Blue">Blue Pass (0.9x Student / Concession)</option>
-                        </select>
-                      </div>
-
-                      <button type="submit" style={{ width: "100%", padding: "12px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #15803d)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "13.5px", cursor: "pointer" }}>
-                        Book Card (₹20 Initial Top-Up) →
-                      </button>
-
-                      {bookSuccess && (
-                        <div style={{ background: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.3)", borderRadius: "12px", padding: "10px 14px", color: "#16a34a", fontSize: "13px", marginTop: "14px", fontWeight: "700" }}>
-                          ✓ {bookSuccess}
-                        </div>
-                      )}
-                      {bookError && (
-                        <div style={{ background: "rgba(225, 29, 72, 0.08)", border: "1px solid rgba(225, 29, 72, 0.3)", borderRadius: "12px", padding: "10px 14px", color: "#dc2626", fontSize: "13px", marginTop: "14px", fontWeight: "700" }}>
-                          ⚠️ {bookError}
-                        </div>
-                      )}
-                    </form>
-                  </div>
+              {searchedBuses && searchedBuses.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "44px 20px", background: "linear-gradient(180deg, #fbfaff 0%, #f4fbf7 100%)", borderRadius: "18px", border: "1.5px dashed #cbd5e1" }}>
+                  <Bus size={48} color="#8b5cf6" style={{ margin: "0 auto 14px", opacity: 0.8 }} />
+                  <h4 style={{ fontSize: "18px", fontWeight: "800", color: "#1e1b4b", margin: "0 0 8px 0" }}>
+                    No Scheduled Buses Found for this Corridor
+                  </h4>
+                  <p style={{ fontSize: "14px", color: "#64748b", margin: "0 0 20px 0", maxWidth: "500px", marginInline: "auto", lineHeight: "1.6" }}>
+                    We could not find direct or intermediate buses passing "{origin}" and "{destination}" on {planDate}. Try checking major terminus points or view our full active network.
+                  </p>
+                  <button
+                    onClick={() => navigate("/book-bus")}
+                    style={{
+                      background: "linear-gradient(135deg, #059669 0%, #7c3aed 100%)",
+                      color: "#fff",
+                      border: "none",
+                      padding: "10px 22px",
+                      borderRadius: "12px",
+                      fontSize: "14px",
+                      fontWeight: "700",
+                      cursor: "pointer",
+                      boxShadow: "0 4px 14px rgba(124, 58, 237, 0.25)"
+                    }}
+                  >
+                    Explore Complete Bus Directory
+                  </button>
                 </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))", gap: "20px" }}>
+                  {searchedBuses?.map((bus) => {
+                    const ctx = bus.searchContext;
+                    const boardingTime = ctx?.boardingDepartureTime || bus.departureTime;
+                    const dropTime = ctx?.dropArrivalTime || bus.arrivalTime;
+                    const segDuration = ctx?.segmentDuration || bus.duration;
+                    const boardingName = ctx?.boardingStationName || bus.fromLocation;
+                    const dropName = ctx?.dropStationName || bus.toLocation;
+                    const displayFare = bus.ticketPrice || bus.fare;
+                    const isLiveBus = Boolean(liveFleetMap[String(bus._id)]?.isTracking);
 
-                {/* Right Column: Instant Top Up & Registered Cards */}
-                <div>
-                  {/* Instant Top Up via Razorpay */}
-                  <div style={{ marginBottom: "32px", background: "#ffffff", padding: "20px", borderRadius: "20px", border: "1px solid #e2e8f0" }}>
-                    <h3 style={{ fontSize: "17px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>⚡ Instant Nol Top-Up via Razorpay</h3>
-                    <p style={{ color: "#64748b", fontSize: "12.5px", marginBottom: "16px" }}>
-                      Top up your card instantly. Minimum top-up is ₹10.
-                    </p>
+                    return (
+                      <div
+                        key={bus._id}
+                        style={{
+                          background: "#ffffff",
+                          borderRadius: "18px",
+                          border: "1.5px solid #ede9fe",
+                          padding: "22px",
+                          boxShadow: "0 4px 16px rgba(168, 85, 247, 0.05)",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "space-between",
+                          transition: "all 0.25s",
+                          position: "relative",
+                          overflow: "hidden"
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "#10b981";
+                          e.currentTarget.style.transform = "translateY(-3px)";
+                          e.currentTarget.style.boxShadow = "0 12px 30px rgba(16, 185, 129, 0.15)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "#ede9fe";
+                          e.currentTarget.style.transform = "none";
+                          e.currentTarget.style.boxShadow = "0 4px 16px rgba(168, 85, 247, 0.05)";
+                        }}
+                      >
+                        {/* Top accent line */}
+                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "4px", background: "linear-gradient(90deg, #10b981, #8b5cf6)" }} />
 
-                    {topUpSuccess ? (
-                      <div style={{ borderColor: "#16a34a", backgroundColor: "rgba(34, 197, 94, 0.08)", textAlign: "center", padding: "20px", borderRadius: "16px", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
-                        <div style={{ fontSize: "32px", marginBottom: "6px" }}>✓</div>
-                        <h4 style={{ color: "#15803d", fontWeight: "900", fontSize: "16px", margin: "0 0 4px 0" }}>Top-Up Successful!</h4>
-                        <p style={{ fontSize: "13px", color: "#475569", margin: 0 }}>Funds have been credited via Razorpay to your MoveSmart Nol Card.</p>
-                      </div>
-                    ) : (
-                      <form onSubmit={handleTopUpSubmit}>
-                        <div className="rta-input-group" style={{ marginBottom: "14px" }}>
-                          <label htmlFor="topup-tag-input" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Card Number / RFID Tag</label>
-                          <input
-                            id="topup-tag-input"
-                            type="text"
-                            className="rta-input-field"
-                            value={topUpTagId}
-                            onChange={(e) => setTopUpTagId(e.target.value)}
-                            placeholder="e.g. 9842104910 or 4A:2B:3C:4D"
-                            required
-                          />
-                        </div>
-
-                        <div className="rta-input-group" style={{ marginBottom: "16px" }}>
-                          <label htmlFor="topup-amount-select" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Select Top-Up Amount (₹)</label>
-                          <select
-                            id="topup-amount-select"
-                            className="rta-input-field"
-                            value={topUpAmount}
-                            onChange={(e) => setTopUpAmount(e.target.value)}
-                          >
-                            <option value="10">₹10</option>
-                            <option value="20">₹20</option>
-                            <option value="50">₹50</option>
-                            <option value="100">₹100</option>
-                            <option value="200">₹200</option>
-                            <option value="500">₹500</option>
-                          </select>
-                        </div>
-
-                        <button type="submit" style={{ width: "100%", padding: "12px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "13.5px", cursor: "pointer" }}>
-                          Proceed to Razorpay Payment →
-                        </button>
-                      </form>
-                    )}
-                  </div>
-
-                  {/* Card Application Component */}
-                  <div id="card-application-section" style={{ marginTop: "20px" }}>
-                    <CardApplication />
-                  </div>
-
-                  <hr style={{ border: "none", borderTop: "1px dashed #e2e8f0", margin: "24px 0" }} />
-
-                  {/* My Booked Cards & History */}
-                  <div>
-                    <h3 style={{ fontSize: "17px", fontWeight: "900", marginBottom: "14px", color: "#1e293b" }}>💳 My Registered Smart Cards</h3>
-                    {loadingCards ? (
-                      <div style={{ padding: "20px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>Loading cards from database...</div>
-                    ) : myCards.length === 0 ? (
-                      <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "16px", padding: "24px", textAlign: "center", color: "#64748b" }}>
-                        <div style={{ fontSize: "28px", marginBottom: "6px" }}>🪪</div>
-                        <strong style={{ fontSize: "14px", color: "#334155", display: "block" }}>No smart cards linked yet</strong>
-                        <span style={{ fontSize: "12.5px" }}>Register your RFID card using the form on the left or apply for a pass.</span>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                        {myCards.map((card) => {
-                          const isSel = selectedCard?._id === card._id;
-                          return (
-                            <div
-                              key={card._id}
-                              onClick={() => selectCard(card)}
-                              style={{
-                                padding: "14px 18px",
-                                border: `2px solid ${isSel ? "#6d28d9" : "#e2e8f0"}`,
-                                borderRadius: "14px",
-                                cursor: "pointer",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                backgroundColor: isSel ? "rgba(109, 40, 217, 0.05)" : "#ffffff",
-                                transition: "all 0.2s"
-                              }}
-                            >
-                              <div>
-                                <div style={{ fontWeight: "800", fontSize: "14px", color: "#1e293b" }}>
-                                  {card.cardType} Nol Pass
+                        <div>
+                          {/* Top Tag & Bus Name */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px", marginTop: "4px" }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                                <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", background: "linear-gradient(135deg, #f5f3ff 0%, #ecfdf5 100%)", color: "#6d28d9", padding: "4px 10px", borderRadius: "8px", border: "1px solid #ddd6fe" }}>
+                                  {bus.busType || "Standard"} • {bus.busNumber}
+                                </span>
+                                {isLiveBus && (
+                                  <span style={{ fontSize: "10px", fontWeight: "800", color: "#059669", background: "#ecfdf5", padding: "3px 8px", borderRadius: "6px", border: "1px solid #a7f3d0", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                                    <span style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#10b981" }} />
+                                    LIVE GPS
+                                  </span>
+                                )}
+                              </div>
+                              <h4 style={{ fontSize: "17px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                                {bus.busName}
+                              </h4>
+                            </div>
+                            {displayFare && (
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: "20px", fontWeight: "900", color: "#059669" }}>
+                                  ₹{displayFare}
                                 </div>
-                                <div style={{ fontSize: "12px", color: "#64748b", fontFamily: "monospace", marginTop: "2px" }}>
-                                  {card.cardNumber} (RFID: {card.rfidTag})
+                                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "600" }}>per passenger</div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Route & Timings Widget */}
+                          <div style={{ background: "linear-gradient(135deg, #f8fafc 0%, #f5f3ff 100%)", borderRadius: "14px", padding: "14px", marginBottom: "16px", border: "1px solid #ede9fe" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                              <div>
+                                <div style={{ fontSize: "11px", color: "#059669", fontWeight: "800" }}>🟢 Board at {boardingName}</div>
+                                <div style={{ fontSize: "16px", fontWeight: "900", color: "#1e1b4b", marginTop: "2px" }}>{boardingTime}</div>
+                              </div>
+                              <div style={{ textAlign: "center", padding: "0 8px" }}>
+                                <div style={{ fontSize: "11px", color: "#7c3aed", fontWeight: "800" }}>{segDuration}</div>
+                                <div style={{ display: "flex", alignItems: "center", color: "#94a3b8", justifyContent: "center" }}>
+                                  <div style={{ width: "24px", height: "2px", background: "linear-gradient(90deg, #10b981, #8b5cf6)" }} />
+                                  <ArrowRight size={14} color="#7c3aed" />
                                 </div>
                               </div>
                               <div style={{ textAlign: "right" }}>
-                                <div style={{ fontWeight: "900", fontSize: "16px", color: "#16a34a" }}>
-                                  ₹ {Number(card.balance || 0).toFixed(2)}
-                                </div>
-                                <span style={{
-                                  fontSize: "10px",
-                                  padding: "2px 8px",
-                                  borderRadius: "999px",
-                                  fontWeight: "800",
-                                  backgroundColor: card.status === "Active" ? "rgba(34, 197, 94, 0.12)" : "rgba(225, 29, 72, 0.12)",
-                                  color: card.status === "Active" ? "#16a34a" : "#dc2626"
-                                }}>
-                                  {card.status}
-                                </span>
+                                <div style={{ fontSize: "11px", color: "#8b5cf6", fontWeight: "800" }}>🟣 Drop at {dropName}</div>
+                                <div style={{ fontSize: "16px", fontWeight: "900", color: "#1e1b4b", marginTop: "2px" }}>{dropTime}</div>
                               </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
 
-                    {/* Journey history for selected card */}
-                    {selectedCard && (
-                      <div style={{ marginTop: "24px" }} className="fade-in-section">
-                        <h4 style={{ fontSize: "14.5px", fontWeight: "900", marginBottom: "12px", color: "#1e293b" }}>
-                          Recent Trips for {selectedCard.cardNumber}
-                        </h4>
-                        {loadingHistory ? (
-                          <div style={{ padding: "16px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>Loading trip history...</div>
-                        ) : journeyHistory.length === 0 ? (
-                          <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "14px", padding: "20px", textAlign: "center", color: "#64748b", fontSize: "12.5px" }}>
-                            No recent transit trips recorded for this smart card.
-                          </div>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "250px", overflowY: "auto" }}>
-                            {journeyHistory.map((j) => (
-                              <div
-                                key={j._id}
-                                style={{
-                                  padding: "12px 14px",
-                                  backgroundColor: "#f8fafc",
-                                  borderRadius: "12px",
-                                  borderLeft: `4px solid ${j.status === "Completed" ? "#16a34a" : j.status === "In-Progress" ? "#d97706" : "#dc2626"}`,
-                                  fontSize: "12.5px"
-                                }}
-                              >
-                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                                  <span style={{ fontWeight: "800", color: "#1e293b" }}>
-                                    {j.tapInStop?.name || "Kochi Terminal"}
-                                    {j.tapOutStop ? ` ➔ ${j.tapOutStop.name}` : " (In Transit)"}
-                                  </span>
-                                  <span style={{ fontWeight: "900", color: "#6d28d9" }}>
-                                    {j.status === "In-Progress" ? "Pending..." : `₹ ${Number(j.fare || 0).toFixed(2)}`}
-                                  </span>
-                                </div>
-                                <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: "11px" }}>
-                                  <span>{new Date(j.tapInTime).toLocaleString()}</span>
-                                  {j.status === "Completed" && (
-                                    <span>{Number(j.distanceKm || 0).toFixed(1)} km</span>
-                                  )}
-                                  {j.status === "Expired" && (
-                                    <span style={{ color: "#dc2626", fontWeight: "700" }}>No Tap-Out Penalty</span>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                  </div>
-
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: KERALA BUS TIMETABLES */}
-          {activeTab === "schedules" && (
-            <div className="fade-in-section">
-              <h3 style={{ fontSize: "18px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Bus Timetables &amp; Fleet Schedules</h3>
-              <p style={{ color: "#64748b", fontSize: "13.5px", marginBottom: "24px" }}>
-                Search for active bus schedules by route name, origin/destination city, or bus registration number.
-              </p>
-
-              <div style={{ display: "flex", gap: "12px", maxWidth: "600px", margin: "0 auto 32px auto", flexWrap: "wrap" }}>
-                <div className="rta-input-group" style={{ flex: 1, minWidth: "220px" }}>
-                  <label htmlFor="route-search-input" style={{ fontSize: "12px", fontWeight: "800", color: "#475569" }}>Route / Bus Search</label>
-                  <input
-                    id="route-search-input"
-                    type="text"
-                    className="rta-input-field"
-                    placeholder="e.g. Kochi, Trivandrum, RT-101"
-                    value={routeQuery}
-                    onChange={(e) => setRouteQuery(e.target.value)}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSearchSchedule}
-                  style={{ alignSelf: "flex-end", height: "46px", padding: "0 24px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#ffffff", border: "none", fontWeight: "800", cursor: "pointer" }}
-                >
-                  {scheduleLoading ? "Searching..." : "Search Timetable →"}
-                </button>
-              </div>
-
-              {scheduleResult && (
-                <div className="fade-in-section" style={{ borderTop: "1px dashed #e2e8f0", paddingTop: "25px" }}>
-                  {scheduleResult.error ? (
-                    <div style={{ textAlign: "center", color: "#dc2626", fontWeight: "700", fontSize: "14px", background: "rgba(225, 29, 72, 0.08)", padding: "16px", borderRadius: "14px" }}>
-                      ⚠️ {scheduleResult.error}
-                    </div>
-                  ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "28px" }}>
-                      <div>
-                        <h4 style={{ fontSize: "16px", fontWeight: "900", color: "#1e293b", marginBottom: "4px" }}>
-                          {scheduleResult.name}
-                        </h4>
-                        <p style={{ fontSize: "13.5px", color: "#6d28d9", fontWeight: "800", marginBottom: "18px" }}>
-                          Frequency: {scheduleResult.frequency}
-                        </p>
-
-                        <div style={{ position: "relative", paddingLeft: "24px" }}>
-                          <div style={{ position: "absolute", left: "6px", top: "8px", bottom: "8px", width: "2px", backgroundColor: "#6d28d9" }}></div>
-                          {scheduleResult.stops.map((stop, idx) => (
-                            <div key={idx} style={{ position: "relative", paddingBottom: "20px" }}>
-                              <span style={{ position: "absolute", left: "-23px", top: "5px", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#16a34a", border: "2px solid #FFFFFF" }}></span>
-                              <div style={{ fontWeight: "800", fontSize: "14px", color: "#1e293b" }}>{stop}</div>
-                              <div style={{ fontSize: "11px", color: "#64748b" }}>Stop #{idx + 1}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <h4 style={{ fontSize: "15px", fontWeight: "900", color: "#1e293b", marginBottom: "14px" }}>Scheduled Departure Times</h4>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: "10px", marginBottom: "20px" }}>
-                          {scheduleResult.timetable.map((time, idx) => (
-                            <div key={idx} style={{ padding: "10px", backgroundColor: "rgba(109, 40, 217, 0.08)", color: "#2e1065", border: "1px solid rgba(109, 40, 217, 0.2)", borderRadius: "10px", textAlign: "center", fontSize: "13.5px", fontWeight: "800" }}>
-                              🕒 {time}
-                            </div>
-                          ))}
-                        </div>
-
-                        {scheduleResult.driverName && (
-                          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "14px", borderRadius: "14px" }}>
-                            <div style={{ fontWeight: "800", color: "#14532d", fontSize: "13px", marginBottom: "4px" }}>
-                              👤 Assigned Driver: {scheduleResult.driverName}
-                            </div>
-                            {scheduleResult.driverPhone && scheduleResult.driverPhone !== "N/A" && (
-                              <div style={{ fontSize: "12px", color: "#059669", fontWeight: "700" }}>
-                                📞 Contact: {scheduleResult.driverPhone}
-                              </div>
-                            )}
-                            {scheduleResult.driverLicense && scheduleResult.driverLicense !== "N/A" && (
-                              <div style={{ fontSize: "11px", color: "#475569", fontFamily: "monospace", marginTop: "2px" }}>
-                                License: {scheduleResult.driverLicense}
+                            {/* Origin/Terminus indicator if intermediate segment */}
+                            {ctx && (
+                              <div style={{ fontSize: "11px", color: "#64748b", borderTop: "1px dashed #cbd5e1", paddingTop: "8px", marginTop: "8px" }}>
+                                Full Corridor: <strong style={{ color: "#1e1b4b" }}>{bus.fromLocation}</strong> ➔ <strong style={{ color: "#1e1b4b" }}>{bus.toLocation}</strong>
                               </div>
                             )}
                           </div>
-                        )}
+                        </div>
 
-                        <div style={{ marginTop: "18px" }}>
+                        {/* Actions */}
+                        <div style={{ display: "flex", gap: "10px", alignItems: "center", marginTop: "6px" }}>
                           <button
-                            onClick={() => navigate("/book-bus")}
-                            style={{ width: "100%", padding: "12px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #15803d)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "13.5px", cursor: "pointer" }}
+                            onClick={() => setSelectedTrackingBus(bus)}
+                            style={{
+                              background: "#f5f3ff",
+                              color: "#6d28d9",
+                              border: "1.5px solid #ddd6fe",
+                              padding: "12px 14px",
+                              borderRadius: "12px",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "6px"
+                            }}
                           >
-                            Explore Full Fleet Schedules Directory →
+                            <Navigation size={15} /> Track Live
+                          </button>
+
+                          <button
+                            onClick={() => navigate("/book-bus", { state: { preselectBusId: bus._id, from: origin, to: destination, date: planDate } })}
+                            style={{
+                              flex: 1,
+                              background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                              color: "#ffffff",
+                              border: "none",
+                              padding: "12px 16px",
+                              borderRadius: "12px",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "8px",
+                              boxShadow: "0 4px 12px rgba(5, 150, 105, 0.25)",
+                              transition: "all 0.2s"
+                            }}
+                          >
+                            <Ticket size={16} /> Select Seats &amp; Book
                           </button>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
-
-          {/* TAB 4: FLEET SCHEDULES EXPLORER */}
-          {activeTab === "intercity" && (
-            <div className="fade-in-section" style={{ textAlign: "center", padding: "20px 0" }}>
-              <div style={{ width: "60px", height: "60px", borderRadius: "18px", background: "rgba(109, 40, 217, 0.1)", color: "#6d28d9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", margin: "0 auto 16px" }}>
-                🚌
-              </div>
-              <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "6px", color: "#1e293b" }}>Kerala Express Bus Fleet &amp; Driver Directory</h3>
-              <p style={{ color: "#64748b", fontSize: "14px", maxWidth: "600px", margin: "0 auto 24px" }}>
-                View all buses configured by MoveSmart Admin, check station departure times, view full route stops, and inspect verified driver credentials.
-              </p>
-              <button
-                type="button"
-                onClick={() => navigate("/book-bus")}
-                style={{ padding: "12px 28px", borderRadius: "14px", background: "linear-gradient(135deg, #2e1065, #6d28d9)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "14px", cursor: "pointer", boxShadow: "0 8px 20px rgba(46, 16, 101, 0.25)" }}
-              >
-                Open Bus Schedules &amp; Driver Directory →
-              </button>
-            </div>
-          )}
-
-
-        </div>
-
-        {/* Kerala Bus Grid Services Showcase */}
-        <section id="services" style={{ marginTop: "50px" }}>
-          <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e293b", marginBottom: "6px" }}>Kerala Transit Bus Services</h2>
-          <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "24px" }}>Comprehensive public and private bus network catering to commuters across Kerala.</p>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px" }}>
-            <div style={{ background: "#ffffff", padding: "24px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
-              <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "rgba(109, 40, 217, 0.1)", color: "#6d28d9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", marginBottom: "14px" }}>
-                🚌
-              </div>
-              <h3 style={{ fontSize: "16.5px", fontWeight: "900", color: "#1e293b", margin: "0 0 8px 0" }}>Inter-District Express Lines</h3>
-              <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>Over 150 daily feeder and trunk routes connecting Ernakulam, Trivandrum, Kozhikode, and Thrissur terminals seamlessly.</p>
-            </div>
-
-            <div style={{ background: "#ffffff", padding: "24px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
-              <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "rgba(34, 197, 94, 0.1)", color: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", marginBottom: "14px" }}>
-                🪪
-              </div>
-              <h3 style={{ fontSize: "16.5px", fontWeight: "900", color: "#1e293b", margin: "0 0 8px 0" }}>MoveSmart Nol Pass</h3>
-              <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>One virtual RFID smart card across Kerala transit. Instant top-ups via Razorpay and real-time balance tracking.</p>
-            </div>
-
-            <div style={{ background: "#ffffff", padding: "24px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
-              <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "rgba(167, 139, 250, 0.15)", color: "#4c1d95", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", marginBottom: "14px" }}>
-                🗺️
-              </div>
-              <h3 style={{ fontSize: "16.5px", fontWeight: "900", color: "#1e293b", margin: "0 0 8px 0" }}>Live Route Tracking</h3>
-              <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>Comfortable, GPS-tracked coaches leaving central bus stands daily for express corridor connectivity.</p>
-            </div>
-          </div>
         </section>
 
-        {/* Nol Hub Branding Info */}
-        <section id="nol-hub" style={{ marginTop: "50px", backgroundColor: "#ffffff", borderRadius: "24px", padding: "32px", border: "1px solid #e2e8f0" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "32px", alignItems: "center" }}>
+        {/* ========================================================= */}
+        {/* 4. CORE COMMUTER SERVICES HUB (LIGHT PURPLE & GREEN)      */}
+        {/* ========================================================= */}
+        <section style={{ marginBottom: "38px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
             <div>
-              <h2 style={{ fontWeight: "900", fontSize: "24px", color: "#1e293b", marginBottom: "12px" }}>The Smart Way to Board &amp; Pay</h2>
-              <p style={{ fontSize: "14px", color: "#64748b", lineHeight: "1.6", marginBottom: "20px" }}>
-                The <strong>MoveSmart Nol Card</strong> is an RFID smart pass enabling tap-and-go fare deduction across Kerala bus services.
-                Use it to ride Fast Passenger, Swift Deluxe, and private feeder lines with dynamic distance-based calculation.
+              <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                Essential Commuter Services
+              </h2>
+              <p style={{ margin: "4px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                Direct portals for bus seats, smart card recharge, pass applications, and claims
               </p>
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                <Link to="/card-application" style={{ padding: "10px 20px", borderRadius: "12px", background: "#6d28d9", color: "#ffffff", textDecoration: "none", fontWeight: "800", fontSize: "13px" }}>Apply for Smart Pass</Link>
-                <button type="button" onClick={() => setActiveTab("nol")} style={{ padding: "10px 20px", borderRadius: "12px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>Check Card Balance</button>
-              </div>
             </div>
+          </div>
 
-            <div>
-              <div style={{
-                background: "linear-gradient(135deg, #1e1b4b 0%, #2e1065 100%)",
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "22px" }}>
+            
+            {/* Card 1: Bus Booking & Seats (Green Theme) */}
+            <div
+              onClick={() => navigate("/book-bus")}
+              style={{
+                background: "#ffffff",
                 borderRadius: "20px",
-                padding: "24px",
-                color: "#ffffff",
-                boxShadow: "0 12px 28px rgba(30, 27, 75, 0.2)",
-                border: "1px solid rgba(167, 139, 250, 0.3)",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                  <span style={{ fontSize: "13px", fontWeight: "900", color: "#a78bfa", letterSpacing: "1px" }}>MOVESMART NOL PASS</span>
-                  <span style={{ background: "rgba(74, 222, 128, 0.2)", color: "#4ade80", padding: "3px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "800" }}>ACTIVE</span>
+                padding: "26px",
+                border: "1.5px solid #d1fae5",
+                boxShadow: "0 6px 20px rgba(16, 185, 129, 0.06)",
+                cursor: "pointer",
+                transition: "all 0.25s",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                position: "relative",
+                overflow: "hidden"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-4px)";
+                e.currentTarget.style.borderColor = "#059669";
+                e.currentTarget.style.boxShadow = "0 14px 30px rgba(5, 150, 105, 0.16)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.borderColor = "#d1fae5";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(16, 185, 129, 0.06)";
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    width: "50px",
+                    height: "50px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)",
+                    border: "1px solid #a7f3d0",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#059669",
+                    marginBottom: "18px"
+                  }}
+                >
+                  <Bus size={26} />
                 </div>
-                <div style={{ fontSize: "12px", color: "#cbd5e1" }}>Silver Smart Pass</div>
-                <div style={{ fontSize: "20px", fontFamily: "monospace", fontWeight: "800", color: "#ffffff", margin: "10px 0" }}>9028 3948 57</div>
-                <div style={{ fontSize: "12px", color: "#94a3b8" }}>Auto Tap-In Enabled across Kerala Grid</div>
+                <h3 style={{ fontSize: "18px", fontWeight: "900", color: "#1e1b4b", margin: "0 0 8px 0" }}>
+                  Bus Seat Reservation
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>
+                  Browse real-time coach seat layouts, reserve preferred seats, and download digital boarding passes.
+                </p>
+              </div>
+              <div style={{ marginTop: "20px", display: "flex", alignItems: "center", gap: "6px", color: "#059669", fontSize: "13px", fontWeight: "800" }}>
+                <span>Open Seat Directory</span>
+                <ChevronRight size={16} />
               </div>
             </div>
+
+            {/* Card 2: MoveSmart Nol Wallet (Purple Theme) */}
+            <div
+              onClick={() => navigate("/wallet")}
+              style={{
+                background: "#ffffff",
+                borderRadius: "20px",
+                padding: "26px",
+                border: "1.5px solid #ede9fe",
+                boxShadow: "0 6px 20px rgba(168, 85, 247, 0.06)",
+                cursor: "pointer",
+                transition: "all 0.25s",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                position: "relative",
+                overflow: "hidden"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-4px)";
+                e.currentTarget.style.borderColor = "#8b5cf6";
+                e.currentTarget.style.boxShadow = "0 14px 30px rgba(139, 92, 246, 0.16)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.borderColor = "#ede9fe";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(168, 85, 247, 0.06)";
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    width: "50px",
+                    height: "50px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)",
+                    border: "1px solid #ddd6fe",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#7c3aed",
+                    marginBottom: "18px"
+                  }}
+                >
+                  <CreditCard size={26} />
+                </div>
+                <h3 style={{ fontSize: "18px", fontWeight: "900", color: "#1e1b4b", margin: "0 0 8px 0" }}>
+                  MoveSmart Nol Wallet
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>
+                  Instant digital wallet recharge via Razorpay UPI &amp; Cards. Monitor pass tap deductions and history.
+                </p>
+              </div>
+              <div style={{ marginTop: "20px", display: "flex", alignItems: "center", gap: "6px", color: "#7c3aed", fontSize: "13px", fontWeight: "800" }}>
+                <span>Recharge &amp; Passes</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            {/* Card 3: Smart RFID Passes (Lilac/Violet Theme) */}
+            <div
+              onClick={() => navigate("/dashboard/card-application")}
+              style={{
+                background: "#ffffff",
+                borderRadius: "20px",
+                padding: "26px",
+                border: "1.5px solid #f3e8ff",
+                boxShadow: "0 6px 20px rgba(192, 132, 252, 0.06)",
+                cursor: "pointer",
+                transition: "all 0.25s",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                position: "relative",
+                overflow: "hidden"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-4px)";
+                e.currentTarget.style.borderColor = "#a855f7";
+                e.currentTarget.style.boxShadow = "0 14px 30px rgba(168, 85, 247, 0.16)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.borderColor = "#f3e8ff";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(192, 132, 252, 0.06)";
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    width: "50px",
+                    height: "50px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)",
+                    border: "1px solid #e9d5ff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#9333ea",
+                    marginBottom: "18px"
+                  }}
+                >
+                  <ShieldCheck size={26} />
+                </div>
+                <h3 style={{ fontSize: "18px", fontWeight: "900", color: "#1e1b4b", margin: "0 0 8px 0" }}>
+                  RFID Smart Card Pass
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>
+                  Apply for physical contact-free RFID transit passes (Student, Senior Citizen, Concession) with depot pickup.
+                </p>
+              </div>
+              <div style={{ marginTop: "20px", display: "flex", alignItems: "center", gap: "6px", color: "#9333ea", fontSize: "13px", fontWeight: "800" }}>
+                <span>Apply / Track Card</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            {/* Card 4: Lost &amp; Found Desk (Mint &amp; Amber Theme) */}
+            <div
+              onClick={() => navigate("/lost-found")}
+              style={{
+                background: "#ffffff",
+                borderRadius: "20px",
+                padding: "26px",
+                border: "1.5px solid #ecfdf5",
+                boxShadow: "0 6px 20px rgba(16, 185, 129, 0.06)",
+                cursor: "pointer",
+                transition: "all 0.25s",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                position: "relative",
+                overflow: "hidden"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-4px)";
+                e.currentTarget.style.borderColor = "#059669";
+                e.currentTarget.style.boxShadow = "0 14px 30px rgba(5, 150, 105, 0.16)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.borderColor = "#ecfdf5";
+                e.currentTarget.style.boxShadow = "0 6px 20px rgba(16, 185, 129, 0.06)";
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    width: "50px",
+                    height: "50px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)",
+                    border: "1px solid #a7f3d0",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#059669",
+                    marginBottom: "18px"
+                  }}
+                >
+                  <Luggage size={26} />
+                </div>
+                <h3 style={{ fontSize: "18px", fontWeight: "900", color: "#1e1b4b", margin: "0 0 8px 0" }}>
+                  Transit Lost &amp; Found
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", margin: 0, lineHeight: "1.6" }}>
+                  Search recovered belongings left in buses or submit claims for misplaced bags, devices, and documents.
+                </p>
+              </div>
+              <div style={{ marginTop: "20px", display: "flex", alignItems: "center", gap: "6px", color: "#059669", fontSize: "13px", fontWeight: "800" }}>
+                <span>Open Claims Desk</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
           </div>
         </section>
-      </main>
 
-      {/* Floating Appu Virtual Assistant Chatbot Widget */}
-      <div>
-        <button
-          onClick={() => setChatOpen(!chatOpen)}
-          aria-label="Chat with Appu Assistant"
+        {/* ========================================================= */}
+        {/* 5. LIVE FLEET RADAR & TIMETABLE TABLE                     */}
+        {/* ========================================================= */}
+        <section
           style={{
-            position: "fixed",
-            bottom: "24px",
-            right: "24px",
-            width: "56px",
-            height: "56px",
-            borderRadius: "50%",
-            background: "linear-gradient(135deg, #2e1065, #6d28d9)",
-            color: "#ffffff",
-            border: "2px solid #a78bfa",
-            boxShadow: "0 10px 25px rgba(46, 16, 101, 0.35)",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 999,
+            background: "#ffffff",
+            borderRadius: "22px",
+            padding: "32px",
+            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            border: "1.5px solid #ede9fe",
+            marginBottom: "38px"
           }}
         >
-          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        </button>
-
-        {chatOpen && (
-          <div style={{
-            position: "fixed",
-            bottom: "92px",
-            right: "24px",
-            width: "360px",
-            maxWidth: "calc(100vw - 32px)",
-            height: "480px",
-            background: "#ffffff",
-            borderRadius: "24px",
-            boxShadow: "0 15px 35px rgba(0,0,0,0.2)",
-            border: "1px solid #e2e8f0",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            zIndex: 999,
-          }}>
-            <div style={{ background: "linear-gradient(135deg, #2e1065, #1e1b4b)", padding: "16px 20px", color: "#ffffff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "18px", marginBottom: "24px" }}>
+            <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span style={{ backgroundColor: "#4ade80", color: "#1e1b4b", width: "26px", height: "26px", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: "13px" }}>A</span>
-                <span style={{ fontWeight: "900", fontSize: "15px" }}>Appu Assistant</span>
+                <div
+                  style={{
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #ecfdf5 0%, #ede9fe 100%)",
+                    border: "1px solid #d1fae5",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#059669"
+                  }}
+                >
+                  <Zap size={20} />
+                </div>
+                <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                  Active Network Timetable Radar
+                </h2>
               </div>
-              <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", color: "#ffffff", fontSize: "22px", cursor: "pointer" }}>×</button>
+              <p style={{ margin: "6px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                Live departures and scheduled fleet operations across Kerala
+              </p>
             </div>
 
-            <div style={{ flex: 1, padding: "16px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", background: "#f8fafc" }}>
+            {/* Filter Tabs & Search */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              
+              {/* Quick Search */}
+              <div style={{ position: "relative" }}>
+                <Search size={16} color="#8b5cf6" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)" }} />
+                <input
+                  type="text"
+                  placeholder="Filter bus or station..."
+                  value={fleetSearchQuery}
+                  onChange={(e) => setFleetSearchQuery(e.target.value)}
+                  style={{
+                    padding: "9px 14px 9px 38px",
+                    borderRadius: "12px",
+                    border: "1.5px solid #ede9fe",
+                    fontSize: "13px",
+                    fontWeight: "600",
+                    outline: "none",
+                    background: "#fbfaff",
+                    color: "#1e1b4b"
+                  }}
+                  onFocusCapture={(e) => (e.currentTarget.style.borderColor = "#8b5cf6")}
+                  onBlurCapture={(e) => (e.currentTarget.style.borderColor = "#ede9fe")}
+                />
+              </div>
+
+              {/* Time Filters */}
+              <div style={{ display: "flex", background: "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)", padding: "4px", borderRadius: "12px", border: "1px solid #ddd6fe" }}>
+                {[
+                  { id: "all", label: "All Day" },
+                  { id: "morning", label: "Morning" },
+                  { id: "afternoon", label: "Afternoon" },
+                  { id: "evening", label: "Evening" }
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setFleetTimeFilter(t.id)}
+                    style={{
+                      background: fleetTimeFilter === t.id ? "linear-gradient(135deg, #059669 0%, #10b981 100%)" : "transparent",
+                      color: fleetTimeFilter === t.id ? "#ffffff" : "#475569",
+                      border: "none",
+                      padding: "6px 14px",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      cursor: "pointer",
+                      boxShadow: fleetTimeFilter === t.id ? "0 2px 8px rgba(5, 150, 105, 0.3)" : "none",
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Refresh */}
+              <button
+                onClick={fetchFleetBuses}
+                title="Refresh Timetable"
+                style={{
+                  background: "#f5f3ff",
+                  border: "1px solid #ddd6fe",
+                  borderRadius: "10px",
+                  padding: "9px 12px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#7c3aed",
+                  transition: "all 0.2s"
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#ede9fe"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f3ff"; }}
+              >
+                <RefreshCw size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Timetable Table */}
+          <div style={{ overflowX: "auto", borderRadius: "14px", border: "1px solid #ede9fe" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+              <thead>
+                <tr style={{ background: "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)", borderBottom: "1.5px solid #ddd6fe" }}>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Bus / Service</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Class</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Corridor Route</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Departure</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Duration</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Fare</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px" }}>Live Status</th>
+                  <th style={{ padding: "14px 18px", fontSize: "12px", fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.5px", textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingFleet ? (
+                  <tr>
+                    <td colSpan="8" style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>
+                      <RefreshCw size={28} className="animate-spin" style={{ margin: "0 auto 10px", color: "#059669" }} />
+                      <div style={{ fontWeight: "700" }}>Syncing live fleet departures...</div>
+                    </td>
+                  </tr>
+                ) : filteredFleet.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" style={{ textAlign: "center", padding: "40px", color: "#64748b", fontWeight: "600" }}>
+                      No active buses match the selected filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredFleet.map((bus) => {
+                    const isLive = Boolean(liveFleetMap[String(bus._id)]?.isTracking);
+                    return (
+                      <tr
+                        key={bus._id}
+                        style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.15s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <td style={{ padding: "16px 18px" }}>
+                          <div style={{ fontWeight: "800", color: "#1e1b4b", fontSize: "14px" }}>{bus.busName}</div>
+                          <div style={{ fontSize: "12px", color: "#7c3aed", fontWeight: "700" }}>{bus.busNumber}</div>
+                        </td>
+                        <td style={{ padding: "16px 18px" }}>
+                          <span
+                            style={{
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              padding: "4px 10px",
+                              borderRadius: "8px",
+                              background: bus.busType?.toLowerCase().includes("ac") ? "#ecfdf5" : "#f5f3ff",
+                              color: bus.busType?.toLowerCase().includes("ac") ? "#059669" : "#6d28d9",
+                              border: `1px solid ${bus.busType?.toLowerCase().includes("ac") ? "#a7f3d0" : "#ddd6fe"}`
+                            }}
+                          >
+                            {bus.busType || "Standard"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "16px 18px" }}>
+                          <div style={{ fontSize: "13px", fontWeight: "800", color: "#1e293b", display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span>{bus.fromLocation}</span>
+                            <ArrowRight size={13} color="#059669" />
+                            <span>{bus.toLocation}</span>
+                          </div>
+                          {Array.isArray(bus.intermediateStops) && bus.intermediateStops.length > 0 && (
+                            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>
+                              via {bus.intermediateStops.map(s => s.name || s.stationName || s).slice(0, 3).join(", ")}
+                              {bus.intermediateStops.length > 3 ? ` +${bus.intermediateStops.length - 3} stops` : ""}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: "16px 18px" }}>
+                          <div style={{ fontWeight: "800", color: "#1e1b4b", fontSize: "14px" }}>{bus.departureTime}</div>
+                          <div style={{ fontSize: "11px", color: "#64748b" }}>Arr: {bus.arrivalTime}</div>
+                        </td>
+                        <td style={{ padding: "16px 18px", fontSize: "13px", color: "#475569", fontWeight: "700" }}>
+                          {bus.duration || "Direct"}
+                        </td>
+                        <td style={{ padding: "16px 18px" }}>
+                          <div style={{ fontWeight: "900", color: "#059669", fontSize: "15px" }}>
+                            {bus.ticketPrice || bus.fare ? `₹${bus.ticketPrice || bus.fare}` : "Standard"}
+                          </div>
+                        </td>
+                        <td style={{ padding: "16px 18px" }}>
+                          {isLive ? (
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "800", color: "#059669", background: "#ecfdf5", padding: "4px 10px", borderRadius: "9999px", border: "1px solid #a7f3d0" }}>
+                              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }} />
+                              <span>LIVE NOW</span>
+                            </div>
+                          ) : (
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "700", color: "#64748b", background: "#f1f5f9", padding: "4px 10px", borderRadius: "9999px" }}>
+                              <span>Scheduled</span>
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: "16px 18px", textAlign: "right" }}>
+                          <div style={{ display: "inline-flex", gap: "8px", alignItems: "center" }}>
+                            <button
+                              onClick={() => setSelectedTrackingBus(bus)}
+                              style={{
+                                background: "#f5f3ff",
+                                color: "#6d28d9",
+                                border: "1px solid #ddd6fe",
+                                padding: "8px 12px",
+                                borderRadius: "10px",
+                                fontSize: "12px",
+                                fontWeight: "800",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}
+                              title="Track Live on Map"
+                            >
+                              <Navigation size={13} />
+                              <span>Track</span>
+                            </button>
+
+                            <button
+                              onClick={() => navigate("/book-bus", { state: { preselectBusId: bus._id } })}
+                              style={{
+                                background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                                color: "#ffffff",
+                                border: "none",
+                                padding: "8px 14px",
+                                borderRadius: "10px",
+                                fontSize: "12px",
+                                fontWeight: "800",
+                                cursor: "pointer",
+                                boxShadow: "0 2px 8px rgba(5, 150, 105, 0.25)",
+                                transition: "all 0.2s"
+                              }}
+                            >
+                              Book Seat
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* ========================================================= */}
+        {/* 6. POPULAR ACTIVE TRANSIT CORRIDORS                       */}
+        {/* ========================================================= */}
+        {dynamicCorridors.length > 0 && (
+          <section style={{ marginBottom: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px" }}>
+              <div>
+                <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                  Active Transit Corridors
+                </h2>
+                <p style={{ margin: "4px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                  Direct scheduled routes operating in the network
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "18px" }}>
+              {dynamicCorridors.slice(0, 6).map((corr, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "18px",
+                    padding: "20px",
+                    border: "1.5px solid #ede9fe",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    boxShadow: "0 4px 14px rgba(168, 85, 247, 0.04)",
+                    transition: "all 0.2s"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = "#059669";
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = "#ede9fe";
+                    e.currentTarget.style.transform = "none";
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#059669", background: "#ecfdf5", padding: "3px 10px", borderRadius: "8px", border: "1px solid #a7f3d0" }}>
+                        {corr.busType}
+                      </span>
+                      {corr.fare && (
+                        <span style={{ fontSize: "14px", color: "#7c3aed", fontWeight: "900" }}>₹{corr.fare}</span>
+                      )}
+                    </div>
+                    <h4 style={{ fontSize: "16px", fontWeight: "900", color: "#1e1b4b", margin: "0 0 6px 0" }}>
+                      {corr.from} ➔ {corr.to}
+                    </h4>
+                    <div style={{ display: "flex", gap: "12px", fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
+                      <span>⏱ {corr.duration}</span>
+                      {corr.departureTime && <span>• Dep {corr.departureTime}</span>}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleQuickCorridor(corr)}
+                    style={{
+                      marginTop: "16px",
+                      background: "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)",
+                      border: "1px solid #ddd6fe",
+                      color: "#4338ca",
+                      padding: "8px 14px",
+                      borderRadius: "10px",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                      transition: "all 0.2s"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "#059669";
+                      e.currentTarget.style.color = "#ffffff";
+                      e.currentTarget.style.borderColor = "#059669";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #f0fdf4 100%)";
+                      e.currentTarget.style.color = "#4338ca";
+                      e.currentTarget.style.borderColor = "#ddd6fe";
+                    }}
+                  >
+                    <Search size={14} /> Check Live Timings
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+      </main>
+
+      {/* ========================================================= */}
+      {/* 7. FLOATING APPU TRANSIT CHATBOT                          */}
+      {/* ========================================================= */}
+      <div style={{ position: "fixed", bottom: "28px", right: "28px", zIndex: 1000 }}>
+        {!chatOpen ? (
+          <button
+            onClick={() => setChatOpen(true)}
+            style={{
+              width: "60px",
+              height: "60px",
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #059669 0%, #10b981 50%, #7c3aed 100%)",
+              color: "#ffffff",
+              border: "none",
+              boxShadow: "0 8px 24px rgba(124, 58, 237, 0.4)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "transform 0.2s"
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.1)")}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            title="Ask Appu MoveSmart Assistant"
+          >
+            <MessageSquare size={28} />
+          </button>
+        ) : (
+          <div
+            style={{
+              width: "360px",
+              height: "490px",
+              background: "#ffffff",
+              borderRadius: "22px",
+              boxShadow: "0 16px 40px rgba(30, 27, 75, 0.25)",
+              border: "1.5px solid #ede9fe",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden"
+            }}
+          >
+            {/* Chat Header */}
+            <div style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #064e3b 100%)", padding: "16px 20px", color: "#ffffff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "linear-gradient(135deg, #a7f3d0 0%, #d8b4fe 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px" }}>
+                  🐘
+                </div>
+                <div>
+                  <div style={{ fontSize: "15px", fontWeight: "900" }}>Appu Transit Guide</div>
+                  <div style={{ fontSize: "11px", color: "#a7f3d0", display: "flex", alignItems: "center", gap: "4px" }}>
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#34d399" }} />
+                    Live Fleet Synced
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setChatOpen(false)}
+                style={{ background: "rgba(255, 255, 255, 0.15)", border: "none", color: "#ffffff", cursor: "pointer", padding: "6px", borderRadius: "8px", display: "flex" }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Quick Prompt Chips */}
+            <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #ede9fe", display: "flex", gap: "6px", overflowX: "auto" }}>
+              {quickChatPrompts.map((prompt, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSendMessage(prompt)}
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: "700",
+                    background: "#f5f3ff",
+                    color: "#6d28d9",
+                    border: "1px solid #ddd6fe",
+                    borderRadius: "9999px",
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    transition: "all 0.15s"
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#ede9fe")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "#f5f3ff")}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
+            {/* Chat Messages Body */}
+            <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "linear-gradient(180deg, #fbfaff 0%, #f4fbf7 100%)", display: "flex", flexDirection: "column", gap: "12px" }}>
               {chatMessages.map((msg, idx) => (
                 <div
                   key={idx}
                   style={{
                     alignSelf: msg.sender === "user" ? "flex-end" : "flex-start",
-                    background: msg.sender === "user" ? "#6d28d9" : "#ffffff",
-                    color: msg.sender === "user" ? "#ffffff" : "#1e293b",
-                    padding: "10px 14px",
-                    borderRadius: "16px",
+                    maxWidth: "84%",
+                    background: msg.sender === "user" ? "linear-gradient(135deg, #059669 0%, #10b981 100%)" : "#ffffff",
+                    color: msg.sender === "user" ? "#ffffff" : "#1e1b4b",
+                    padding: "11px 15px",
+                    borderRadius: msg.sender === "user" ? "16px 16px 2px 16px" : "16px 16px 16px 2px",
                     fontSize: "13px",
-                    maxWidth: "80%",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-                    border: msg.sender === "bot" ? "1px solid #e2e8f0" : "none",
+                    fontWeight: msg.sender === "user" ? "600" : "500",
+                    lineHeight: "1.5",
+                    boxShadow: "0 2px 8px rgba(168, 85, 247, 0.06)",
+                    border: msg.sender === "user" ? "none" : "1px solid #ede9fe"
                   }}
                 >
                   {msg.text}
                 </div>
               ))}
+              <div ref={chatBottomRef} />
             </div>
 
-            <form onSubmit={handleChatSend} style={{ padding: "12px 16px", background: "#ffffff", borderTop: "1px solid #f1f5f9", display: "flex", gap: "8px" }}>
+            {/* Chat Input Bar */}
+            <div style={{ padding: "12px 16px", borderTop: "1.5px solid #ede9fe", background: "#ffffff", display: "flex", gap: "10px" }}>
               <input
                 type="text"
-                className="rta-chat-input"
+                placeholder="Ask route, fares, smart cards..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Ask Appu about routes, Nol card..."
-                style={{ flex: 1, padding: "10px 14px", borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "13px" }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSendMessage(); }}
+                style={{ flex: 1, padding: "10px 14px", borderRadius: "12px", border: "1.5px solid #ede9fe", fontSize: "13px", outline: "none" }}
+                onFocusCapture={(e) => (e.currentTarget.style.borderColor = "#059669")}
+                onBlurCapture={(e) => (e.currentTarget.style.borderColor = "#ede9fe")}
               />
-              <button type="submit" style={{ padding: "10px 14px", borderRadius: "12px", background: "#6d28d9", color: "#ffffff", border: "none", fontWeight: "800", cursor: "pointer" }}>
-                ➜
+              <button
+                onClick={() => handleSendMessage()}
+                style={{ background: "linear-gradient(135deg, #059669 0%, #7c3aed 100%)", color: "#ffffff", border: "none", padding: "10px 16px", borderRadius: "12px", cursor: "pointer", fontWeight: "800", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <Send size={16} />
               </button>
-            </form>
+            </div>
           </div>
         )}
       </div>
@@ -1327,5 +2216,3 @@ function Dashboard({ defaultTab }) {
     </div>
   );
 }
-
-export default Dashboard;

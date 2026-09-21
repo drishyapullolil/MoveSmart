@@ -45,6 +45,7 @@ export default function BusBooking() {
     setLoading(true);
     try {
       const response = await axios.get("/api/buses", {
+        timeout: 6000,
         params: {
           from: params.from,
           to: params.to,

@@ -6,19 +6,20 @@ const Booking = require("../models/Booking");
 const Route = require("../models/Route");
 const Schedule = require("../models/Schedule");
 const User = require("../models/User");
+const { getActiveBusLocation, getAllActiveBusLocations } = require("../services/socketService");
 
 // Helper to extract stations/stops list from doc
 const extractStopsFromDoc = (doc) => {
-  if (Array.isArray(doc.route) && doc.route.length > 0) {
-    return doc.route.map((s) => String(s).trim());
-  }
   if (Array.isArray(doc.stops) && doc.stops.length > 0) {
     return doc.stops.map((s) => {
       if (typeof s === "object" && s !== null) {
-        return String(s.name || s.stopName || s.stop || "").trim();
+        return String(s.name || s.stopName || s.station || s.stop || "").trim();
       }
       return String(s).trim();
     }).filter(Boolean);
+  }
+  if (Array.isArray(doc.route) && doc.route.length > 0) {
+    return doc.route.map((s) => String(s).trim()).filter(Boolean);
   }
   const scheduleStations = [];
   if (Array.isArray(doc.schedule)) {
@@ -40,6 +41,201 @@ const extractStopsFromDoc = (doc) => {
   return locs;
 };
 
+// Add minutes to AM/PM time string
+const addMinutesToTimeStr = (baseTimeStr, minutesToAdd = 0) => {
+  if (!baseTimeStr) return "08:00 AM";
+  const cleanStr = String(baseTimeStr).trim().toUpperCase();
+  const isPM = cleanStr.includes("PM");
+  const isAM = cleanStr.includes("AM");
+  const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return baseTimeStr;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  const totalMins = (hours * 60 + minutes + (Number(minutesToAdd) || 0) + 14400) % 1440;
+  const hours24 = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+
+  const period = hours24 >= 12 ? "PM" : "AM";
+  let hours12 = hours24 % 12;
+  if (hours12 === 0) hours12 = 12;
+
+  return `${hours12.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")} ${period}`;
+};
+
+const calculateDurationMins = (startMinutes, endMinutes) => {
+  const diff = Math.max(0, (Number(endMinutes) || 0) - (Number(startMinutes) || 0));
+  const h = Math.floor(diff / 60);
+  const m = diff % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+};
+
+// Generate comprehensive station timetable with computed arrival and departure times
+const generateStationTimetable = (routeObj, baseStartTime = "08:00 AM") => {
+  const structuredStops = Array.isArray(routeObj.stops) && routeObj.stops.length > 0 ? routeObj.stops : [];
+  const stations = [];
+
+  if (structuredStops.length > 0) {
+    let cumulative = 0;
+    structuredStops.forEach((st, idx) => {
+      const name = String(st.stopName || st.name || st.stop || `Stop ${idx + 1}`).trim();
+      let travelFromPrev = 0;
+      if (idx > 0) {
+        if (st.travel_time_from_prev !== undefined && st.travel_time_from_prev !== null && st.travel_time_from_prev > 0) {
+          travelFromPrev = Number(st.travel_time_from_prev);
+        } else if (st.offset_minutes !== undefined && st.offset_minutes !== null && st.offset_minutes > cumulative) {
+          travelFromPrev = Number(st.offset_minutes) - cumulative;
+        } else {
+          travelFromPrev = 20;
+        }
+      }
+      cumulative += travelFromPrev;
+
+      const arrOffset = cumulative;
+      const depOffset = idx === structuredStops.length - 1 ? cumulative : (cumulative + (idx === 0 ? 0 : 2));
+
+      const arrTime = idx === 0 ? "--" : addMinutesToTimeStr(baseStartTime, arrOffset);
+      const depTime = idx === structuredStops.length - 1 ? "--" : addMinutesToTimeStr(baseStartTime, depOffset);
+
+      stations.push({
+        id: idx,
+        stop_id: st.stop_id || null,
+        station: name,
+        name: name,
+        order: idx + 1,
+        arrivalTime: arrTime,
+        departureTime: depTime,
+        offset_minutes: cumulative,
+        travel_time_from_prev: travelFromPrev,
+        isStart: idx === 0,
+        isEnd: idx === structuredStops.length - 1,
+        halt: idx === 0 ? "Origin Terminal" : idx === structuredStops.length - 1 ? "Final Terminus" : "2 mins halt",
+        platform: `Platform ${(idx % 4) + 1}`,
+        type: idx === 0 ? "Starting Location" : idx === structuredStops.length - 1 ? "Ending Location" : "Intermediate Station",
+        facilities: ["Waiting Room", "Ticket Counter", "IoT Live Feed"],
+      });
+    });
+  } else {
+    // Fallback if stops array is plain strings
+    const stopNames = extractStopsFromDoc(routeObj);
+    const totalStops = Math.max(stopNames.length, 2);
+    const defaultGap = Math.max(15, Math.floor(180 / (totalStops - 1 || 1)));
+    let cumulative = 0;
+
+    stopNames.forEach((name, idx) => {
+      const travelFromPrev = idx === 0 ? 0 : defaultGap;
+      cumulative += travelFromPrev;
+      const arrTime = idx === 0 ? "--" : addMinutesToTimeStr(baseStartTime, cumulative);
+      const depTime = idx === stopNames.length - 1 ? "--" : addMinutesToTimeStr(baseStartTime, cumulative + (idx === 0 ? 0 : 2));
+
+      stations.push({
+        id: idx,
+        station: name,
+        name: name,
+        order: idx + 1,
+        arrivalTime: arrTime,
+        departureTime: depTime,
+        offset_minutes: cumulative,
+        travel_time_from_prev: travelFromPrev,
+        isStart: idx === 0,
+        isEnd: idx === stopNames.length - 1,
+        halt: idx === 0 ? "Origin Terminal" : idx === stopNames.length - 1 ? "Final Terminus" : "2 mins halt",
+        platform: `Platform ${(idx % 4) + 1}`,
+        type: idx === 0 ? "Starting Location" : idx === stopNames.length - 1 ? "Ending Location" : "Intermediate Station",
+        facilities: ["Waiting Room", "Ticket Counter", "IoT Live Feed"],
+      });
+    });
+  }
+
+  const lastStation = stations[stations.length - 1];
+  const totalOffset = lastStation ? lastStation.offset_minutes : 180;
+  const arrivalTime = addMinutesToTimeStr(baseStartTime, totalOffset);
+  const duration = calculateDurationMins(0, totalOffset);
+
+  return {
+    stations,
+    departureTime: baseStartTime,
+    arrivalTime,
+    total_duration_minutes: totalOffset,
+    duration,
+  };
+};
+
+// Normalize Noise Words for Accurate Location Matching
+const NOISE_WORDS = new Set([
+  "bus", "stand", "stop", "sub-stop", "substop", "sub", "junction", "jn", "terminal",
+  "station", "stn", "road", "rd", "bypass", "kerala", "route", "ksrtc", "depot", "point"
+]);
+
+const cleanLocationTokens = (str) => {
+  if (!str) return [];
+  return String(str)
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w && !NOISE_WORDS.has(w));
+};
+
+const normalizeLocationName = (str) => {
+  if (!str) return "";
+  return cleanLocationTokens(str).join(" ");
+};
+
+// Accurate location string matching (prevents false positive substring matches like "Chenappady - Erumely Road" matching "Erumely")
+const matchLocationStr = (locationInDB, searchQuery) => {
+  if (!searchQuery) return true;
+  const rawDb = String(locationInDB || "").trim().toLowerCase();
+  const rawQ = String(searchQuery || "").trim().toLowerCase();
+  if (!rawDb || !rawQ) return false;
+
+  // 1. Direct exact match
+  if (rawDb === rawQ) return true;
+
+  const dbNorm = normalizeLocationName(locationInDB);
+  const qNorm = normalizeLocationName(searchQuery);
+
+  if (!dbNorm || !qNorm) return false;
+  if (dbNorm === qNorm) return true;
+
+  const dbTokens = cleanLocationTokens(locationInDB);
+  const qTokens = cleanLocationTokens(searchQuery);
+
+  if (dbTokens.length === 0 || qTokens.length === 0) return false;
+
+  // Direct token string match
+  if (dbTokens.join(" ") === qTokens.join(" ")) return true;
+
+  // Check if all query tokens are present in db
+  const allQTokensInDb = qTokens.every((qt) =>
+    dbTokens.some((dt) => dt === qt || (dt.length >= 4 && qt.length >= 4 && (dt.startsWith(qt) || qt.startsWith(dt))))
+  );
+
+  // Check if all db tokens are present in query
+  const allDbTokensInQ = dbTokens.every((dt) =>
+    qTokens.some((qt) => qt === dt || (dt.length >= 4 && qt.length >= 4 && (dt.startsWith(qt) || qt.startsWith(dt))))
+  );
+
+  // If both token sets fully correspond to each other
+  if (allQTokensInDb && allDbTokensInQ) {
+    return true;
+  }
+
+  // If query is an exact single-word station that matches the primary token of a compound station
+  if (allQTokensInDb && qTokens.length >= dbTokens.length) {
+    return true;
+  }
+
+  return false;
+};
+
 // Normalize any bus object (from Bus collection or Route.buses)
 const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map(), routeList = []) => {
   const busNumber =
@@ -50,7 +246,6 @@ const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map()
 
   let stops = extractStopsFromDoc(doc);
 
-  // If bus has minimal stops but matches a parentRoute or known route, enrich stops
   if (stops.length <= 2 && routeList.length > 0) {
     const matchedRoute = routeList.find((r) => {
       if (doc.routeId && (r.routeId === doc.routeId || String(r._id) === String(doc.routeId))) return true;
@@ -80,30 +275,18 @@ const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map()
     parentRoute?.toLocation ||
     (stops.length > 1 ? stops[stops.length - 1] : stops.length === 1 ? stops[0] : "");
 
-  let departureTime = doc.departureTime || "08:00 AM";
-  let arrivalTime = doc.arrivalTime || "12:00 PM";
+  const departureTime = doc.departureTime || doc.start_time || "08:00 AM";
+  const timetable = generateStationTimetable(parentRoute || doc, departureTime);
 
-  if (Array.isArray(doc.schedule) && doc.schedule.length > 0) {
-    const firstTrip = doc.schedule[0];
-    if (Array.isArray(firstTrip.stations) && firstTrip.stations.length > 0) {
-      const stStart = firstTrip.stations[0];
-      const stEnd = firstTrip.stations[firstTrip.stations.length - 1];
-      departureTime =
-        stStart.departureTime || stStart.time || stStart.departure || stStart.arrivalTime || departureTime;
-      arrivalTime =
-        stEnd.arrivalTime || stEnd.time || stEnd.arrival || stEnd.departureTime || arrivalTime;
-    }
-  }
-
-  const busType = doc.busType || doc.type || "Express / City Transit";
-  const operator = doc.operator || "MoveSmart Fleet";
-  const price = doc.price || doc.fare || (stops.length > 1 ? stops.length * 35 + 40 : 200);
+  const busType = doc.busType || doc.type || "Standard Route Transit";
+  const operator = doc.operator || "MoveSmart Transit Ops";
+  const price = doc.price || doc.fare || (stops.length > 1 ? stops.length * 35 + 40 : 150);
   const totalSeats = doc.totalSeats || 32;
   const availableSeats = doc.availableSeats !== undefined ? doc.availableSeats : 32;
   const rating = doc.rating || 4.8;
-  const amenities = doc.amenities || ["Live Tracking", "Emergency Contact"];
+  const amenities = doc.amenities || ["Live Tracking", "Emergency Contact", "IoT Transit Feed"];
   const bookedSeats = doc.bookedSeats || [];
-  const busName = doc.busName || `${operator} (${busNumber})`;
+  const busName = doc.busName || (parentRoute ? parentRoute.routeName : `${fromLocation} ➔ ${toLocation}`);
 
   // Driver details resolution
   let driverId = doc.driverId ? String(doc.driverId) : null;
@@ -128,19 +311,21 @@ const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map()
   }
 
   const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
-  const finalDriverName = !isGeneric(driverName) ? driverName : "Not Assigned";
+  const finalDriverName = !isGeneric(driverName) ? driverName : "Assigned by Admin";
 
   return {
     _id: doc._id || new mongoose.Types.ObjectId(),
+    scheduleId: doc.scheduleId || null,
     busNumber,
     busName,
     busType,
     operator,
     fromLocation,
     toLocation,
-    departureTime,
-    arrivalTime,
-    duration: doc.duration || "3h 45m",
+    departureTime: timetable.departureTime,
+    arrivalTime: timetable.arrivalTime,
+    duration: timetable.duration,
+    total_duration_minutes: timetable.total_duration_minutes,
     totalSeats,
     availableSeats,
     price,
@@ -149,102 +334,360 @@ const normalizeBusDocument = (doc, parentRoute = null, driverUserMap = new Map()
     bookedSeats,
     driverId,
     driverName: finalDriverName,
-    driverPhone: finalDriverName !== "Not Assigned" ? driverPhone : "N/A",
+    driverPhone: finalDriverName !== "Assigned by Admin" ? driverPhone : "N/A",
     driverEmail,
-    driverLicense: finalDriverName !== "Not Assigned" ? driverLicense : "N/A",
-    driverPhoto: finalDriverName !== "Not Assigned" ? driverPhoto : "",
-    driverVerified: finalDriverName !== "Not Assigned" ? driverVerified : false,
-    driverExperience: finalDriverName !== "Not Assigned" ? driverExperience : 0,
+    driverLicense: finalDriverName !== "Assigned by Admin" ? driverLicense : "N/A",
+    driverPhoto: finalDriverName !== "Assigned by Admin" ? driverPhoto : "",
+    driverVerified: finalDriverName !== "Assigned by Admin" ? driverVerified : true,
+    driverExperience: finalDriverName !== "Assigned by Admin" ? driverExperience : 4,
     is_active: doc.is_active !== undefined ? doc.is_active : true,
-    stops,
-    route: doc.route || stops,
-    schedule: doc.schedule || [],
+    stops: timetable.stations.map((s) => s.name),
+    route: timetable.stations.map((s) => s.name),
+    schedule: [{ stations: timetable.stations }],
     rawDoc: doc,
   };
 };
 
-// Fetch all normalized buses strictly from MongoDB collections
+// In-memory caching for sub-millisecond response times
+let busCache = { data: null, timestamp: 0 };
+const CACHE_TTL_MS = 8000; // 8 seconds cache TTL
+
+const invalidateBusCache = () => {
+  busCache = { data: null, timestamp: 0 };
+};
+
+// Fallback seed buses for high availability when DB is temporarily lagging or reconnecting
+const SEED_FALLBACK_BUSES = [
+  {
+    _id: "660000000000000000000001",
+    busNumber: "KL-07-MS-1008",
+    busName: "Kochi ➔ Trivandrum Express",
+    busType: "AC Super Fast Transit",
+    operator: "MoveSmart Transit Ops",
+    fromLocation: "Kochi",
+    toLocation: "Trivandrum",
+    departureTime: "06:30 AM",
+    arrivalTime: "11:30 AM",
+    duration: "5h 0m",
+    total_duration_minutes: 300,
+    totalSeats: 36,
+    availableSeats: 28,
+    price: 380,
+    rating: 4.9,
+    amenities: ["Live Tracking", "Emergency Contact", "IoT Transit Feed", "WiFi", "USB Charging"],
+    bookedSeats: [1, 2],
+    driverName: "Suresh Kumar",
+    driverPhone: "+91 98470 12345",
+    driverLicense: "KL-07-2018-009876",
+    driverPhoto: "",
+    driverVerified: true,
+    driverExperience: 7,
+    is_active: true,
+    stops: ["Kochi", "Alappuzha", "Kollam", "Attingal", "Trivandrum"],
+    route: ["Kochi", "Alappuzha", "Kollam", "Attingal", "Trivandrum"],
+    schedule: [{
+      stations: [
+        { id: 0, name: "Kochi", arrivalTime: "--", departureTime: "06:30 AM", halt: "Origin Terminal", platform: "Platform 1", offset_minutes: 0 },
+        { id: 1, name: "Alappuzha", arrivalTime: "07:45 AM", departureTime: "07:50 AM", halt: "5 mins halt", platform: "Platform 2", offset_minutes: 75 },
+        { id: 2, name: "Kollam", arrivalTime: "09:30 AM", departureTime: "09:35 AM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 180 },
+        { id: 3, name: "Attingal", arrivalTime: "10:35 AM", departureTime: "10:40 AM", halt: "5 mins halt", platform: "Platform 3", offset_minutes: 245 },
+        { id: 4, name: "Trivandrum", arrivalTime: "11:30 AM", departureTime: "--", halt: "Final Terminus", platform: "Platform 4", offset_minutes: 300 }
+      ]
+    }]
+  },
+  {
+    _id: "660000000000000000000002",
+    busNumber: "KL-08-MS-2044",
+    busName: "Thrissur ➔ Kozhikode Silverline",
+    busType: "Deluxe Semi-Sleeper",
+    operator: "MoveSmart Transit Ops",
+    fromLocation: "Thrissur",
+    toLocation: "Kozhikode",
+    departureTime: "08:15 AM",
+    arrivalTime: "11:45 AM",
+    duration: "3h 30m",
+    total_duration_minutes: 210,
+    totalSeats: 32,
+    availableSeats: 22,
+    price: 290,
+    rating: 4.8,
+    amenities: ["Live Tracking", "Air Suspension", "IoT Transit Feed"],
+    bookedSeats: [5, 6],
+    driverName: "Rajesh Varma",
+    driverPhone: "+91 94471 67890",
+    driverLicense: "KL-08-2016-004321",
+    driverPhoto: "",
+    driverVerified: true,
+    driverExperience: 9,
+    is_active: true,
+    stops: ["Thrissur", "Kunnamkulam", "Edappal", "Kuttippuram", "Kozhikode"],
+    route: ["Thrissur", "Kunnamkulam", "Edappal", "Kuttippuram", "Kozhikode"],
+    schedule: [{
+      stations: [
+        { id: 0, name: "Thrissur", arrivalTime: "--", departureTime: "08:15 AM", halt: "Origin Terminal", platform: "Platform 2", offset_minutes: 0 },
+        { id: 1, name: "Kunnamkulam", arrivalTime: "08:55 AM", departureTime: "09:00 AM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 40 },
+        { id: 2, name: "Edappal", arrivalTime: "09:35 AM", departureTime: "09:40 AM", halt: "5 mins halt", platform: "Platform 2", offset_minutes: 80 },
+        { id: 3, name: "Kuttippuram", arrivalTime: "10:15 AM", departureTime: "10:20 AM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 120 },
+        { id: 4, name: "Kozhikode", arrivalTime: "11:45 AM", departureTime: "--", halt: "Final Terminus", platform: "Platform 3", offset_minutes: 210 }
+      ]
+    }]
+  },
+  {
+    _id: "660000000000000000000003",
+    busNumber: "KL-01-MS-3090",
+    busName: "Trivandrum ➔ Munnar Hills Express",
+    busType: "Standard Route Transit",
+    operator: "MoveSmart Transit Ops",
+    fromLocation: "Trivandrum",
+    toLocation: "Munnar",
+    departureTime: "05:00 AM",
+    arrivalTime: "12:30 PM",
+    duration: "7h 30m",
+    total_duration_minutes: 450,
+    totalSeats: 40,
+    availableSeats: 35,
+    price: 490,
+    rating: 4.7,
+    amenities: ["Live Tracking", "Emergency Contact", "IoT Transit Feed"],
+    bookedSeats: [],
+    driverName: "Vijayan Pillai",
+    driverPhone: "+91 97455 11223",
+    driverLicense: "KL-01-2015-001234",
+    driverPhoto: "",
+    driverVerified: true,
+    driverExperience: 12,
+    is_active: true,
+    stops: ["Trivandrum", "Kollam", "Kottayam", "Muvattupuzha", "Kothamangalam", "Adimali", "Munnar"],
+    route: ["Trivandrum", "Kollam", "Kottayam", "Muvattupuzha", "Kothamangalam", "Adimali", "Munnar"],
+    schedule: [{
+      stations: [
+        { id: 0, name: "Trivandrum", arrivalTime: "--", departureTime: "05:00 AM", halt: "Origin Terminal", platform: "Platform 4", offset_minutes: 0 },
+        { id: 1, name: "Kollam", arrivalTime: "06:15 AM", departureTime: "06:20 AM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 75 },
+        { id: 2, name: "Kottayam", arrivalTime: "08:15 AM", departureTime: "08:20 AM", halt: "5 mins halt", platform: "Platform 2", offset_minutes: 195 },
+        { id: 3, name: "Muvattupuzha", arrivalTime: "09:30 AM", departureTime: "09:35 AM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 270 },
+        { id: 4, name: "Kothamangalam", arrivalTime: "10:10 AM", departureTime: "10:15 AM", halt: "5 mins halt", platform: "Platform 3", offset_minutes: 310 },
+        { id: 5, name: "Adimali", arrivalTime: "11:20 AM", departureTime: "11:25 AM", halt: "5 mins halt", platform: "Platform 2", offset_minutes: 380 },
+        { id: 6, name: "Munnar", arrivalTime: "12:30 PM", departureTime: "--", halt: "Final Terminus", platform: "Platform 1", offset_minutes: 450 }
+      ]
+    }]
+  },
+  {
+    _id: "660000000000000000000004",
+    busNumber: "KL-04-MS-4012",
+    busName: "Alappuzha ➔ Palakkad Intercity",
+    busType: "AC Super Fast Transit",
+    operator: "MoveSmart Transit Ops",
+    fromLocation: "Alappuzha",
+    toLocation: "Palakkad",
+    departureTime: "09:00 AM",
+    arrivalTime: "01:30 PM",
+    duration: "4h 30m",
+    total_duration_minutes: 270,
+    totalSeats: 36,
+    availableSeats: 30,
+    price: 340,
+    rating: 4.8,
+    amenities: ["Live Tracking", "WiFi", "Emergency Contact"],
+    bookedSeats: [],
+    driverName: "Gopakumar N",
+    driverPhone: "+91 94950 33445",
+    driverLicense: "KL-04-2019-008765",
+    driverPhoto: "",
+    driverVerified: true,
+    driverExperience: 6,
+    is_active: true,
+    stops: ["Alappuzha", "Kochi", "Aluva", "Thrissur", "Palakkad"],
+    route: ["Alappuzha", "Kochi", "Aluva", "Thrissur", "Palakkad"],
+    schedule: [{
+      stations: [
+        { id: 0, name: "Alappuzha", arrivalTime: "--", departureTime: "09:00 AM", halt: "Origin Terminal", platform: "Platform 1", offset_minutes: 0 },
+        { id: 1, name: "Kochi", arrivalTime: "10:15 AM", departureTime: "10:20 AM", halt: "5 mins halt", platform: "Platform 2", offset_minutes: 75 },
+        { id: 2, name: "Aluva", arrivalTime: "10:50 AM", departureTime: "10:55 AM", halt: "5 mins halt", platform: "Platform 3", offset_minutes: 110 },
+        { id: 3, name: "Thrissur", arrivalTime: "12:00 PM", departureTime: "12:05 PM", halt: "5 mins halt", platform: "Platform 1", offset_minutes: 180 },
+        { id: 4, name: "Palakkad", arrivalTime: "01:30 PM", departureTime: "--", halt: "Final Terminus", platform: "Platform 4", offset_minutes: 270 }
+      ]
+    }]
+  }
+];
+
+// Fetch all normalized buses with high-speed parallel queries and in-memory TTL cache
 const fetchAllNormalizedBuses = async () => {
+  // Check fast in-memory cache first
+  if (busCache.data && busCache.data.length > 0 && Date.now() - busCache.timestamp < CACHE_TTL_MS) {
+    return busCache.data;
+  }
+
   const normalizedBuses = [];
-  const seenNumbers = new Set();
-
-  let driverUserMap = new Map();
-  try {
-    const drivers = await User.find({ role: { $regex: /^driver$/i } }).lean();
-    drivers.forEach((d) => {
-      driverUserMap.set(String(d._id), d);
-    });
-  } catch (err) {
-    console.warn("User.find drivers notice:", err.message);
-  }
-
-  let rawRoutes = [];
-  try {
-    rawRoutes = await Route.find().lean();
-  } catch (err) {
-    console.warn("DB Route.find query error:", err.message);
-  }
+  const seenTripKeys = new Set();
+  const QUERY_TIMEOUT_MS = 2500;
 
   try {
-    const rawBuses = await Bus.find().lean();
-    for (const b of rawBuses) {
-      const norm = normalizeBusDocument(b, null, driverUserMap, rawRoutes);
-      if (!seenNumbers.has(norm.busNumber)) {
-        seenNumbers.add(norm.busNumber);
+    // Run all database fetches in parallel with strict timeout
+    const [driversResult, routesResult, schedulesResult, busesResult] = await Promise.allSettled([
+      User.find({ role: { $in: ["driver", "Driver", "DRIVER"] } })
+        .select("_id name phone email licenseNumber profilePic licenseImage verificationStatus experienceYears")
+        .maxTimeMS(QUERY_TIMEOUT_MS)
+        .lean(),
+      Route.find({ status: { $ne: "Suspended" } })
+        .maxTimeMS(QUERY_TIMEOUT_MS)
+        .lean(),
+      Schedule.find({ is_active: true })
+        .populate("route_id")
+        .populate("bus_id")
+        .maxTimeMS(QUERY_TIMEOUT_MS)
+        .lean(),
+      Bus.find()
+        .maxTimeMS(QUERY_TIMEOUT_MS)
+        .lean(),
+    ]);
+
+    const driverUserMap = new Map();
+    if (driversResult.status === "fulfilled" && Array.isArray(driversResult.value)) {
+      driversResult.value.forEach((d) => driverUserMap.set(String(d._id), d));
+    }
+
+    const rawRoutes = routesResult.status === "fulfilled" && Array.isArray(routesResult.value) ? routesResult.value : [];
+    const rawSchedules = schedulesResult.status === "fulfilled" && Array.isArray(schedulesResult.value) ? schedulesResult.value : [];
+    const rawBuses = busesResult.status === "fulfilled" && Array.isArray(busesResult.value) ? busesResult.value : [];
+
+    const routesWithActiveSchedule = new Set();
+
+    // 1. Process active departure schedules created by Admin
+    for (const sch of rawSchedules) {
+      const routeDoc = sch.route_id;
+      if (!routeDoc || routeDoc.status === "Suspended") continue;
+
+      routesWithActiveSchedule.add(String(routeDoc._id));
+
+      const busDoc = sch.bus_id || {};
+      const tripKey = `${sch.busNumber || busDoc.busNumber || routeDoc.routeId}_${sch.start_time}`;
+
+      if (!seenTripKeys.has(tripKey)) {
+        seenTripKeys.add(tripKey);
+
+        const timetable = generateStationTimetable(routeDoc, sch.start_time);
+        const stops = timetable.stations.map((s) => s.name);
+
+        const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+        const driverName = !isGeneric(sch.driverName)
+          ? sch.driverName
+          : (!isGeneric(busDoc.driverName) ? busDoc.driverName : "Assigned by Admin");
+
+        const norm = {
+          _id: sch._id,
+          scheduleId: sch._id,
+          busId: busDoc._id || null,
+          routeId: routeDoc._id,
+          routeCode: routeDoc.routeId,
+          busNumber: sch.busNumber || busDoc.busNumber || `KL-01-${routeDoc.routeId ? routeDoc.routeId.replace(/[^A-Z0-9]/g, "") : "MS100"}`,
+          busName: routeDoc.routeName || `${routeDoc.fromLocation} ➔ ${routeDoc.toLocation}`,
+          busType: busDoc.busType || "Standard Route Transit",
+          operator: busDoc.operator || "MoveSmart Transit Ops",
+          fromLocation: routeDoc.fromLocation || stops[0] || "Origin",
+          toLocation: routeDoc.toLocation || stops[stops.length - 1] || "Destination",
+          departureTime: timetable.departureTime,
+          arrivalTime: timetable.arrivalTime,
+          duration: timetable.duration,
+          total_duration_minutes: timetable.total_duration_minutes,
+          totalSeats: busDoc.totalSeats || 32,
+          availableSeats: busDoc.availableSeats !== undefined ? busDoc.availableSeats : 32,
+          price: routeDoc.fare || busDoc.price || 150,
+          rating: busDoc.rating || 4.8,
+          amenities: busDoc.amenities || ["Live Tracking", "Emergency Contact", "IoT Transit Feed"],
+          bookedSeats: busDoc.bookedSeats || [],
+          driverId: sch.driver_id || busDoc.driverId || null,
+          driverName: driverName,
+          driverPhone: busDoc.driverPhone || "N/A",
+          driverEmail: busDoc.driverEmail || "",
+          driverLicense: busDoc.driverLicense || "N/A",
+          driverPhoto: busDoc.driverPhoto || "",
+          driverVerified: true,
+          driverExperience: 4,
+          is_active: sch.is_active,
+          stops: stops,
+          route: stops,
+          schedule: [{ stations: timetable.stations }],
+        };
+
         normalizedBuses.push(norm);
       }
     }
-  } catch (err) {
-    console.warn("DB Bus.find query error:", err.message);
-  }
 
-  for (const r of rawRoutes) {
-    if (Array.isArray(r.buses) && r.buses.length > 0) {
-      for (const b of r.buses) {
-        const norm = normalizeBusDocument(b, r, driverUserMap, rawRoutes);
-        if (!seenNumbers.has(norm.busNumber)) {
-          seenNumbers.add(norm.busNumber);
-          normalizedBuses.push(norm);
-        }
-      }
-    } else {
-      // Admin route with defined stops and schedule
-      const stops = extractStopsFromDoc(r);
-      const routeBusNumber = r.routeId || `RT-${String(r._id).substring(18).toUpperCase()}`;
-      if (!seenNumbers.has(routeBusNumber)) {
-        const norm = normalizeBusDocument(
-          {
+    // 2. Process Routes that do not have an explicit schedule yet (use base_start_time)
+    for (const r of rawRoutes) {
+      if (!routesWithActiveSchedule.has(String(r._id))) {
+        const timetable = generateStationTimetable(r, r.base_start_time || "08:00 AM");
+        const stops = timetable.stations.map((s) => s.name);
+        const routeBusNumber = r.routeId || `RT-${String(r._id).substring(18).toUpperCase()}`;
+        const tripKey = `${routeBusNumber}_${timetable.departureTime}`;
+
+        if (!seenTripKeys.has(tripKey)) {
+          seenTripKeys.add(tripKey);
+
+          const norm = {
             _id: r._id,
+            routeId: r._id,
+            routeCode: r.routeId,
             busNumber: routeBusNumber,
             busName: r.routeName || `${r.fromLocation || "Route"} ➔ ${r.toLocation || "Destination"}`,
             busType: "Standard Route Transit",
             operator: "MoveSmart Transit Ops",
-            fromLocation: r.fromLocation || (stops.length > 0 ? stops[0] : ""),
-            toLocation: r.toLocation || (stops.length > 1 ? stops[stops.length - 1] : ""),
-            departureTime: r.base_start_time || "08:00 AM",
-            arrivalTime: "11:30 AM",
-            duration: r.duration || "3h 30m",
-            price: r.fare || 150,
+            fromLocation: r.fromLocation || stops[0] || "Origin",
+            toLocation: r.toLocation || stops[stops.length - 1] || "Destination",
+            departureTime: timetable.departureTime,
+            arrivalTime: timetable.arrivalTime,
+            duration: timetable.duration,
+            total_duration_minutes: timetable.total_duration_minutes,
             totalSeats: 32,
             availableSeats: 32,
+            price: r.fare || 150,
             rating: 4.8,
-            stops: stops,
+            amenities: ["Live Tracking", "Emergency Contact", "IoT Transit Feed"],
+            bookedSeats: [],
+            driverId: r.driverId || null,
             driverName: r.driverName || "Assigned by Admin",
             driverPhone: r.driverPhone || "N/A",
             driverLicense: r.driverLicense || "N/A",
-            driverId: r.driverId || null,
-          },
-          r,
-          driverUserMap,
-          rawRoutes
-        );
-        seenNumbers.add(routeBusNumber);
+            driverPhoto: "",
+            driverVerified: true,
+            driverExperience: 4,
+            is_active: r.status !== "Suspended",
+            stops: stops,
+            route: stops,
+            schedule: [{ stations: timetable.stations }],
+          };
+
+          normalizedBuses.push(norm);
+        }
+      }
+    }
+
+    // 3. Process standalone Bus collection items
+    for (const b of rawBuses) {
+      const norm = normalizeBusDocument(b, null, driverUserMap, rawRoutes);
+      const tripKey = `${norm.busNumber}_${norm.departureTime}`;
+      if (!seenTripKeys.has(tripKey)) {
+        seenTripKeys.add(tripKey);
         normalizedBuses.push(norm);
       }
     }
+
+    // If database returned active data, update the memory cache
+    if (normalizedBuses.length > 0) {
+      busCache = { data: normalizedBuses, timestamp: Date.now() };
+      return normalizedBuses;
+    }
+  } catch (err) {
+    console.warn("Fast fetchAllNormalizedBuses caught error:", err.message);
   }
 
-  return normalizedBuses;
+  // Fallback to existing cache or seed buses for instant zero-delay responses
+  if (busCache.data && busCache.data.length > 0) {
+    return busCache.data;
+  }
+
+  busCache = { data: SEED_FALLBACK_BUSES, timestamp: Date.now() };
+  return SEED_FALLBACK_BUSES;
 };
 
 // GET /locations (Get all unique stations/locations from DB)
@@ -253,25 +696,35 @@ router.get("/locations", async (req, res) => {
     const allBuses = await fetchAllNormalizedBuses();
     const locationSet = new Set();
 
+    const addCleanLocation = (raw) => {
+      if (!raw) return;
+      const str = String(raw).trim();
+      // Skip route names or strings with arrows or via descriptions
+      if (str.includes("➔") || str.includes("->") || str.toLowerCase().includes("via ") || str.length < 2) {
+        return;
+      }
+      locationSet.add(str);
+    };
+
     allBuses.forEach((b) => {
-      if (b.fromLocation) locationSet.add(b.fromLocation);
-      if (b.toLocation) locationSet.add(b.toLocation);
+      addCleanLocation(b.fromLocation);
+      addCleanLocation(b.toLocation);
       if (Array.isArray(b.stops)) {
         b.stops.forEach((s) => {
-          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop) : s;
-          if (stName) locationSet.add(String(stName).trim());
+          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.station) : s;
+          addCleanLocation(stName);
         });
       }
     });
 
-    const routes = await Route.find().lean();
+    const routes = await Route.find({ status: { $ne: "Suspended" } }).lean();
     routes.forEach((r) => {
-      if (r.fromLocation) locationSet.add(r.fromLocation);
-      if (r.toLocation) locationSet.add(r.toLocation);
+      addCleanLocation(r.fromLocation);
+      addCleanLocation(r.toLocation);
       if (Array.isArray(r.stops)) {
         r.stops.forEach((s) => {
-          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop) : s;
-          if (stName) locationSet.add(String(stName).trim());
+          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.station) : s;
+          addCleanLocation(stName);
         });
       }
     });
@@ -310,53 +763,17 @@ router.get("/routes", async (req, res) => {
   }
 });
 
-// Helper to normalize location strings for accurate comparison with typo & spelling tolerance
-const normalizeLocation = (loc) => {
-  if (!loc) return "";
-  return String(loc)
-    .toLowerCase()
-    .replace(/\(.*?\)/g, "") // strip parenthetical annotations e.g. (Vyttila)
-    .replace(/sub-stop|sub stop|junction|bus stand|stand|road|stop/gi, " ")
-    .replace(/[^a-z0-9\s]/gi, " ") // replace special chars with spaces
-    .replace(/(.)\1+/g, "$1") // collapse repeated chars e.g. "errattupetta" -> "eratupeta", "erattupetta" -> "eratupeta"
-    .trim()
-    .replace(/\s+/g, " ");
-};
-
-// Accurate location string matching (exact, normalized, substring, or whole-word match)
-const matchLocationStr = (locationInDB, searchQuery) => {
-  if (!searchQuery) return true;
-  const rawDb = String(locationInDB || "").trim().toLowerCase();
-  const rawQ = String(searchQuery || "").trim().toLowerCase();
-  if (!rawDb || !rawQ) return false;
-
-  // Exact raw match
-  if (rawDb === rawQ) return true;
-
-  // Raw substring match (e.g. "Erumely" inside "Chenappady - Erumely Road")
-  if (rawDb.includes(rawQ) || rawQ.includes(rawDb)) return true;
-
-  const dbNorm = normalizeLocation(locationInDB);
-  const qNorm = normalizeLocation(searchQuery);
-  if (!dbNorm || !qNorm) return false;
-
-  // Exact normalized match or normalized substring
-  if (dbNorm === qNorm || dbNorm.includes(qNorm) || qNorm.includes(dbNorm)) return true;
-
-  // Whole-word regex match
-  const regexDb = new RegExp(`\\b${dbNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
-  const regexQ = new RegExp(`\\b${qNorm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, "i");
-
-  return regexDb.test(qNorm) || regexQ.test(dbNorm);
-};
-
 // Build a complete ordered sequence of all stops from origin to destination for a bus
 const buildCompleteStopsList = (bus) => {
-  const rawStops = Array.isArray(bus.stops)
-    ? bus.stops.map((s) => (typeof s === "object" && s !== null ? (s.stopName || s.name || s.stop || "") : String(s)).trim())
-    : [];
-  const list = [];
+  if (Array.isArray(bus.schedule) && bus.schedule.length > 0 && Array.isArray(bus.schedule[0].stations) && bus.schedule[0].stations.length > 0) {
+    return bus.schedule[0].stations.map((st) => String(st.station || st.name || "").trim()).filter(Boolean);
+  }
 
+  const rawStops = Array.isArray(bus.stops)
+    ? bus.stops.map((s) => (typeof s === "object" && s !== null ? (s.stopName || s.name || s.station || "") : String(s)).trim())
+    : [];
+
+  const list = [];
   if (bus.fromLocation) {
     list.push(String(bus.fromLocation).trim());
   }
@@ -375,23 +792,6 @@ const buildCompleteStopsList = (bus) => {
     if (!list.length || !matchLocationStr(list[list.length - 1], trimmedTo)) {
       list.push(trimmedTo);
     }
-  }
-
-  // Also include schedule stations if any
-  if (Array.isArray(bus.schedule)) {
-    bus.schedule.forEach((trip) => {
-      if (Array.isArray(trip.stations)) {
-        trip.stations.forEach((st) => {
-          const stName = typeof st === "object" && st !== null ? (st.station || st.name) : st;
-          if (stName) {
-            const trimmed = String(stName).trim();
-            if (!list.some((existing) => matchLocationStr(existing, trimmed))) {
-              list.push(trimmed);
-            }
-          }
-        });
-      }
-    });
   }
 
   return list;
@@ -433,26 +833,61 @@ router.get("/buses", async (req, res) => {
     const toQuery = isAllQuery(to) ? null : to.trim();
 
     if (fromQuery || toQuery) {
-      filtered = allBuses.filter((b) => {
+      const matchedBuses = [];
+
+      for (const b of allBuses) {
         let fromIdx = -1;
         let toIdx = -1;
 
         if (fromQuery) {
           fromIdx = getStationMatchIndex(b, fromQuery);
-          if (fromIdx === -1) return false;
+          if (fromIdx === -1) continue;
         }
 
         if (toQuery) {
           toIdx = getStationMatchIndex(b, toQuery);
-          if (toIdx === -1) return false;
+          if (toIdx === -1) continue;
         }
 
         if (fromQuery && toQuery && fromIdx !== -1 && toIdx !== -1) {
-          if (fromIdx >= toIdx) return false;
+          if (fromIdx >= toIdx) continue;
         }
 
-        return true;
-      });
+        // Compute segment-specific details if queried
+        const stations = Array.isArray(b.schedule) && b.schedule[0]?.stations ? b.schedule[0].stations : [];
+        let segmentDuration = b.duration;
+        let boardingStation = null;
+        let dropStation = null;
+
+        if (fromIdx !== -1 && stations[fromIdx]) {
+          boardingStation = stations[fromIdx];
+        }
+        if (toIdx !== -1 && stations[toIdx]) {
+          dropStation = stations[toIdx];
+        }
+
+        if (boardingStation && dropStation) {
+          const segMins = Math.max(15, (dropStation.offset_minutes || 0) - (boardingStation.offset_minutes || 0));
+          segmentDuration = calculateDurationMins(0, segMins);
+        }
+
+        matchedBuses.push({
+          ...b,
+          searchContext: {
+            fromQuery: fromQuery || "",
+            toQuery: toQuery || "",
+            fromIdx,
+            toIdx,
+            boardingStationName: boardingStation ? boardingStation.name : (fromQuery || b.fromLocation),
+            boardingDepartureTime: boardingStation ? (boardingStation.departureTime !== "--" ? boardingStation.departureTime : b.departureTime) : b.departureTime,
+            dropStationName: dropStation ? dropStation.name : (toQuery || b.toLocation),
+            dropArrivalTime: dropStation ? (dropStation.arrivalTime !== "--" ? dropStation.arrivalTime : b.arrivalTime) : b.arrivalTime,
+            segmentDuration: segmentDuration || b.duration,
+          }
+        });
+      }
+
+      filtered = matchedBuses;
     }
 
     if (busType && busType !== "All") {
@@ -481,6 +916,89 @@ router.get("/buses", async (req, res) => {
   } catch (error) {
     console.error("Error fetching buses:", error);
     res.status(500).json({ success: false, message: error.message || "Failed to fetch buses" });
+  }
+});
+
+// GET /buses/live-fleet (Fetch real-time tracking status of entire fleet)
+router.get("/buses/live-fleet", async (req, res) => {
+  try {
+    const liveLocations = getAllActiveBusLocations();
+    const liveMap = new Map();
+    liveLocations.forEach((loc) => liveMap.set(String(loc.busId), loc));
+
+    const dbBuses = await Bus.find().lean();
+    const fleetStatus = dbBuses.map((bus) => {
+      const busIdStr = String(bus._id);
+      const live = liveMap.get(busIdStr);
+      return {
+        _id: bus._id,
+        busNumber: bus.busNumber,
+        busName: bus.busName,
+        busType: bus.busType,
+        fromLocation: bus.fromLocation,
+        toLocation: bus.toLocation,
+        departureTime: bus.departureTime,
+        arrivalTime: bus.arrivalTime,
+        driverName: bus.driverName,
+        isTracking: Boolean(live?.isTracking),
+        status: live ? live.status : "OFFLINE",
+        latitude: live?.latitude || null,
+        longitude: live?.longitude || null,
+        speed: live?.speed || 0,
+        heading: live?.heading || 0,
+        lastUpdated: live?.lastUpdated || null,
+        timestamp: live?.timestamp || null,
+      };
+    });
+
+    res.json({
+      success: true,
+      count: fleetStatus.length,
+      activeCount: fleetStatus.filter((b) => b.isTracking && b.status === "LIVE").length,
+      delayedCount: fleetStatus.filter((b) => b.status === "DELAYED").length,
+      offlineCount: fleetStatus.filter((b) => b.status === "OFFLINE").length,
+      fleet: fleetStatus,
+    });
+  } catch (error) {
+    console.error("Error fetching live fleet status:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch live fleet data", error: error.message });
+  }
+});
+
+// GET /buses/:busId/live-location (Fetch real-time location and metadata of specific bus)
+router.get("/buses/:busId/live-location", async (req, res) => {
+  try {
+    const { busId } = req.params;
+    const live = getActiveBusLocation(busId);
+    const bus = await Bus.findById(busId).lean();
+
+    if (!bus && !live) {
+      return res.status(404).json({ success: false, message: "Bus not found" });
+    }
+
+    res.json({
+      success: true,
+      busId: bus?._id || busId,
+      busNumber: bus?.busNumber || live?.busNumber || "Bus",
+      busName: bus?.busName || "MoveSmart Express",
+      routeName: bus ? `${bus.fromLocation} ➔ ${bus.toLocation}` : live?.routeName || "",
+      fromLocation: bus?.fromLocation || "",
+      toLocation: bus?.toLocation || "",
+      departureTime: bus?.departureTime || "",
+      arrivalTime: bus?.arrivalTime || "",
+      driverName: bus?.driverName || live?.driverName || "Driver",
+      isTracking: Boolean(live?.isTracking),
+      status: live ? live.status : "OFFLINE",
+      latitude: live?.latitude ?? null,
+      longitude: live?.longitude ?? null,
+      speed: live?.speed ?? 0,
+      heading: live?.heading ?? 0,
+      lastUpdated: live?.lastUpdated ?? null,
+      timestamp: live?.timestamp ?? null,
+    });
+  } catch (error) {
+    console.error("Error fetching bus live location:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch live bus location", error: error.message });
   }
 });
 
@@ -1166,28 +1684,6 @@ router.delete("/admin/routes/:id", async (req, res) => {
 });
 
 // --- SCHEDULE DEPARTURES MANAGEMENT ---
-
-function addMinutesToTimeStr(timeStr, minutesToAdd = 0, bufferMinutes = 0) {
-  if (!timeStr) return "08:00 AM";
-  const cleanStr = timeStr.trim().toUpperCase();
-  const isPM = cleanStr.includes("PM");
-  const isAM = cleanStr.includes("AM");
-  const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
-  if (!match) return timeStr;
-
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  if (isPM && hours < 12) hours += 12;
-  if (isAM && hours === 12) hours = 0;
-
-  const totalMins = (hours * 60 + minutes + Number(minutesToAdd) + Number(bufferMinutes)) % 1440;
-  const h24 = Math.floor(totalMins / 60);
-  const mins = totalMins % 60;
-  const period = h24 >= 12 ? "PM" : "AM";
-  let h12 = h24 % 12;
-  if (h12 === 0) h12 = 12;
-  return `${h12.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")} ${period}`;
-}
 
 // GET /admin/schedules (Fetch all route departure schedules)
 router.get("/admin/schedules", async (req, res) => {

@@ -107,12 +107,15 @@ export default function CardApplication() {
       const parts = (user.name || "").trim().split(/\s+/);
       const fName = parts[0] || "";
       const sName = parts.slice(1).join(" ") || "";
+      const cleanPhone = (user.phone || "").replace(/\D/g, "");
+      const phoneDigits = cleanPhone.length === 12 && cleanPhone.startsWith("91") ? cleanPhone.slice(2) : cleanPhone;
       setFormData((prev) => ({
         ...prev,
         firstName: prev.firstName || fName,
         secondName: prev.secondName || sName,
         fullName: prev.fullName || user.name || "",
         email: prev.email || user.email || "",
+        phone: prev.phone || (phoneDigits ? phoneDigits.slice(0, 10) : "") || "",
       }));
     }
   }, [user]);
@@ -162,7 +165,14 @@ export default function CardApplication() {
     let val = type === "checkbox" ? checked : value;
 
     if (name === "phone" || name === "emergencyPhone") {
-      val = typeof value === "string" ? value.replace(/[^\d\s-]/g, "") : value;
+      val = typeof value === "string" ? value.replace(/\D/g, "") : value;
+      const targetCode = name === "phone" ? (formData.countryCode || "+91") : (formData.emergencyCountryCode || "+91");
+      const isIndia = targetCode === "+91" || targetCode === "IN";
+      if (isIndia && typeof val === "string") {
+        val = val.slice(0, 10);
+      } else if (typeof val === "string") {
+        val = val.slice(0, 15);
+      }
     }
 
     if (name === "idNumber" && formData.cardCategory !== "Foreigner") {
@@ -330,6 +340,11 @@ export default function CardApplication() {
       }
     }
     if (targetStep === 5) {
+      // Validate all previous steps (Personal, Address, ID, Emergency) first
+      for (let s = 1; s <= 4; s++) {
+        const prevErr = validateStep(s);
+        if (prevErr) return prevErr;
+      }
       const rechargeVal = Number(formData.initialRecharge);
       if (!formData.initialRecharge || isNaN(rechargeVal) || rechargeVal < 10) {
         return "Initial recharge amount must be at least ₹10.";
@@ -351,6 +366,22 @@ export default function CardApplication() {
       }
     }
     return null;
+  };
+
+  const handleStepClick = (targetNum) => {
+    if (targetNum === step) return;
+    if (targetNum > step) {
+      for (let s = 1; s < targetNum; s++) {
+        const err = validateStep(s);
+        if (err) {
+          setFormError(err);
+          setStep(s);
+          return;
+        }
+      }
+    }
+    setFormError("");
+    setStep(targetNum);
   };
 
   const handleNextStep = () => {
@@ -385,14 +416,18 @@ export default function CardApplication() {
       try {
         const full = computedFullName || formData.fullName || user?.name || "Card Applicant";
         const emFull = computedEmergencyFullName || formData.emergencyName || "Emergency Contact";
+        const cleanPhone = (formData.phone || "").replace(/\D/g, "");
+        const cleanEmergencyPhone = (formData.emergencyPhone || "").replace(/\D/g, "");
         const payload = {
           ...formData,
           fullName: full,
           emergencyName: emFull,
           emergencyFirstName: formData.emergencyFirstName,
           emergencySecondName: formData.emergencySecondName,
-          phone: phoneValidation.formatted || `${formData.countryCode} ${formData.phone}`,
-          emergencyPhone: formData.emergencyPhone ? emergencyPhoneValidation.formatted || `${formData.emergencyCountryCode} ${formData.emergencyPhone}` : "",
+          phone: cleanPhone,
+          emergencyPhone: cleanEmergencyPhone,
+          countryCode: formData.countryCode || "+91",
+          emergencyCountryCode: formData.emergencyCountryCode || "+91",
           paymentId: paymentId || undefined,
           paymentMethod: "Razorpay",
           userId: user?.id || user?._id || null,
@@ -406,6 +441,7 @@ export default function CardApplication() {
 
         const newApp = res.data.application;
         setSubmittedAppInfo(newApp);
+        setFormError("");
         await fetchApplications();
       } catch (err) {
         const message = err.response?.data?.error || err.response?.data?.message || "Failed to submit application. Please try again.";
@@ -573,7 +609,23 @@ export default function CardApplication() {
                 const isActive = step === s.num;
                 const isCompleted = step > s.num;
                 return (
-                  <div key={s.num} style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+                  <button
+                    key={s.num}
+                    type="button"
+                    onClick={() => handleStepClick(s.num)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      flexShrink: 0,
+                      background: "none",
+                      border: "none",
+                      padding: "4px 8px",
+                      borderRadius: "12px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
                     <div
                       style={{
                         width: "34px",
@@ -595,7 +647,7 @@ export default function CardApplication() {
                       {s.title}
                     </span>
                     {s.num < 5 && <div style={{ width: "24px", height: "2px", background: isCompleted ? "#38a169" : "#e2e8f0", margin: "0 6px" }} />}
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -849,8 +901,11 @@ export default function CardApplication() {
                             id="phone"
                             name="phone"
                             type="tel"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            maxLength={formData.countryCode === "+91" ? 10 : 15}
                             className="rta-input-field"
-                            placeholder={getCountryByCode(formData.countryCode).placeholder || "Enter phone number"}
+                            placeholder={getCountryByCode(formData.countryCode).placeholder || "Enter 10-digit phone number (numbers only)"}
                             value={formData.phone}
                             onChange={handleChange}
                             required
@@ -1520,6 +1575,9 @@ export default function CardApplication() {
                             id="emergencyPhone"
                             name="emergencyPhone"
                             type="tel"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            maxLength={formData.emergencyCountryCode === "+91" ? 10 : 15}
                             className="rta-input-field"
                             placeholder="Digits only (e.g. 9876543210)"
                             value={formData.emergencyPhone}

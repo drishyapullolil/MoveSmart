@@ -4,10 +4,14 @@ const mongoose = require("mongoose");
 const Stop = require("../models/Stop");
 const StopDistance = require("../models/StopDistance");
 const RfidCard = require("../models/RfidCard");
+const RfidDevice = require("../models/RfidDevice");
 const Journey = require("../models/Journey");
 const CardApplication = require("../models/CardApplication");
 const Transaction = require("../models/Transaction");
+const Bus = require("../models/Bus");
+const User = require("../models/User");
 const { sendApplicationStatusEmail } = require("../utils/mailer");
+const { getIO } = require("../services/socketService");
 const {
   validateEmail,
   validateDob,
@@ -27,6 +31,34 @@ const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
+
+/**
+ * Flexible RFID Card lookup helper (exact match + normalized non-alphanumeric match)
+ * Safely works with raw hex (e.g. 53262A56), colon-separated (53:26:2A:56), or spaced UIDs (53 26 2A 56)
+ */
+async function findCardByTagOrNumber(param) {
+  if (!param) return null;
+  const query = String(param).trim().toUpperCase();
+
+  // 1. Exact query match
+  let card = await RfidCard.findOne({
+    $or: [{ rfidTag: query }, { cardNumber: query }]
+  });
+  if (card) return card;
+
+  // 2. Normalized match (strips punctuation/whitespace)
+  const rawHex = query.replace(/[^A-F0-9]/gi, "");
+  if (rawHex.length >= 4) {
+    const pattern = rawHex.match(/.{1,2}/g)?.join("[:\\s-]?") || rawHex;
+    card = await RfidCard.findOne({
+      $or: [
+        { rfidTag: { $regex: new RegExp(`^${pattern}$`, "i") } },
+        { cardNumber: query }
+      ]
+    });
+  }
+  return card;
+}
 
 // Create Razorpay Order
 router.post("/create-razorpay-order", async (req, res) => {
@@ -89,10 +121,7 @@ router.post("/verify-razorpay-payment", async (req, res) => {
       if (!tagId) {
         return res.status(400).json({ message: "Card tagId is required for top-up" });
       }
-      const queryVal = tagId.toUpperCase().trim();
-      let card = await RfidCard.findOne({
-        $or: [{ rfidTag: queryVal }, { cardNumber: queryVal }],
-      });
+      let card = await findCardByTagOrNumber(tagId);
 
       if (!card) {
         return res.status(404).json({ message: "RFID Card not found" });
@@ -114,7 +143,7 @@ router.post("/verify-razorpay-payment", async (req, res) => {
         isDebit: false,
         status: "Success",
         paymentMethod: "Razorpay",
-        description: `Nol Transit Card Top-Up via Razorpay`,
+        description: `MoveSmart Transit Card Top-Up via Razorpay`,
       });
       await txn.save();
 
@@ -155,69 +184,85 @@ router.post("/verify-razorpay-payment", async (req, res) => {
   }
 });
 
-// Seed Stops and Distances
+// Seed MoveSmart Kerala Stops and Distances (Safely adds missing stops/distances without deleting or overwriting existing records)
 router.post("/seed", async (req, res) => {
-
   try {
-    // Clear existing stops and distances to avoid duplicate key issues on re-run
-    await Stop.deleteMany({});
-    await StopDistance.deleteMany({});
-
-    // 1. Create Stops
+    // 1. Find or create MoveSmart Kerala Transit Stops (Never deletes existing records)
     const stopsData = [
-      { name: "Al Ghubaiba Bus Station", code: "STOP_GHUB" },
-      { name: "Burjuman Station", code: "STOP_BURJ" },
-      { name: "Union Square Bus Station", code: "STOP_UNI" },
-      { name: "Gold Souq Bus Station", code: "STOP_GOLD" },
-      { name: "Jebel Ali Bus Station", code: "STOP_JEBEL" },
-      { name: "Al Maktoum Airport", code: "STOP_DWC" }
+      { name: "Vyttila Mobility Hub", code: "STOP_VYTTILA", latitude: 9.9658, longitude: 76.3204 },
+      { name: "Kaloor Bus Terminal", code: "STOP_KALOOR", latitude: 9.9961, longitude: 76.2906 },
+      { name: "Edappally Toll Junction", code: "STOP_EDAPPALLY", latitude: 10.0261, longitude: 76.3085 },
+      { name: "Aluva Bus & Metro Hub", code: "STOP_ALUVA", latitude: 10.1076, longitude: 76.3516 },
+      { name: "Angamaly Major Terminal", code: "STOP_ANGAMALY", latitude: 10.1960, longitude: 76.3860 },
+      { name: "Kakkanad InfoPark Transit Hub", code: "STOP_KAKKANAD", latitude: 10.0159, longitude: 76.3419 }
     ];
 
     const stops = {};
     for (const item of stopsData) {
-      const stop = new Stop(item);
-      await stop.save();
+      let stop = await Stop.findOne({ code: item.code.toUpperCase() });
+      if (!stop) {
+        stop = await Stop.findOne({ name: item.name });
+      }
+      if (!stop) {
+        stop = new Stop({ name: item.name, code: item.code.toUpperCase(), latitude: item.latitude, longitude: item.longitude });
+        await stop.save();
+      } else {
+        if (!stop.latitude || !stop.longitude) {
+          stop.latitude = item.latitude;
+          stop.longitude = item.longitude;
+          await stop.save();
+        }
+      }
       stops[item.code] = stop;
     }
 
-    // 2. Create Distance Mapping (Bi-directional)
-    // We will save from A to B. In queries, we will look up both directions.
+    // 2. Create Distance Mapping only if pair does not already exist (Bi-directional in km)
     const distancesData = [
-      { from: "STOP_GHUB", to: "STOP_BURJ", dist: 3.5 },
-      { from: "STOP_GHUB", to: "STOP_UNI", dist: 5.8 },
-      { from: "STOP_GHUB", to: "STOP_GOLD", dist: 4.2 },
-      { from: "STOP_GHUB", to: "STOP_JEBEL", dist: 32.0 },
-      { from: "STOP_GHUB", to: "STOP_DWC", dist: 48.0 },
+      { from: "STOP_VYTTILA", to: "STOP_KALOOR", dist: 5.5 },
+      { from: "STOP_VYTTILA", to: "STOP_EDAPPALLY", dist: 8.0 },
+      { from: "STOP_VYTTILA", to: "STOP_ALUVA", dist: 16.5 },
+      { from: "STOP_VYTTILA", to: "STOP_ANGAMALY", dist: 26.0 },
+      { from: "STOP_VYTTILA", to: "STOP_KAKKANAD", dist: 7.2 },
 
-      { from: "STOP_BURJ", to: "STOP_UNI", dist: 4.5 },
-      { from: "STOP_BURJ", to: "STOP_GOLD", dist: 6.1 },
-      { from: "STOP_BURJ", to: "STOP_JEBEL", dist: 28.5 },
-      { from: "STOP_BURJ", to: "STOP_DWC", dist: 44.5 },
+      { from: "STOP_KALOOR", to: "STOP_EDAPPALLY", dist: 4.2 },
+      { from: "STOP_KALOOR", to: "STOP_ALUVA", dist: 13.0 },
+      { from: "STOP_KALOOR", to: "STOP_ANGAMALY", dist: 23.5 },
+      { from: "STOP_KALOOR", to: "STOP_KAKKANAD", dist: 8.5 },
 
-      { from: "STOP_UNI", to: "STOP_GOLD", dist: 2.5 },
-      { from: "STOP_UNI", to: "STOP_JEBEL", dist: 33.0 },
-      { from: "STOP_UNI", to: "STOP_DWC", dist: 49.0 },
+      { from: "STOP_EDAPPALLY", to: "STOP_ALUVA", dist: 9.0 },
+      { from: "STOP_EDAPPALLY", to: "STOP_ANGAMALY", dist: 19.5 },
+      { from: "STOP_EDAPPALLY", to: "STOP_KAKKANAD", dist: 6.0 },
 
-      { from: "STOP_GOLD", to: "STOP_JEBEL", dist: 35.0 },
-      { from: "STOP_GOLD", to: "STOP_DWC", dist: 51.0 },
+      { from: "STOP_ALUVA", to: "STOP_ANGAMALY", dist: 10.5 },
+      { from: "STOP_ALUVA", to: "STOP_KAKKANAD", dist: 14.5 },
 
-      { from: "STOP_JEBEL", to: "STOP_DWC", dist: 18.0 }
+      { from: "STOP_ANGAMALY", to: "STOP_KAKKANAD", dist: 24.0 }
     ];
 
     for (const distInfo of distancesData) {
       const fromStop = stops[distInfo.from];
       const toStop = stops[distInfo.to];
       if (fromStop && toStop) {
-        const sd = new StopDistance({
-          fromStop: fromStop._id,
-          toStop: toStop._id,
-          distanceKm: distInfo.dist
+        const existingDist = await StopDistance.findOne({
+          $or: [
+            { fromStop: fromStop._id, toStop: toStop._id },
+            { fromStop: toStop._id, toStop: fromStop._id }
+          ]
         });
-        await sd.save();
+
+        // Only insert if no distance record exists between these two stops
+        if (!existingDist) {
+          const sd = new StopDistance({
+            fromStop: fromStop._id,
+            toStop: toStop._id,
+            distanceKm: distInfo.dist
+          });
+          await sd.save();
+        }
       }
     }
 
-    res.json({ message: "Default stops and distances seeded successfully ✅", count: Object.keys(stops).length });
+    res.json({ message: "MoveSmart Kerala stops and distances verified/seeded successfully ✅", count: Object.keys(stops).length });
   } catch (error) {
     console.error("Seeding Error:", error);
     res.status(500).json({ message: "Failed to seed data: " + error.message });
@@ -277,24 +322,41 @@ router.post("/book", async (req, res) => {
   }
 });
 
-// Get user's cards
+// Get user's cards (dynamically populated from MongoDB User model)
 router.get("/my-cards", async (req, res) => {
   try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ message: "Email is required to fetch owned cards" });
+    const { email, userId } = req.query;
+    if (!email && !userId) {
+      return res.status(400).json({ message: "User ID or Email is required to fetch owned cards" });
     }
 
     const User = require("../models/User");
-    const userObj = await User.findOne({ email: email.toLowerCase() });
+    let userObj = null;
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      userObj = await User.findById(userId);
+    }
+    if (!userObj && email) {
+      userObj = await User.findOne({ email: email.toLowerCase().trim() });
+    }
+
     if (!userObj) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const cards = await RfidCard.find({ user: userObj._id });
-    res.json({ cards });
+    const cards = await RfidCard.find({ user: userObj._id }).populate("user", "name email phone role");
+    res.json({
+      success: true,
+      cards,
+      user: {
+        _id: userObj._id,
+        name: userObj.name,
+        email: userObj.email,
+        phone: userObj.phone,
+        role: userObj.role
+      }
+    });
   } catch (error) {
-    console.error(error);
+    console.error("My-Cards Route Error:", error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -302,12 +364,10 @@ router.get("/my-cards", async (req, res) => {
 // Check Card Balance
 router.get("/balance/:tagOrCard", async (req, res) => {
   try {
-    const param = req.params.tagOrCard.toUpperCase();
+    const param = req.params.tagOrCard;
 
-    // Check by tag or card number
-    let card = await RfidCard.findOne({
-      $or: [{ rfidTag: param }, { cardNumber: param }]
-    });
+    // Check by tag or card number using flexible lookup
+    let card = await findCardByTagOrNumber(param);
 
     if (!card) {
       return res.status(404).json({ message: "Card not found" });
@@ -340,10 +400,7 @@ router.post("/topup", async (req, res) => {
       return res.status(400).json({ message: "Minimum top-up amount is ₹10" });
     }
 
-    const queryVal = tagId.toUpperCase();
-    let card = await RfidCard.findOne({
-      $or: [{ rfidTag: queryVal }, { cardNumber: queryVal }]
-    });
+    let card = await findCardByTagOrNumber(tagId);
 
     if (!card) {
       return res.status(404).json({ message: "Card not found" });
@@ -401,11 +458,11 @@ router.post("/toggle-status", async (req, res) => {
   }
 });
 
-// Get card history
+// Get card history (journeys & transactions dynamically loaded)
 router.get("/history/:cardNumber", async (req, res) => {
   try {
     const { cardNumber } = req.params;
-    const card = await RfidCard.findOne({ cardNumber });
+    const card = await RfidCard.findOne({ cardNumber }).populate("user", "name email phone role");
     if (!card) {
       return res.status(404).json({ message: "Card not found" });
     }
@@ -413,12 +470,28 @@ router.get("/history/:cardNumber", async (req, res) => {
     const journeys = await Journey.find({ card: card._id })
       .populate("tapInStop")
       .populate("tapOutStop")
+      .populate("busId")
+      .populate("driverId", "name email phone")
       .sort({ createdAt: -1 })
-      .limit(20);
+      .limit(30);
 
-    res.json({ journeys });
+    const transactions = await Transaction.find({
+      $or: [
+        { cardNumber: { $regex: card.cardNumber.slice(-4), $options: "i" } },
+        ...(card.user ? [{ user: card.user._id }] : [])
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    res.json({
+      success: true,
+      card,
+      journeys,
+      transactions,
+    });
   } catch (error) {
-    console.error(error);
+    console.error("Card History Route Error:", error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -507,14 +580,119 @@ router.post("/distances", async (req, res) => {
 // Live RFID Tap-In / Tap-Out Endpoint
 router.post("/tap", async (req, res) => {
   try {
-    const { rfidTag, stopCode } = req.body;
+    const rfidTag = req.body.rfidTag || req.body.cardUid || req.body.uid;
+    const { deviceId, busNumber, busId } = req.body;
+    let stopCode = req.body.stopCode;
 
-    if (!rfidTag || !stopCode) {
-      return res.status(400).json({ message: "rfidTag and stopCode are required parameters" });
+    if (!rfidTag) {
+      return res.status(400).json({ message: "rfidTag or cardUid parameter is required" });
     }
 
-    // 1. Find RFID Card
-    const card = await RfidCard.findOne({ rfidTag: rfidTag.toUpperCase() });
+    // 1. Resolve Assigned Bus & Driver dynamically from database
+    let assignedBusRecord = null;
+    if (req.body.busId && mongoose.Types.ObjectId.isValid(req.body.busId)) {
+      assignedBusRecord = await Bus.findById(req.body.busId);
+    }
+    if (!assignedBusRecord && req.body.busNumber) {
+      assignedBusRecord = await Bus.findOne({ busNumber: String(req.body.busNumber).trim() });
+    }
+    if (!assignedBusRecord && req.body.deviceId) {
+      const dev = await RfidDevice.findOne({ deviceId: String(req.body.deviceId).trim().toUpperCase() });
+      if (dev?.busId && mongoose.Types.ObjectId.isValid(dev.busId)) {
+        assignedBusRecord = await Bus.findById(dev.busId);
+      } else if (dev?.busNumber) {
+        assignedBusRecord = await Bus.findOne({ busNumber: dev.busNumber });
+      }
+    }
+    if (!assignedBusRecord) {
+      assignedBusRecord = await Bus.findOne({ is_active: true });
+    }
+
+    // 2. Check for an active Live Drive Session for this Bus or Driver
+    let activeLiveDriveStop = null;
+    try {
+      const driverRoutes = require("./driverRoutes");
+      const liveSessions = driverRoutes.liveDriveSessions;
+      if (liveSessions && assignedBusRecord) {
+        const session = liveSessions.get(String(assignedBusRecord._id)) ||
+                        (assignedBusRecord.driverId ? liveSessions.get(String(assignedBusRecord.driverId)) : null);
+        if (session && session.status === "ACTIVE" && session.currentStop) {
+          activeLiveDriveStop = session.currentStop;
+        }
+      }
+    } catch {}
+
+    // 3. Resolve the actual Stop
+    let stop = null;
+
+    if (activeLiveDriveStop) {
+      // If the bus has an active live drive, ALWAYS use the bus's live position
+      if (activeLiveDriveStop.code) {
+        stop = await Stop.findOne({ code: activeLiveDriveStop.code.toUpperCase() });
+      }
+      if (!stop && activeLiveDriveStop.name) {
+        stop = await Stop.findOne({ name: activeLiveDriveStop.name });
+      }
+    }
+
+    if (!stop) {
+      // Check if a specific valid non-generic stopCode was sent
+      if (stopCode && stopCode !== "STOP_VYTTILA") {
+        stop = await Stop.findOne({ code: String(stopCode).toUpperCase() });
+      }
+    }
+
+    if (!stop && (deviceId || busNumber)) {
+      const dev = await RfidDevice.findOne({
+        $or: [
+          ...(deviceId ? [{ deviceId: String(deviceId).trim().toUpperCase() }] : []),
+          ...(busNumber ? [{ busNumber: String(busNumber).trim() }] : [])
+        ]
+      });
+      if (dev && dev.stopCode && dev.stopCode !== "STOP_VYTTILA") {
+        stop = await Stop.findOne({ code: dev.stopCode.toUpperCase() });
+      }
+    }
+
+    if (!stop && assignedBusRecord) {
+      // Use the first stop of the assigned bus's route (e.g. Kanjirappally Stand)
+      if (assignedBusRecord.stops && assignedBusRecord.stops.length > 0) {
+        const firstStopName = assignedBusRecord.stops[0];
+        stop = await Stop.findOne({
+          $or: [
+            { name: firstStopName },
+            { code: `STOP_${firstStopName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` }
+          ]
+        });
+      }
+      if (!stop && assignedBusRecord.fromLocation) {
+        stop = await Stop.findOne({
+          $or: [
+            { name: { $regex: new RegExp(assignedBusRecord.fromLocation.trim(), "i") } },
+            { code: { $regex: new RegExp(assignedBusRecord.fromLocation.trim(), "i") } }
+          ]
+        });
+      }
+    }
+
+    if (!stop) {
+      stop = await Stop.findOne({ code: (stopCode || "STOP_KANJIRAPPALLY").toUpperCase() });
+    }
+    if (!stop) {
+      stop = await Stop.findOne({});
+    }
+
+    if (!stop) {
+      return res.status(404).json({
+        allowed: false,
+        action: "REJECTED",
+        reason: "Invalid stop code",
+        message: "No valid transit stop found in database."
+      });
+    }
+
+    // 4. Find RFID Card using flexible lookup (raw hex, colon-separated, spaced)
+    const card = await findCardByTagOrNumber(rfidTag);
     if (!card) {
       return res.status(404).json({
         allowed: false,
@@ -533,33 +711,69 @@ router.post("/tap", async (req, res) => {
       });
     }
 
-    // 2. Find Stop
-    const stop = await Stop.findOne({ code: stopCode.toUpperCase() });
-    if (!stop) {
-      return res.status(404).json({
-        allowed: false,
-        action: "REJECTED",
-        reason: "Invalid stop code",
-        message: `Stop code '${stopCode}' not found.`
-      });
+    // Dynamically retrieve linked user details from MongoDB User model (NEVER hardcoded)
+    let passengerInfo = null;
+    if (card.user) {
+      const User = require("../models/User");
+      const userDoc = await User.findById(card.user).select("name email phone role");
+      if (userDoc) {
+        passengerInfo = {
+          _id: userDoc._id,
+          name: userDoc.name,
+          email: userDoc.email,
+          phone: userDoc.phone,
+          role: userDoc.role,
+        };
+      }
     }
 
-    // 3. Look for active journey
+    // 5. Look for active journey
     let activeJourney = await Journey.findOne({
       card: card._id,
       status: "In-Progress"
     });
 
-    const MIN_BALANCE = 7.50; // Minimum balance to tap-in (7.50 AED is standard)
-    const MAX_FARE = 15.00;   // Penalty fare for no tap-out
-    const BASE_FARE = 3.00;   // Base fare for tap-in/out
-    const RATE_PER_KM = 0.50; // Rate per kilometer
+    const MIN_BALANCE = 5.00;  // Minimum balance to allow tap-in
+    const MAX_FARE = 200.00;  // Tariff cap
+    const BASE_FARE = 10.00;  // Minimum Base Fare (first 2.5 km)
+    const BASE_KM = 2.5;      // Included minimum base distance in km
+    const RATE_PER_KM = 1.25; // Rate per additional kilometer (₹1.25 / km)
 
-    // Helper to calculate multiplier
+    // Helper to calculate passenger category fare multiplier
     const getMultiplier = (type) => {
-      if (type === "Gold") return 1.5;
-      if (type === "Blue") return 0.9;
-      return 1.0;
+      if (!type) return 1.0;
+      const t = String(type).trim().toLowerCase();
+      if (t.includes("student") || t === "blue") return 0.5; // 50% Student Concession
+      if (t.includes("foreigner") || t.includes("tourist") || t === "gold") return 1.5; // Tourist tariff
+      return 1.0; // Regular / Normal Passenger / Silver
+    };
+
+
+
+    const busDetails = assignedBusRecord ? {
+      busNumber: assignedBusRecord.busNumber,
+      busName: assignedBusRecord.busName,
+      busType: assignedBusRecord.busType || "Standard Transit",
+      routeName: assignedBusRecord.routeName || (assignedBusRecord.fromLocation && assignedBusRecord.toLocation ? `${assignedBusRecord.fromLocation} ➔ ${assignedBusRecord.toLocation}` : "Active Route"),
+      fromLocation: assignedBusRecord.fromLocation || "",
+      toLocation: assignedBusRecord.toLocation || "",
+      departureTime: assignedBusRecord.departureTime || "",
+      arrivalTime: assignedBusRecord.arrivalTime || "",
+      driverId: assignedBusRecord.driverId || null,
+      driverEmail: assignedBusRecord.driverEmail || "",
+      driverName: assignedBusRecord.driverName || "Driver"
+    } : {
+      busNumber: req.body.busNumber || "N/A",
+      busName: "MoveSmart Bus",
+      busType: "Standard Transit",
+      routeName: "Active Route",
+      fromLocation: "",
+      toLocation: "",
+      departureTime: "",
+      arrivalTime: "",
+      driverId: null,
+      driverEmail: "",
+      driverName: "Driver"
     };
 
     if (activeJourney) {
@@ -572,6 +786,10 @@ router.post("/tap", async (req, res) => {
           allowed: true,
           action: "IGNORE",
           message: "Double-tap ignored. Already checked in.",
+          passenger: passengerInfo,
+          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerEmail: passengerInfo ? passengerInfo.email : "",
+          bus: busDetails,
           card: {
             cardNumber: card.cardNumber,
             balance: card.balance.toFixed(2),
@@ -591,6 +809,20 @@ router.post("/tap", async (req, res) => {
         await activeJourney.save();
         await card.save();
 
+        // Record Penalty Transaction
+        const penaltyTxn = new Transaction({
+          transactionId: `TXN-PEN-${Math.floor(100000 + Math.random() * 900000)}`,
+          user: card.user || null,
+          cardNumber: card.cardNumber ? card.cardNumber.slice(-4) : "RFID",
+          amount: activeJourney.fare,
+          type: "Travel",
+          isDebit: true,
+          status: "Success",
+          paymentMethod: "RFID Card Wallet",
+          description: `Penalty Fare: Expired Transit Journey (>4 hrs without tap-out)`
+        });
+        await penaltyTxn.save().catch(err => console.error("Penalty transaction save error:", err));
+
         // Now process as a brand new Tap-In
         if (card.balance < MIN_BALANCE) {
           return res.status(400).json({
@@ -598,6 +830,10 @@ router.post("/tap", async (req, res) => {
             action: "REJECTED",
             reason: "Insufficient balance after penalty",
             message: `Previous journey expired: -₹${activeJourney.fare.toFixed(2)}. Insufficient balance to tap-in: ₹${card.balance.toFixed(2)}.`,
+            passenger: passengerInfo,
+            passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+            passengerEmail: passengerInfo ? passengerInfo.email : "",
+            bus: busDetails,
             card: {
               cardNumber: card.cardNumber,
               balance: card.balance.toFixed(2)
@@ -610,7 +846,12 @@ router.post("/tap", async (req, res) => {
           user: card.user,
           tapInStop: stop._id,
           tapInTime: new Date(),
-          status: "In-Progress"
+          status: "In-Progress",
+          busNumber: busDetails.busNumber,
+          busName: busDetails.busName,
+          busId: assignedBusRecord ? assignedBusRecord._id : null,
+          driverId: busDetails.driverId,
+          driverEmail: busDetails.driverEmail
         });
         await newJourney.save();
 
@@ -618,6 +859,10 @@ router.post("/tap", async (req, res) => {
           allowed: true,
           action: "TAP_IN",
           message: `Previous journey expired (-₹${activeJourney.fare.toFixed(2)}). Boarded at ${stop.name}.`,
+          passenger: passengerInfo,
+          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerEmail: passengerInfo ? passengerInfo.email : "",
+          bus: busDetails,
           card: {
             cardNumber: card.cardNumber,
             balance: card.balance.toFixed(2),
@@ -631,7 +876,9 @@ router.post("/tap", async (req, res) => {
       }
 
       // Valid Tap-Out
-      // Lookup distance in either direction
+      const tapInStopObj = await Stop.findById(activeJourney.tapInStop);
+
+      // 1. Lookup distance in database StopDistance
       const distObj = await StopDistance.findOne({
         $or: [
           { fromStop: activeJourney.tapInStop, toStop: stop._id },
@@ -639,19 +886,45 @@ router.post("/tap", async (req, res) => {
         ]
       });
 
-      // Default to 4 km if distance is not explicitly configured
-      const distanceKm = distObj ? distObj.distanceKm : 4.0;
+      let distanceKm = distObj ? distObj.distanceKm : null;
 
-      // Calculate Fare
+      // 2. If not found in StopDistance, calculate using GPS coordinates of the two stops
+      if (distanceKm === null || distanceKm === undefined) {
+        if (tapInStopObj?.latitude && tapInStopObj?.longitude && stop.latitude && stop.longitude) {
+          const R = 6371; // km
+          const dLat = ((stop.latitude - tapInStopObj.latitude) * Math.PI) / 180;
+          const dLon = ((stop.longitude - tapInStopObj.longitude) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos((tapInStopObj.latitude * Math.PI) / 180) *
+              Math.cos((stop.latitude * Math.PI) / 180) *
+              Math.sin(dLon / 2) *
+              Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          distanceKm = Number((R * c * 1.22).toFixed(1));
+        } else {
+          distanceKm = 4.0;
+        }
+      }
+
+      distanceKm = Math.max(1.0, Number(distanceKm));
+
+      // 3. Calculate Fare based on Kilometers (Base Fare + km charge)
       const multiplier = getMultiplier(card.cardType);
-      let calculatedFare = (BASE_FARE + (distanceKm * RATE_PER_KM)) * multiplier;
+      let calculatedFare = BASE_FARE;
+      if (distanceKm > BASE_KM) {
+        calculatedFare += (distanceKm - BASE_KM) * RATE_PER_KM;
+      }
+      calculatedFare = Number((calculatedFare * multiplier).toFixed(2));
 
       // Cap fare at max
       if (calculatedFare > (MAX_FARE * multiplier)) {
-        calculatedFare = MAX_FARE * multiplier;
+        calculatedFare = Number((MAX_FARE * multiplier).toFixed(2));
       }
 
-      card.balance -= calculatedFare;
+      // 4. Deduct amount from user's RFID card balance
+      const previousBalance = card.balance;
+      card.balance = Number((card.balance - calculatedFare).toFixed(2));
       await card.save();
 
       // Finalize Journey
@@ -660,44 +933,101 @@ router.post("/tap", async (req, res) => {
       activeJourney.distanceKm = distanceKm;
       activeJourney.fare = calculatedFare;
       activeJourney.status = "Completed";
+      if (!activeJourney.busNumber) activeJourney.busNumber = busDetails.busNumber;
+      if (!activeJourney.busName) activeJourney.busName = busDetails.busName;
+      if (!activeJourney.driverEmail) activeJourney.driverEmail = busDetails.driverEmail;
       await activeJourney.save();
 
-      const tapInStopObj = await Stop.findById(activeJourney.tapInStop);
+      // Record Travel Deduction in Transaction model to keep wallet history synchronized
+      const travelTxn = new Transaction({
+        transactionId: `TXN-TRV-${Math.floor(100000 + Math.random() * 900000)}`,
+        user: card.user || null,
+        cardNumber: card.cardNumber ? card.cardNumber.slice(-4) : "RFID",
+        amount: calculatedFare,
+        type: "Travel",
+        isDebit: true,
+        status: "Success",
+        paymentMethod: "RFID Card Wallet",
+        description: `Transit Journey (${busDetails.busName} - ${busDetails.busNumber}): ${tapInStopObj ? tapInStopObj.name : "Origin"} to ${stop.name} (${distanceKm.toFixed(1)} km)`
+      });
+      await travelTxn.save().catch(err => console.error("Travel transaction save error:", err));
 
-      return res.status(200).json({
+      const responsePayload = {
         allowed: true,
         action: "TAP_OUT",
-        message: `Tap-Out success. Charged: ₹${calculatedFare.toFixed(2)} for ${distanceKm.toFixed(1)} km.`,
+        status: "Accepted",
+        message: `Tap-Out success. Charged: ₹${calculatedFare.toFixed(2)} for ${distanceKm.toFixed(1)} km on ${busDetails.busName} (${busDetails.busNumber}).`,
+        passenger: passengerInfo,
+        passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+        passengerEmail: passengerInfo ? passengerInfo.email : "",
+        bus: busDetails,
         journey: {
           from: tapInStopObj ? tapInStopObj.name : "Unknown",
           to: stop.name,
           distanceKm,
           fare: calculatedFare
         },
+        fare: calculatedFare,
+        balance: Number(card.balance.toFixed(2)),
         card: {
           cardNumber: card.cardNumber,
+          rfidTag: card.rfidTag || rfidTag,
           balance: card.balance.toFixed(2),
           cardType: card.cardType
         },
         stop: {
           name: stop.name,
           code: stop.code
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Broadcast real-time tap event via Socket.IO
+      try {
+        const io = getIO();
+        if (io) {
+          io.emit("rfid:tap-event", responsePayload);
+          if (card.user) io.to(`user-${card.user}`).emit("rfid:tap-event", responsePayload);
+          if (busDetails.driverId) io.to(`driver-${busDetails.driverId}`).emit("rfid:tap-event", responsePayload);
         }
-      });
+      } catch (sErr) {
+        // Safe socket fallback
+      }
+
+      return res.status(200).json(responsePayload);
 
     } else {
       // Tap-In logic
       if (card.balance < MIN_BALANCE) {
-        return res.status(400).json({
+        const rejectPayload = {
           allowed: false,
           action: "REJECTED",
+          status: "Rejected",
           reason: "Insufficient balance",
           message: `Card balance (₹${card.balance.toFixed(2)}) is below the minimum required balance of ₹${MIN_BALANCE.toFixed(2)}.`,
+          passenger: passengerInfo,
+          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerEmail: passengerInfo ? passengerInfo.email : "",
+          bus: busDetails,
           card: {
             cardNumber: card.cardNumber,
-            balance: card.balance.toFixed(2)
-          }
-        });
+            rfidTag: card.rfidTag || rfidTag,
+            balance: card.balance.toFixed(2),
+            cardType: card.cardType
+          },
+          stop: {
+            name: stop.name,
+            code: stop.code
+          },
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const io = getIO();
+          if (io) io.emit("rfid:tap-event", rejectPayload);
+        } catch (sErr) {}
+
+        return res.status(400).json(rejectPayload);
       }
 
       const newJourney = new Journey({
@@ -705,30 +1035,469 @@ router.post("/tap", async (req, res) => {
         user: card.user,
         tapInStop: stop._id,
         tapInTime: new Date(),
-        status: "In-Progress"
+        status: "In-Progress",
+        busNumber: busDetails.busNumber,
+        busName: busDetails.busName,
+        busId: assignedBusRecord ? assignedBusRecord._id : null,
+        driverId: busDetails.driverId,
+        driverEmail: busDetails.driverEmail
       });
 
       await newJourney.save();
 
-      return res.status(200).json({
+      const responsePayload = {
         allowed: true,
         action: "TAP_IN",
-        message: `Tap-In success. Boarded at ${stop.name}.`,
+        status: "Accepted",
+        message: `Tap-In success. Boarded ${busDetails.busName} (${busDetails.busNumber}) at ${stop.name}.`,
+        passenger: passengerInfo,
+        passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+        passengerEmail: passengerInfo ? passengerInfo.email : "",
+        bus: busDetails,
+        fare: 0,
+        balance: Number(card.balance.toFixed(2)),
         card: {
           cardNumber: card.cardNumber,
+          rfidTag: card.rfidTag || rfidTag,
           balance: card.balance.toFixed(2),
           cardType: card.cardType
         },
         stop: {
           name: stop.name,
           code: stop.code
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Broadcast real-time tap event via Socket.IO
+      try {
+        const io = getIO();
+        if (io) {
+          io.emit("rfid:tap-event", responsePayload);
+          if (card.user) io.to(`user-${card.user}`).emit("rfid:tap-event", responsePayload);
+          if (busDetails.driverId) io.to(`driver-${busDetails.driverId}`).emit("rfid:tap-event", responsePayload);
         }
-      });
+      } catch (sErr) {
+        // Safe socket fallback
+      }
+
+      return res.status(200).json(responsePayload);
     }
 
   } catch (error) {
     console.error("Tap Error:", error);
     res.status(500).json({ message: "System error: " + error.message });
+  }
+});
+
+// Recent RFID Taps Feed (For Driver Dashboard & RFID Tap Monitor)
+router.get("/taps/recent", async (req, res) => {
+  try {
+    const { busNumber, driverEmail, driverId, limit = 25 } = req.query;
+
+    const query = {};
+    if (busNumber) {
+      query.busNumber = busNumber;
+    }
+    if (driverEmail) {
+      query.driverEmail = driverEmail;
+    }
+    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
+      query.driverId = driverId;
+    }
+
+    const journeys = await Journey.find(query)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(Number(limit))
+      .populate("card")
+      .populate("user", "name email phone role")
+      .populate("tapInStop")
+      .populate("tapOutStop")
+      .populate("busId");
+
+    const formattedTaps = [];
+
+    for (const j of journeys) {
+      if (!j.card) continue;
+
+      const passengerName = j.user?.name || (j.card.user ? "Passenger" : "Unassigned Passenger");
+      const passengerEmail = j.user?.email || "";
+      const bObj = j.busId;
+      const tapBus = {
+        busNumber: j.busNumber || (bObj?.busNumber || ""),
+        busName: j.busName || (bObj?.busName || "MoveSmart Transit"),
+        routeName: bObj?.routeName || (bObj?.fromLocation && bObj?.toLocation ? `${bObj.fromLocation} ➔ ${bObj.toLocation}` : ""),
+        departureTime: bObj?.departureTime || "",
+        arrivalTime: bObj?.arrivalTime || "",
+        driverEmail: j.driverEmail || (bObj?.driverEmail || ""),
+        driverName: bObj?.driverName || ""
+      };
+
+      // If completed, add tap-out event
+      if (j.status === "Completed" && j.tapOutTime && j.tapOutStop) {
+        formattedTaps.push({
+          id: `${j._id}-out`,
+          action: "TAP_OUT",
+          passengerName,
+          passengerEmail,
+          passenger: j.user ? { name: j.user.name, email: j.user.email } : null,
+          bus: tapBus,
+          card: {
+            cardNumber: j.card.cardNumber,
+            rfidTag: j.card.rfidTag,
+            cardType: j.card.cardType,
+            balance: j.card.balance.toFixed(2),
+          },
+          stop: {
+            name: j.tapOutStop.name,
+            code: j.tapOutStop.code,
+          },
+          journey: {
+            from: j.tapInStop ? j.tapInStop.name : "Origin",
+            to: j.tapOutStop.name,
+            distanceKm: j.distanceKm || 4.0,
+            fare: j.fare || 0,
+          },
+          fare: j.fare || 0,
+          balance: j.card.balance.toFixed(2),
+          timestamp: j.tapOutTime,
+          status: "Accepted",
+        });
+      }
+
+      // Add tap-in event
+      if (j.tapInTime && j.tapInStop) {
+        formattedTaps.push({
+          id: `${j._id}-in`,
+          action: "TAP_IN",
+          passengerName,
+          passengerEmail,
+          passenger: j.user ? { name: j.user.name, email: j.user.email } : null,
+          bus: tapBus,
+          card: {
+            cardNumber: j.card.cardNumber,
+            rfidTag: j.card.rfidTag,
+            cardType: j.card.cardType,
+            balance: j.card.balance.toFixed(2),
+          },
+          stop: {
+            name: j.tapInStop.name,
+            code: j.tapInStop.code,
+          },
+          fare: 0,
+          balance: j.card.balance.toFixed(2),
+          timestamp: j.tapInTime,
+          status: "Accepted",
+        });
+      }
+    }
+
+    // Sort by timestamp descending
+    formattedTaps.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    res.json({
+      success: true,
+      count: formattedTaps.length,
+      taps: formattedTaps.slice(0, Number(limit)),
+    });
+  } catch (error) {
+    console.error("Recent Taps Error:", error);
+    res.status(500).json({ message: "Error fetching recent taps: " + error.message });
+  }
+});
+
+// ==========================================
+// RFID HARDWARE DEVICE MANAGEMENT ENDPOINTS
+// ==========================================
+
+// 1. ESP32 Register Device on Wi-Fi Connect
+router.post("/device/register", async (req, res) => {
+  try {
+    const {
+      deviceId,
+      driverId,
+      driverEmail,
+      driverName,
+      busNumber,
+      stopCode = "STOP_VYTTILA",
+      ipAddress = "0.0.0.0",
+      firmwareVersion = "v2.0-RC522",
+    } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ success: false, message: "deviceId is required" });
+    }
+
+    const cleanDevId = deviceId.trim().toUpperCase();
+
+    // Find driver user object if driverEmail or driverId provided
+    let matchedDriverId = null;
+    let matchedDriverName = driverName || "Driver";
+    let matchedDriverEmail = driverEmail || "";
+
+    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
+      matchedDriverId = driverId;
+      const uDoc = await User.findById(driverId).select("name email");
+      if (uDoc) {
+        matchedDriverName = uDoc.name;
+        matchedDriverEmail = uDoc.email;
+      }
+    } else if (driverEmail) {
+      const uDoc = await User.findOne({ email: driverEmail.toLowerCase().trim() }).select("_id name email");
+      if (uDoc) {
+        matchedDriverId = uDoc._id;
+        matchedDriverName = uDoc.name;
+        matchedDriverEmail = uDoc.email;
+      }
+    }
+
+    // Upsert RfidDevice document
+    let device = await RfidDevice.findOne({ deviceId: cleanDevId });
+    if (!device) {
+      device = new RfidDevice({
+        deviceId: cleanDevId,
+        driverId: matchedDriverId,
+        driverName: matchedDriverName,
+        driverEmail: matchedDriverEmail,
+        busNumber: busNumber || "KL-07-MS-1008",
+        stopCode: stopCode.toUpperCase(),
+        ipAddress,
+        firmwareVersion,
+        status: "Connected",
+        readerActive: true,
+        lastHeartbeat: new Date(),
+      });
+    } else {
+      if (matchedDriverId) device.driverId = matchedDriverId;
+      if (matchedDriverName) device.driverName = matchedDriverName;
+      if (matchedDriverEmail) device.driverEmail = matchedDriverEmail;
+      if (busNumber) device.busNumber = busNumber;
+      if (stopCode) device.stopCode = stopCode.toUpperCase();
+      device.ipAddress = ipAddress;
+      device.firmwareVersion = firmwareVersion;
+      device.status = "Connected";
+      device.readerActive = true;
+      device.lastHeartbeat = new Date();
+    }
+
+    await device.save();
+
+    // Broadcast device status update to Driver Dashboard & Admin Fleet via Socket.IO
+    try {
+      const io = getIO();
+      if (io) {
+        const payload = {
+          deviceId: device.deviceId,
+          driverId: device.driverId ? String(device.driverId) : null,
+          driverName: device.driverName,
+          busNumber: device.busNumber,
+          stopCode: device.stopCode,
+          ipAddress: device.ipAddress,
+          status: "Connected",
+          lastHeartbeat: device.lastHeartbeat,
+          readerActive: device.readerActive,
+        };
+        io.emit("rfid:device-status", payload);
+        if (device.driverId) {
+          io.to(`driver-${device.driverId}`).emit("rfid:device-status", payload);
+        }
+        io.to("admin-safety").emit("rfid:device-status", payload);
+      }
+    } catch (sErr) {
+      console.warn("Socket broadcast notice for device register:", sErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: `RFID Device (${device.deviceId}) successfully connected to MoveSmart ✅`,
+      device,
+    });
+  } catch (error) {
+    console.error("Device Register Error:", error);
+    res.status(500).json({ success: false, message: "Failed to register device: " + error.message });
+  }
+});
+
+// 2. ESP32 Periodic Heartbeat
+router.post("/device/heartbeat", async (req, res) => {
+  try {
+    const { deviceId, ipAddress, stopCode, readerActive = true } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ success: false, message: "deviceId is required" });
+    }
+
+    const cleanDevId = deviceId.trim().toUpperCase();
+    const device = await RfidDevice.findOne({ deviceId: cleanDevId });
+
+    if (device) {
+      device.lastHeartbeat = new Date();
+      device.status = "Connected";
+      device.readerActive = Boolean(readerActive);
+      if (ipAddress) device.ipAddress = ipAddress;
+      if (stopCode) device.stopCode = stopCode.toUpperCase();
+      await device.save();
+
+      try {
+        const io = getIO();
+        if (io) {
+          const payload = {
+            deviceId: device.deviceId,
+            driverId: device.driverId ? String(device.driverId) : null,
+            status: "Connected",
+            lastHeartbeat: device.lastHeartbeat,
+            ipAddress: device.ipAddress,
+            readerActive: device.readerActive,
+          };
+          io.emit("rfid:device-status", payload);
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, message: "Heartbeat acknowledged ✅" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 3. Driver Dashboard: Query RFID Device Status
+router.get("/device/status", async (req, res) => {
+  try {
+    const { driverId, driverEmail, busNumber, deviceId } = req.query;
+
+    const filters = [];
+    if (deviceId) filters.push({ deviceId: deviceId.toUpperCase().trim() });
+    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) filters.push({ driverId });
+    if (driverEmail) filters.push({ driverEmail: driverEmail.toLowerCase().trim() });
+    if (busNumber) filters.push({ busNumber: busNumber.trim() });
+
+    let device = null;
+    if (filters.length > 0) {
+      device = await RfidDevice.findOne({ $or: filters }).sort({ updatedAt: -1 });
+    } else {
+      device = await RfidDevice.findOne().sort({ updatedAt: -1 });
+    }
+
+    if (!device) {
+      return res.json({
+        success: true,
+        connected: false,
+        status: "Not Connected",
+        device: null,
+        message: "No paired RFID device found. Click Connect RFID Device to pair.",
+      });
+    }
+
+    // Check if heartbeat is alive (within last 75 seconds)
+    const isAlive = (Date.now() - new Date(device.lastHeartbeat).getTime()) < 75000;
+    const computedStatus = isAlive ? device.status : "Not Connected";
+
+    res.json({
+      success: true,
+      connected: computedStatus === "Connected",
+      status: computedStatus,
+      device: {
+        ...device.toObject(),
+        status: computedStatus,
+      },
+    });
+  } catch (error) {
+    console.error("Device Status Query Error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch device status" });
+  }
+});
+
+// 4. Driver Dashboard: Unlink / Disconnect Device
+router.post("/device/unlink", async (req, res) => {
+  try {
+    const { deviceId, driverId } = req.body;
+
+    const filter = {};
+    if (deviceId) filter.deviceId = deviceId.toUpperCase().trim();
+    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) filter.driverId = driverId;
+
+    const device = await RfidDevice.findOne(filter);
+    if (device) {
+      device.status = "Not Connected";
+      device.driverId = null;
+      device.driverName = "Unassigned Driver";
+      device.driverEmail = "";
+      await device.save();
+
+      try {
+        const io = getIO();
+        if (io) {
+          io.emit("rfid:device-status", {
+            deviceId: device.deviceId,
+            status: "Not Connected",
+          });
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, message: "RFID Device unlinked successfully ✅" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 5. Driver / Simulator: Set Active Stop & Location Manually
+router.post("/device/set-location", async (req, res) => {
+  try {
+    const { deviceId, driverId, busNumber, stopCode } = req.body;
+
+    if (!stopCode) {
+      return res.status(400).json({ success: false, message: "stopCode is required" });
+    }
+
+    const cleanStopCode = String(stopCode).trim().toUpperCase();
+    const stopDoc = await Stop.findOne({ code: cleanStopCode });
+    if (!stopDoc) {
+      return res.status(404).json({ success: false, message: `Stop code '${cleanStopCode}' not found` });
+    }
+
+    const filters = [];
+    if (deviceId) filters.push({ deviceId: deviceId.toUpperCase().trim() });
+    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) filters.push({ driverId });
+    if (busNumber) filters.push({ busNumber: busNumber.trim() });
+
+    let device = null;
+    if (filters.length > 0) {
+      device = await RfidDevice.findOne({ $or: filters });
+    } else {
+      device = await RfidDevice.findOne();
+    }
+
+    if (device) {
+      device.stopCode = cleanStopCode;
+      await device.save();
+    }
+
+    // Broadcast location update
+    try {
+      const io = getIO();
+      if (io) {
+        const payload = {
+          deviceId: device?.deviceId || deviceId,
+          stopCode: cleanStopCode,
+          stopName: stopDoc.name,
+          busNumber: device?.busNumber || busNumber,
+          driverId: device?.driverId || driverId,
+          timestamp: new Date().toISOString()
+        };
+        io.emit("rfid:location-updated", payload);
+      }
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      message: `Bus current location set to ${stopDoc.name} (${cleanStopCode}) ✅`,
+      stop: stopDoc,
+      device
+    });
+  } catch (error) {
+    console.error("Set Location Error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -1012,17 +1781,36 @@ router.post("/applications/:id/approve", async (req, res) => {
     const app = await CardApplication.findById(req.params.id);
     if (!app) return res.status(404).json({ error: "Application not found" });
 
-    // Generate unique Card ID
-    const cardPrefix = cardType === "Gold" ? "5" : (cardType === "Blue" ? "3" : "1");
-    const randomNumber = Math.floor(100000000 + Math.random() * 900000000).toString();
-    const assignedCardNumber = (cardPrefix + randomNumber).substring(0, 10);
-    const tagUid = rfidTag || `TAG-${Math.floor(100000 + Math.random() * 900000)}`;
+    // 1. Generate unique 10-digit Card ID with collision check
+    const cardPrefix = (cardType === "Foreigner" || cardType === "Gold") ? "5" : ((cardType === "Student" || cardType === "Blue") ? "3" : "1");
+    let assignedCardNumber;
+    let cardNumExists = true;
+    while (cardNumExists) {
+      const randomNumber = Math.floor(100000000 + Math.random() * 900000000).toString();
+      assignedCardNumber = (cardPrefix + randomNumber).substring(0, 10);
+      const existing = await RfidCard.findOne({ cardNumber: assignedCardNumber });
+      if (!existing) cardNumExists = false;
+    }
 
-    // Map card type to safe backend value
-    let safeCardType = cardType || "Silver";
-    if (safeCardType === "Regular Pass") safeCardType = "Silver";
-    else if (safeCardType === "Student Pass") safeCardType = "Blue";
-    else if (safeCardType === "Foreigner Tourist Pass" || safeCardType === "Foreigner") safeCardType = "Gold";
+    // 2. Auto-generate guaranteed unique RFID Tag UID by system (4-byte hex: e.g. "4A:2B:3C:4D")
+    let tagUid = rfidTag ? rfidTag.toUpperCase().trim() : "";
+    if (!tagUid || (await RfidCard.findOne({ rfidTag: tagUid }))) {
+      let tagExists = true;
+      while (tagExists) {
+        const hexParts = Array.from({ length: 4 }, () =>
+          Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase()
+        );
+        tagUid = hexParts.join(":");
+        const existingTag = await RfidCard.findOne({ rfidTag: tagUid });
+        if (!existingTag) tagExists = false;
+      }
+    }
+
+    // Map card type to authentic MoveSmart category
+    let safeCardType = cardType || app.cardCategory || "Regular";
+    if (safeCardType === "Regular Pass" || safeCardType === "Silver") safeCardType = "Regular";
+    else if (safeCardType === "Student Pass" || safeCardType === "Blue") safeCardType = "Student";
+    else if (safeCardType === "Foreigner Tourist Pass" || safeCardType === "Gold") safeCardType = "Foreigner";
 
     // Create & Activate RFID Card with exact balance from application
     const newCard = new RfidCard({
@@ -1065,7 +1853,7 @@ router.post("/applications/:id/approve", async (req, res) => {
     }
 
     res.json({
-      message: "Application approved and RFID Card activated! Confirmation email sent to applicant.",
+      message: "Application approved and RFID Card activated with unique Tag UID! Confirmation email sent to applicant.",
       application: app,
       card: newCard,
     });

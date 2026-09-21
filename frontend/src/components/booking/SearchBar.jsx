@@ -24,9 +24,7 @@ const filterLocations = (locations, query) => {
       const locFuzzy = normalizeFuzzy(loc);
       return (
         locClean.includes(qClean) ||
-        qClean.includes(locClean) ||
-        locFuzzy.includes(qFuzzy) ||
-        qFuzzy.includes(locFuzzy)
+        (qFuzzy && locFuzzy.includes(qFuzzy))
       );
     })
     .slice(0, 18);

@@ -105,9 +105,24 @@ function validatePhoneNumber(arg1 = "+91", arg2 = "") {
   }
 
   const trimmedInput = phoneInput.trim();
+  let checkInput = trimmedInput;
+
+  // If input contains country dial code with +, strip it to inspect the core phone number
+  if (checkInput.startsWith("+")) {
+    if (checkInput.startsWith(country.dialCode)) {
+      checkInput = checkInput.slice(country.dialCode.length).trim();
+    } else {
+      checkInput = checkInput.replace(/^\+\d{1,4}\s*/, "").trim();
+    }
+  } else if (country.dialCode && checkInput.startsWith(country.dialCode.replace("+", ""))) {
+    const withoutPlus = country.dialCode.replace("+", "");
+    if (checkInput.length > withoutPlus.length) {
+      checkInput = checkInput.slice(withoutPlus.length).trim();
+    }
+  }
 
   // 1. Check if contains alphabets
-  if (/[a-zA-Z]/.test(trimmedInput)) {
+  if (/[a-zA-Z]/.test(checkInput)) {
     return {
       valid: false,
       isValid: false,
@@ -119,8 +134,8 @@ function validatePhoneNumber(arg1 = "+91", arg2 = "") {
     };
   }
 
-  // 2. Check if contains special characters
-  if (/[^\d\s\-]/.test(trimmedInput)) {
+  // 2. Check if contains special characters or symbols
+  if (/[^\d]/.test(checkInput)) {
     return {
       valid: false,
       isValid: false,
@@ -132,7 +147,7 @@ function validatePhoneNumber(arg1 = "+91", arg2 = "") {
     };
   }
 
-  let digitsOnly = trimmedInput.replace(/\D/g, "");
+  let digitsOnly = checkInput.replace(/\D/g, "");
 
   if (!digitsOnly) {
     return {

@@ -8,6 +8,7 @@ import AdminFooter from "../components/AdminFooter";
 import AdminAddBusRoute from "./AdminAddBusRoute";
 import DriverSafetyMonitoring from "../components/admin/DriverSafetyMonitoring";
 import DriverBiometricsManager from "../components/admin/DriverBiometricsManager";
+import LiveBusMap from "../components/common/LiveBusMap";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
   LayoutDashboard,
@@ -152,6 +153,7 @@ export default function Admin({ defaultTab = "overview" }) {
   const [leaveModalComment, setLeaveModalComment] = useState("");
 
   const [adminDrivers, setAdminDrivers] = useState([]);
+  const [driversLoading, setDriversLoading] = useState(false);
   const [driverFilterStatus, setDriverFilterStatus] = useState("All");
   const [driverSearchQuery, setDriverSearchQuery] = useState("");
   const [selectedDriverForVerify, setSelectedDriverForVerify] = useState(null);
@@ -172,6 +174,44 @@ export default function Admin({ defaultTab = "overview" }) {
   const [demoStreamActive, setDemoStreamActive] = useState(false);
   const [demoEar, setDemoEar] = useState(0.29);
   const [demoAlertness, setDemoAlertness] = useState("NORMAL");
+
+  // ── Live Bus Fleet Tracking States ─────────────────────────
+  const [liveFleetBuses, setLiveFleetBuses] = useState([]);
+  const [liveFleetSearch, setLiveFleetSearch] = useState("");
+  const [selectedLiveFleetBus, setSelectedLiveFleetBus] = useState(null);
+  const [liveFleetLoading, setLiveFleetLoading] = useState(false);
+
+  const fetchLiveFleet = useCallback(async () => {
+    try {
+      setLiveFleetLoading(true);
+      const res = await axios.get("/api/buses/live-fleet");
+      if (res.data?.success) {
+        setLiveFleetBuses(res.data.buses || []);
+      }
+    } catch (err) {
+      console.error("Error fetching live fleet:", err);
+    } finally {
+      setLiveFleetLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "liveTracking" || activeTab === "overview") {
+      fetchLiveFleet();
+      const interval = setInterval(fetchLiveFleet, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab, fetchLiveFleet]);
+
+  const filteredLiveFleet = liveFleetBuses.filter((b) => {
+    const q = liveFleetSearch.toLowerCase();
+    return (
+      (b.busNumber || "").toLowerCase().includes(q) ||
+      (b.busName || "").toLowerCase().includes(q) ||
+      (b.from || "").toLowerCase().includes(q) ||
+      (b.to || "").toLowerCase().includes(q)
+    );
+  });
 
   // ── Lost & Found Admin States ──────────────────────────────
   const [lfData, setLfData] = useState({ summary: {}, lostItems: [], foundItems: [], matches: [], handovers: [] });
@@ -394,13 +434,19 @@ export default function Admin({ defaultTab = "overview" }) {
 
   // Fetch Drivers
   const fetchAdminDrivers = useCallback(async () => {
+    setDriversLoading(true);
     try {
+      const token = getStoredToken();
       const res = await axios.get("/api/admin/drivers", {
-        headers: { Authorization: `Bearer ${getStoredToken()}` }
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
-      setAdminDrivers(res.data.drivers || []);
+      if (res.data && Array.isArray(res.data.drivers)) {
+        setAdminDrivers(res.data.drivers);
+      }
     } catch (err) {
       console.error("Error fetching drivers:", err);
+    } finally {
+      setDriversLoading(false);
     }
   }, []);
 
@@ -477,6 +523,20 @@ export default function Admin({ defaultTab = "overview" }) {
 
     return () => clearInterval(interval);
   }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests, fetchSafetyAlertsCount, fetchActiveSessions, fetchLiveAlerts]);
+
+  // Re-fetch data on active tab switch to ensure real-time accuracy
+  useEffect(() => {
+    if (activeTab === "drivers") {
+      fetchAdminDrivers();
+    } else if (activeTab === "leaves") {
+      fetchAdminLeaves();
+    } else if (activeTab === "busRequests") {
+      fetchAdminBusRequests();
+    } else if (activeTab === "applications" || activeTab === "cards") {
+      fetchAdminApplications();
+      fetchAdminRfidData();
+    }
+  }, [activeTab, fetchAdminDrivers, fetchAdminLeaves, fetchAdminBusRequests, fetchAdminApplications, fetchAdminRfidData]);
 
   // Real-Time Socket.IO Video Frames & Safety Alert Ingestion for Global Admin Dashboard
   useEffect(() => {
@@ -607,6 +667,77 @@ export default function Admin({ defaultTab = "overview" }) {
     socket.on("device:status-change", ({ sessionId, status }) => {
       setActiveSessions((prev) =>
         prev.map((s) => (s._id === sessionId ? { ...s, deviceStatus: status } : s))
+      );
+    });
+
+    // Real-Time Live Bus Fleet GPS Tracking Listeners
+    socket.on("bus:locationUpdate", (payload) => {
+      setLiveFleetBuses((prev) =>
+        prev.map((bus) => {
+          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
+            return {
+              ...bus,
+              isLive: true,
+              trackingStatus: payload.trackingStatus || "LIVE",
+              activeLocation: payload
+            };
+          }
+          return bus;
+        })
+      );
+    });
+
+    socket.on("bus:trackingStarted", (payload) => {
+      setLiveFleetBuses((prev) =>
+        prev.map((bus) => {
+          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
+            return {
+              ...bus,
+              isLive: true,
+              trackingStatus: "LIVE",
+              activeLocation: payload
+            };
+          }
+          return bus;
+        })
+      );
+    });
+
+    socket.on("bus:trackingStopped", (payload) => {
+      setLiveFleetBuses((prev) =>
+        prev.map((bus) => {
+          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
+            return {
+              ...bus,
+              isLive: false,
+              trackingStatus: "OFFLINE",
+              activeLocation: null
+            };
+          }
+          return bus;
+        })
+      );
+    });
+
+    socket.on("bus:trackingDelayed", (payload) => {
+      setLiveFleetBuses((prev) =>
+        prev.map((bus) => {
+          if (bus._id === payload.busId) {
+            return { ...bus, trackingStatus: "DELAYED" };
+          }
+          return bus;
+        })
+      );
+    });
+
+    socket.on("bus:trackingOffline", (payload) => {
+      setLiveFleetBuses((prev) =>
+        prev.map((bus) => {
+          if (bus._id === payload.busId) {
+            return { ...bus, isLive: false, trackingStatus: "OFFLINE", activeLocation: null };
+          }
+          return bus;
+        })
       );
     });
 
@@ -921,16 +1052,25 @@ export default function Admin({ defaultTab = "overview" }) {
     }
   };
 
+  // Auto-generate a guaranteed unique 4-byte RFID Tag UID (e.g. 4A:2B:3C:4D)
+  const generateUniqueRfidTag = () => {
+    const bytes = Array.from({ length: 4 }, () =>
+      Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0')
+    );
+    return bytes.join(":");
+  };
+
   // Card Application Handlers
   const handleApproveAppSubmit = async (e) => {
     e.preventDefault();
     if (!actionApp) return;
     try {
+      const tagToAssign = approveRfidTag.trim() || generateUniqueRfidTag();
       const res = await axios.post(`/api/rfid/applications/${actionApp._id}/approve`, {
-        rfidTag: approveRfidTag,
+        rfidTag: tagToAssign,
         cardType: approveCardType,
       });
-      showToast(res.data.message || "Application Approved & RFID Card Activated!");
+      showToast(res.data.message || "Application Approved & RFID Card Activated with Unique UID!");
       setActionApp(null);
       setActionType(null);
       setApproveRfidTag("");
@@ -1044,9 +1184,16 @@ export default function Admin({ defaultTab = "overview" }) {
 
   // Filtered Arrays
   const filteredDrivers = adminDrivers.filter((d) => {
-    const matchesStatus = driverFilterStatus === "All" || d.verificationStatus === driverFilterStatus;
+    const currentStatus = (d.verificationStatus || "Pending").toLowerCase();
+    const filter = driverFilterStatus.toLowerCase();
+    const matchesStatus = filter === "all" || currentStatus === filter;
     const q = driverSearchQuery.toLowerCase().trim();
-    const matchesQuery = !q || (d.name && d.name.toLowerCase().includes(q)) || (d.email && d.email.toLowerCase().includes(q)) || (d.licenseNumber && d.licenseNumber.toLowerCase().includes(q));
+    const matchesQuery =
+      !q ||
+      (d.name && d.name.toLowerCase().includes(q)) ||
+      (d.email && d.email.toLowerCase().includes(q)) ||
+      (d.licenseNumber && d.licenseNumber.toLowerCase().includes(q)) ||
+      (d.phone && d.phone.toLowerCase().includes(q));
     return matchesStatus && matchesQuery;
   });
 
@@ -1055,9 +1202,11 @@ export default function Admin({ defaultTab = "overview" }) {
     return !q || (c.cardNumber && c.cardNumber.toLowerCase().includes(q)) || (c.rfidTag && c.rfidTag.toLowerCase().includes(q)) || (c.user?.email && c.user.email.toLowerCase().includes(q));
   });
 
-  const pendingAppsCount = adminApplications.filter(a => a.status === "Pending").length;
-  const pendingBusReqsCount = adminBusRequests.filter(r => r.status === "Pending").length;
-  const pendingDriversCount = adminDrivers.filter(d => d.verificationStatus === "Pending").length;
+  const pendingAppsCount = adminApplications.filter(a => (a.status || "").toLowerCase() === "pending").length;
+  const pendingBusReqsCount = adminBusRequests.filter(r => (r.status || "").toLowerCase() === "pending").length;
+  const pendingDriversCount = adminDrivers.filter(d => (d.verificationStatus || "Pending").toLowerCase() === "pending" || (d.verificationStatus || "").toLowerCase() === "unverified").length;
+  const approvedDriversCount = adminDrivers.filter(d => (d.verificationStatus || "").toLowerCase() === "approved").length;
+  const rejectedDriversCount = adminDrivers.filter(d => (d.verificationStatus || "").toLowerCase() === "rejected").length;
   const totalNotificationCount = pendingAppsCount + pendingBusReqsCount + pendingDriversCount + safetyAlertsCount;
 
   // Background Theme Colors
@@ -1230,6 +1379,7 @@ export default function Admin({ defaultTab = "overview" }) {
         }}>
           {[
             { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
+            { id: "liveTracking", label: "Live Fleet Tracking", Icon: Navigation, badge: liveFleetBuses.filter(b => b.isLive).length },
             { id: "driverBiometrics", label: "Driver Face Biometrics", Icon: Scan },
             { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
             { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
@@ -2012,7 +2162,12 @@ export default function Admin({ defaultTab = "overview" }) {
                           {app.status === "Pending" && (
                             <>
                               <button
-                                onClick={() => { setActionApp(app); setActionType("approve"); setApproveCardType(app.requestedCardType || "Silver"); }}
+                                onClick={() => {
+                                  setActionApp(app);
+                                  setActionType("approve");
+                                  setApproveCardType(app.requestedCardType || app.cardCategory || "Silver");
+                                  setApproveRfidTag(generateUniqueRfidTag());
+                                }}
                                 style={{ padding: "8px 14px", borderRadius: "10px", background: "#16a34a", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}
                               >
                                 ✓ Approve &amp; Activate
@@ -2088,6 +2243,48 @@ export default function Admin({ defaultTab = "overview" }) {
                   <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary }}>🧑✈️ Driver Management &amp; Verifications</h2>
                   <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>Inspect driver licenses, verify profile details, and approve driving rights.</p>
                 </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <input
+                    type="text"
+                    placeholder="🔍 Search drivers by name, email, license..."
+                    value={driverSearchQuery}
+                    onChange={(e) => setDriverSearchQuery(e.target.value)}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: "12px",
+                      border: `1.5px solid ${borderCol}`,
+                      background: bgCard,
+                      color: textPrimary,
+                      fontSize: "13px",
+                      width: "260px",
+                      outline: "none"
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      fetchAdminDrivers();
+                      showToast("Refreshing driver list...");
+                    }}
+                    disabled={driversLoading}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: "12px",
+                      border: "none",
+                      background: "linear-gradient(135deg, #2e1065, #4c1d95)",
+                      color: "#fff",
+                      fontWeight: "800",
+                      fontSize: "12.5px",
+                      cursor: driversLoading ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      opacity: driversLoading ? 0.7 : 1
+                    }}
+                  >
+                    <span style={{ display: "inline-block", transform: driversLoading ? "rotate(180deg)" : "none", transition: "transform 0.5s" }}>🔄</span>
+                    {driversLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
               </div>
 
               {/* Driver Filter Tabs */}
@@ -2095,8 +2292,8 @@ export default function Admin({ defaultTab = "overview" }) {
                 {[
                   { id: "All", label: "All Drivers", count: adminDrivers.length },
                   { id: "Pending", label: "⏳ Pending Verification", count: pendingDriversCount },
-                  { id: "Approved", label: "✅ Approved Drivers", count: adminDrivers.filter(d => d.verificationStatus === "Approved").length },
-                  { id: "Rejected", label: "❌ Rejected", count: adminDrivers.filter(d => d.verificationStatus === "Rejected").length },
+                  { id: "Approved", label: "✅ Approved Drivers", count: approvedDriversCount },
+                  { id: "Rejected", label: "❌ Rejected", count: rejectedDriversCount },
                 ].map((flt) => {
                   const isSel = driverFilterStatus === flt.id;
                   return (
@@ -2120,81 +2317,120 @@ export default function Admin({ defaultTab = "overview" }) {
                 })}
               </div>
 
-              {/* Drivers Grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
-                {filteredDrivers.map((d) => (
-                  <div key={d._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", flexDirection: "column", justifyContent: "space-between", boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                          <div style={{ width: "52px", height: "52px", borderRadius: "50%", overflow: "hidden", border: "2px solid #6d28d9", background: "#f1f5f9", flexShrink: 0 }}>
-                            {d.profilePic ? (
-                              <img src={d.profilePic} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            ) : (
-                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", color: "#6d28d9", fontSize: "18px" }}>
-                                {d.name ? d.name[0] : "D"}
+              {/* Drivers Grid / Loading / Empty State */}
+              {driversLoading && adminDrivers.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 20px", background: bgCard, borderRadius: "20px", border: `1px solid ${borderCol}` }}>
+                  <div style={{ fontSize: "28px", marginBottom: "10px" }}>⏳</div>
+                  <strong style={{ fontSize: "16px", color: textPrimary, display: "block" }}>Loading Drivers...</strong>
+                  <span style={{ fontSize: "13px", color: textSecondary }}>Fetching driver records and verification credentials...</span>
+                </div>
+              ) : filteredDrivers.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 20px", background: bgCard, borderRadius: "20px", border: `1px solid ${borderCol}` }}>
+                  <div style={{ fontSize: "32px", marginBottom: "10px" }}>🧑✈️</div>
+                  <strong style={{ fontSize: "16px", color: textPrimary, display: "block" }}>No Drivers Found</strong>
+                  <span style={{ fontSize: "13px", color: textSecondary, display: "block", marginTop: "4px" }}>
+                    {driverSearchQuery
+                      ? `No driver profiles matched "${driverSearchQuery}" under the "${driverFilterStatus}" filter.`
+                      : `There are currently no drivers in "${driverFilterStatus}" status.`}
+                  </span>
+                  {(driverSearchQuery || driverFilterStatus !== "All") && (
+                    <button
+                      onClick={() => {
+                        setDriverSearchQuery("");
+                        setDriverFilterStatus("All");
+                      }}
+                      style={{
+                        marginTop: "16px",
+                        padding: "8px 16px",
+                        borderRadius: "12px",
+                        background: "linear-gradient(135deg, #2e1065, #4c1d95)",
+                        color: "#fff",
+                        border: "none",
+                        fontWeight: "800",
+                        fontSize: "12.5px",
+                        cursor: "pointer"
+                      }}
+                    >
+                      Clear Filters &amp; Show All
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
+                  {filteredDrivers.map((d) => (
+                    <div key={d._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", flexDirection: "column", justifyContent: "space-between", boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            <div style={{ width: "52px", height: "52px", borderRadius: "50%", overflow: "hidden", border: "2px solid #6d28d9", background: "#f1f5f9", flexShrink: 0 }}>
+                              {d.profilePic ? (
+                                <img src={d.profilePic} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              ) : (
+                                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", color: "#6d28d9", fontSize: "18px" }}>
+                                  {d.name ? d.name[0] : "D"}
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <strong style={{ fontSize: "15.5px", color: textPrimary, display: "block" }}>{d.name}</strong>
+                              <span style={{ fontSize: "12px", color: textSecondary }}>{d.email}</span>
+                              {d.phone && <div style={{ fontSize: "11.5px", color: textSecondary, marginTop: "2px" }}>📞 {d.phone}</div>}
+                            </div>
+                          </div>
+
+                          <span style={{
+                            fontSize: "11px",
+                            fontWeight: "900",
+                            padding: "3px 9px",
+                            borderRadius: "999px",
+                            background: d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.12)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.12)" : "rgba(217, 119, 6, 0.12)",
+                            color: d.verificationStatus === "Approved" ? "#16a34a" : d.verificationStatus === "Rejected" ? "#dc2626" : "#d97706",
+                            border: `1px solid ${d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.3)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.3)" : "rgba(217, 119, 6, 0.3)"}`
+                          }}>
+                            {d.verificationStatus || "Unverified"}
+                          </span>
+                        </div>
+
+                        {/* License Info & Mini Thumbnail */}
+                        <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "12px", borderRadius: "14px", fontSize: "12.5px", marginBottom: "14px", border: `1px solid ${borderCol}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "700", textTransform: "uppercase" }}>Driving License:</div>
+                              <strong style={{ fontFamily: "monospace", color: "#6d28d9", fontSize: "13px" }}>{d.licenseNumber || "Not Provided"}</strong>
+                              <div style={{ fontSize: "12px", color: textSecondary, marginTop: "4px" }}>⏳ Experience: {d.experienceYears || 0} Years</div>
+                            </div>
+
+                            {d.licenseImage ? (
+                              <div
+                                onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }}
+                                style={{ width: "64px", height: "46px", borderRadius: "8px", overflow: "hidden", border: "1.5px solid #6d28d9", cursor: "pointer", background: "#0f172a", flexShrink: 0, position: "relative" }}
+                                title="Click to inspect driving license"
+                              >
+                                <img src={d.licenseImage} alt="License Mini" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                <span style={{ position: "absolute", bottom: 0, insetInline: 0, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "8px", textAlign: "center", fontWeight: "800" }}>VIEW</span>
                               </div>
+                            ) : (
+                              <span style={{ fontSize: "10.5px", color: "#94a3b8", background: "rgba(148, 163, 184, 0.15)", padding: "4px 8px", borderRadius: "6px" }}>No Photo</span>
                             )}
                           </div>
-                          <div>
-                            <strong style={{ fontSize: "15.5px", color: textPrimary, display: "block" }}>{d.name}</strong>
-                            <span style={{ fontSize: "12px", color: textSecondary }}>{d.email}</span>
-                            {d.phone && <div style={{ fontSize: "11.5px", color: textSecondary, marginTop: "2px" }}>📞 {d.phone}</div>}
-                          </div>
-                        </div>
-
-                        <span style={{
-                          fontSize: "11px",
-                          fontWeight: "900",
-                          padding: "3px 9px",
-                          borderRadius: "999px",
-                          background: d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.12)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.12)" : "rgba(217, 119, 6, 0.12)",
-                          color: d.verificationStatus === "Approved" ? "#16a34a" : d.verificationStatus === "Rejected" ? "#dc2626" : "#d97706",
-                          border: `1px solid ${d.verificationStatus === "Approved" ? "rgba(34, 197, 94, 0.3)" : d.verificationStatus === "Rejected" ? "rgba(225, 29, 72, 0.3)" : "rgba(217, 119, 6, 0.3)"}`
-                        }}>
-                          {d.verificationStatus || "Unverified"}
-                        </span>
-                      </div>
-
-                      {/* License Info & Mini Thumbnail */}
-                      <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "12px", borderRadius: "14px", fontSize: "12.5px", marginBottom: "14px", border: `1px solid ${borderCol}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <div>
-                            <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "700", textTransform: "uppercase" }}>Driving License:</div>
-                            <strong style={{ fontFamily: "monospace", color: "#6d28d9", fontSize: "13px" }}>{d.licenseNumber || "Not Provided"}</strong>
-                            <div style={{ fontSize: "12px", color: textSecondary, marginTop: "4px" }}>⏳ Experience: {d.experienceYears || 0} Years</div>
-                          </div>
-
-                          {d.licenseImage ? (
-                            <div
-                              onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }}
-                              style={{ width: "64px", height: "46px", borderRadius: "8px", overflow: "hidden", border: "1.5px solid #6d28d9", cursor: "pointer", background: "#0f172a", flexShrink: 0, position: "relative" }}
-                              title="Click to inspect driving license"
-                            >
-                              <img src={d.licenseImage} alt="License Mini" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                              <span style={{ position: "absolute", bottom: 0, insetInline: 0, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "8px", textAlign: "center", fontWeight: "800" }}>VIEW</span>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: "10.5px", color: "#94a3b8", background: "rgba(148, 163, 184, 0.15)", padding: "4px 8px", borderRadius: "6px" }}>No Photo</span>
-                          )}
                         </div>
                       </div>
-                    </div>
 
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                      <button onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }} style={{ flex: 1, padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                        🔍 Inspect License
-                      </button>
-                      <button onClick={() => handleUpdateDriverVerification(d._id, "Approved")} style={{ padding: "10px 14px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                        ✓ Accept
-                      </button>
-                      <button onClick={() => handleUpdateDriverVerification(d._id, "Rejected")} style={{ padding: "10px 14px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                        ❌ Reject
-                      </button>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <button onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }} style={{ flex: 1, padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                          🔍 Inspect License
+                        </button>
+                        <button onClick={() => handleUpdateDriverVerification(d._id, "Approved")} style={{ padding: "10px 14px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                          ✓ Accept
+                        </button>
+                        <button onClick={() => handleUpdateDriverVerification(d._id, "Rejected")} style={{ padding: "10px 14px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                          ❌ Reject
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -2940,6 +3176,287 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
           )}
 
+          {/* SECTION: LIVE FLEET TRACKING */}
+          {activeTab === "liveTracking" && (
+            <div className="fade-in-section">
+              {/* Header Banner */}
+              <div style={{
+                background: "linear-gradient(135deg, #1e1b4b 0%, #064e3b 100%)",
+                color: "#ffffff",
+                padding: "24px 28px",
+                borderRadius: "24px",
+                marginBottom: "24px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "16px",
+                boxShadow: "0 10px 30px rgba(6, 78, 59, 0.25)",
+                border: "1px solid rgba(255,255,255,0.12)"
+              }}>
+                <div>
+                  <div style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    background: "rgba(16, 185, 129, 0.25)",
+                    color: "#34d399",
+                    padding: "4px 12px",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: "900",
+                    marginBottom: "8px"
+                  }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#34d399", display: "inline-block", animation: "pulse 1.5s infinite" }}></span>
+                    MOVE SMART REAL-TIME FLEET TELEMETRY
+                  </div>
+                  <h2 style={{ fontSize: "24px", fontWeight: "900", margin: 0, color: "#ffffff" }}>
+                    🛰️ Live Bus Fleet Radar &amp; GPS Telemetry
+                  </h2>
+                  <p style={{ color: "#d1fae5", fontSize: "13.5px", marginTop: "4px", margin: 0, maxWidth: "680px" }}>
+                    Monitor active driver positions, live speed, heading, route progression, and GPS signal status across the entire transit network in real time.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                  <button
+                    onClick={fetchLiveFleet}
+                    disabled={liveFleetLoading}
+                    style={{
+                      padding: "10px 18px",
+                      borderRadius: "12px",
+                      background: "rgba(255, 255, 255, 0.15)",
+                      color: "#ffffff",
+                      fontSize: "13px",
+                      fontWeight: "800",
+                      border: "1px solid rgba(255,255,255,0.25)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px"
+                    }}
+                  >
+                    <RefreshCw size={15} className={liveFleetLoading ? "spin-icon" : ""} />
+                    Refresh Radar
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 Summary Stat Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+                <div style={{ background: bgCard, borderRadius: "20px", padding: "18px 20px", border: `1px solid ${borderCol}`, boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "11.5px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>Live Active</span>
+                    <span style={{ fontSize: "20px" }}>🟢</span>
+                  </div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#10b981" }}>
+                    {liveFleetBuses.filter(b => b.isLive && b.trackingStatus === "LIVE").length}
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: "700", color: "#10b981", marginTop: "4px" }}>Streaming GPS telemetry</div>
+                </div>
+
+                <div style={{ background: bgCard, borderRadius: "20px", padding: "18px 20px", border: `1px solid ${borderCol}`, boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "11.5px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>Delayed Signal</span>
+                    <span style={{ fontSize: "20px" }}>🟡</span>
+                  </div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#d97706" }}>
+                    {liveFleetBuses.filter(b => b.isLive && b.trackingStatus === "DELAYED").length}
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: "700", color: "#d97706", marginTop: "4px" }}>&gt; 15s since last update</div>
+                </div>
+
+                <div style={{ background: bgCard, borderRadius: "20px", padding: "18px 20px", border: `1px solid ${borderCol}`, boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "11.5px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>Standby / Offline</span>
+                    <span style={{ fontSize: "20px" }}>⚪</span>
+                  </div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: textSecondary }}>
+                    {liveFleetBuses.filter(b => !b.isLive || b.trackingStatus === "OFFLINE").length}
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: "700", color: textSecondary, marginTop: "4px" }}>Parked or waiting dispatch</div>
+                </div>
+
+                <div style={{ background: bgCard, borderRadius: "20px", padding: "18px 20px", border: `1px solid ${borderCol}`, boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "11.5px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>Total Fleet</span>
+                    <span style={{ fontSize: "20px" }}>🚍</span>
+                  </div>
+                  <div style={{ fontSize: "26px", fontWeight: "900", color: "#8b5cf6" }}>
+                    {liveFleetBuses.length}
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: "700", color: "#8b5cf6", marginTop: "4px" }}>Registered buses in system</div>
+                </div>
+              </div>
+
+              {/* Main Fleet Tracking Workspace: Left Bus List & Right Live Map */}
+              <div style={{ display: "grid", gridTemplateColumns: selectedLiveFleetBus ? "380px 1fr" : "1fr", gap: "24px" }}>
+                {/* Fleet Roster */}
+                <div style={{ background: bgCard, borderRadius: "24px", padding: "20px", border: `1px solid ${borderCol}`, boxShadow: "0 8px 24px rgba(0,0,0,0.04)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ fontSize: "17px", fontWeight: "900", margin: 0, color: textPrimary, display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span>🚍</span> Transit Fleet List
+                    </h3>
+                    <span style={{ fontSize: "12px", color: textSecondary, fontWeight: "700" }}>
+                      {filteredLiveFleet.length} buses
+                    </span>
+                  </div>
+
+                  {/* Search Input */}
+                  <div style={{ position: "relative", marginBottom: "16px" }}>
+                    <Search size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: textSecondary }} />
+                    <input
+                      type="text"
+                      placeholder="Search bus, route, or driver..."
+                      value={liveFleetSearch}
+                      onChange={(e) => setLiveFleetSearch(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px 10px 38px",
+                        borderRadius: "12px",
+                        border: `1px solid ${borderCol}`,
+                        background: darkMode ? "#0f172a" : "#f8fafc",
+                        color: textPrimary,
+                        fontSize: "13px",
+                        outline: "none"
+                      }}
+                    />
+                  </div>
+
+                  {/* Bus Cards List */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "640px", overflowY: "auto", paddingRight: "4px" }}>
+                    {filteredLiveFleet.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: "30px 16px", color: textSecondary, fontSize: "13px" }}>
+                        No buses matching "{liveFleetSearch}"
+                      </div>
+                    ) : (
+                      filteredLiveFleet.map((bus) => {
+                        const isSelected = selectedLiveFleetBus?._id === bus._id;
+                        const isLive = bus.isLive && bus.trackingStatus === "LIVE";
+                        const isDelayed = bus.isLive && bus.trackingStatus === "DELAYED";
+
+                        return (
+                          <div
+                            key={bus._id}
+                            onClick={() => setSelectedLiveFleetBus(bus)}
+                            style={{
+                              padding: "14px 16px",
+                              borderRadius: "16px",
+                              background: isSelected
+                                ? (darkMode ? "rgba(139, 92, 246, 0.2)" : "rgba(139, 92, 246, 0.08)")
+                                : (darkMode ? "#1e293b" : "#f8fafc"),
+                              border: isSelected
+                                ? "2px solid #8b5cf6"
+                                : `1px solid ${borderCol}`,
+                              cursor: "pointer",
+                              transition: "all 0.2s ease"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                              <div>
+                                <strong style={{ fontSize: "15px", color: textPrimary }}>{bus.busNumber}</strong>
+                                <span style={{ fontSize: "12px", color: textSecondary, marginLeft: "8px" }}>({bus.busName})</span>
+                              </div>
+                              <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                padding: "3px 8px",
+                                borderRadius: "999px",
+                                fontSize: "11px",
+                                fontWeight: "900",
+                                background: isLive ? "rgba(16, 185, 129, 0.15)" : isDelayed ? "rgba(217, 119, 6, 0.15)" : "rgba(148, 163, 184, 0.15)",
+                                color: isLive ? "#10b981" : isDelayed ? "#d97706" : textSecondary,
+                                border: isLive ? "1px solid rgba(16, 185, 129, 0.3)" : isDelayed ? "1px solid rgba(217, 119, 6, 0.3)" : `1px solid ${borderCol}`
+                              }}>
+                                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isLive ? "#10b981" : isDelayed ? "#d97706" : "#94a3b8" }}></span>
+                                {isLive ? "LIVE TRACKING" : isDelayed ? "SIGNAL DELAYED" : "STANDBY"}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: "12.5px", color: textSecondary, display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                              <span>📍 {bus.from}</span>
+                              <span>➔</span>
+                              <span>{bus.to}</span>
+                            </div>
+
+                            {bus.activeLocation ? (
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "#10b981", fontWeight: "700", paddingTop: "6px", borderTop: `1px dashed ${borderCol}` }}>
+                                <span>⚡ Speed: {bus.activeLocation.speed || 0} km/h</span>
+                                <span>🧭 Heading: {Math.round(bus.activeLocation.heading || 0)}°</span>
+                                {bus.activeLocation.driverName && <span>🧑✈️ {bus.activeLocation.driverName}</span>}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: "11px", color: textSecondary, paddingTop: "4px", borderTop: `1px dashed ${borderCol}` }}>
+                                🕒 Departure: {bus.departureTime || "Scheduled"} • Type: {bus.busType || "Standard"}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Interactive Live Bus Map */}
+                {selectedLiveFleetBus && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div style={{ background: bgCard, borderRadius: "24px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <h3 style={{ fontSize: "18px", fontWeight: "900", margin: 0, color: textPrimary }}>
+                            🛰️ Live Map: {selectedLiveFleetBus.busNumber} ({selectedLiveFleetBus.busName})
+                          </h3>
+                          <span style={{
+                            fontSize: "11px",
+                            fontWeight: "800",
+                            padding: "3px 9px",
+                            borderRadius: "999px",
+                            background: selectedLiveFleetBus.isLive ? "rgba(16, 185, 129, 0.15)" : "rgba(148, 163, 184, 0.15)",
+                            color: selectedLiveFleetBus.isLive ? "#10b981" : textSecondary
+                          }}>
+                            {selectedLiveFleetBus.isLive ? "● REAL-TIME GPS BROADCAST" : "○ GPS STANDBY"}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "12.5px", color: textSecondary, marginTop: "4px" }}>
+                          Route: <strong>{selectedLiveFleetBus.from}</strong> ➔ <strong>{selectedLiveFleetBus.to}</strong> • Bus ID: <span style={{ fontFamily: "monospace" }}>{selectedLiveFleetBus._id}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedLiveFleetBus(null)}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: "10px",
+                          background: darkMode ? "#334155" : "#f1f5f9",
+                          color: textPrimary,
+                          border: "none",
+                          fontSize: "12px",
+                          fontWeight: "800",
+                          cursor: "pointer"
+                        }}
+                      >
+                        ✕ Close Map
+                      </button>
+                    </div>
+
+                    <div style={{ height: "540px", borderRadius: "24px", overflow: "hidden", border: `1px solid ${borderCol}`, boxShadow: "0 10px 30px rgba(0,0,0,0.06)" }}>
+                      <LiveBusMap
+                        busId={selectedLiveFleetBus._id}
+                        busNumber={selectedLiveFleetBus.busNumber}
+                        busName={selectedLiveFleetBus.busName}
+                        routeSource={selectedLiveFleetBus.from}
+                        routeDestination={selectedLiveFleetBus.to}
+                        routeStops={selectedLiveFleetBus.stops}
+                        darkMode={darkMode}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
 
@@ -3335,7 +3852,11 @@ export default function Admin({ defaultTab = "overview" }) {
               {actionApp.status === "Pending" && (
                 <>
                   <button
-                    onClick={() => { setActionType("approve"); setApproveCardType(actionApp.requestedCardType || "Silver"); }}
+                    onClick={() => {
+                      setActionType("approve");
+                      setApproveCardType(actionApp.requestedCardType || actionApp.cardCategory || "Silver");
+                      setApproveRfidTag(generateUniqueRfidTag());
+                    }}
                     style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
                   >
                     ✓ Approve &amp; Activate Card
@@ -3366,28 +3887,65 @@ export default function Admin({ defaultTab = "overview" }) {
       {/* 📥 MODAL: APPROVE APPLICATION */}
       {actionApp && actionType === "approve" && (
         <div className="modal-overlay" style={{ zIndex: 9999 }}>
-          <div className="modal-content" style={{ maxWidth: "480px", width: "90%", padding: "28px", borderRadius: "24px", background: bgCard, color: textPrimary }}>
-            <h3 style={{ fontSize: "18px", fontWeight: "900", margin: "0 0 16px 0" }}>Approve &amp; Activate Smart Card</h3>
+          <div className="modal-content" style={{ maxWidth: "490px", width: "90%", padding: "28px", borderRadius: "24px", background: bgCard, color: textPrimary, border: `1px solid ${borderCol}`, boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "18px", fontWeight: "900", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>✨</span> Approve &amp; Activate Smart Card
+              </h3>
+              <span style={{ fontSize: "11px", fontWeight: "800", background: "rgba(34, 197, 94, 0.12)", color: "#16a34a", padding: "4px 10px", borderRadius: "999px", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
+                ⚡ Auto-Generated UID
+              </span>
+            </div>
+
             <form onSubmit={handleApproveAppSubmit}>
               <div className="rta-input-group" style={{ marginBottom: "14px" }}>
                 <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Applicant</label>
                 <input type="text" className="rta-input-field" value={`${actionApp.fullName} (${actionApp.email})`} disabled />
               </div>
+
               <div className="rta-input-group" style={{ marginBottom: "14px" }}>
-                <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Assign RFID Tag UID</label>
-                <input type="text" className="rta-input-field" value={approveRfidTag} onChange={(e) => setApproveRfidTag(e.target.value.toUpperCase())} required placeholder="e.g. 4A:2B:3C:4D" />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>
+                    Assign RFID Tag UID <span style={{ color: "#16a34a", fontWeight: "700" }}>(System Auto-Generated)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setApproveRfidTag(generateUniqueRfidTag())}
+                    style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "11.5px", fontWeight: "800", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                  >
+                    🔄 Re-Generate UID
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  className="rta-input-field"
+                  value={approveRfidTag}
+                  onChange={(e) => setApproveRfidTag(e.target.value.toUpperCase())}
+                  required
+                  placeholder="e.g. 4A:2B:3C:4D"
+                  style={{ fontFamily: "monospace", fontWeight: "800", fontSize: "14px", letterSpacing: "1px", background: darkMode ? "#1e293b" : "#f8fafc", color: "#16a34a" }}
+                />
+                <small style={{ fontSize: "11px", color: textSecondary, marginTop: "4px", display: "block" }}>
+                  🔒 Unique 4-byte Tag UID generated automatically by system. Database collision checks guarantee zero duplicate cards.
+                </small>
               </div>
+
               <div className="rta-input-group" style={{ marginBottom: "20px" }}>
                 <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Card Class</label>
                 <select className="rta-input-field" value={approveCardType} onChange={(e) => setApproveCardType(e.target.value)}>
-                  <option value="Silver">Silver Card (Standard)</option>
-                  <option value="Gold">Gold Card (Express)</option>
-                  <option value="Blue">Blue Card (Student Concession)</option>
+                  <option value="Silver">Silver Card (Standard Pass)</option>
+                  <option value="Gold">Gold Card (Express / Tourist Pass)</option>
+                  <option value="Blue">Blue Card (Student Concession Pass)</option>
                 </select>
               </div>
+
               <div style={{ display: "flex", gap: "10px" }}>
-                <button type="submit" style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer" }}>Approve &amp; Activate →</button>
-                <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} style={{ padding: "12px 18px", borderRadius: "12px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: "800", cursor: "pointer" }}>Cancel</button>
+                <button type="submit" style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.3)" }}>
+                  ✓ Confirm &amp; Issue Card →
+                </button>
+                <button type="button" onClick={() => { setActionApp(null); setActionType(null); }} style={{ padding: "12px 18px", borderRadius: "12px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: "800", cursor: "pointer" }}>
+                  Cancel
+                </button>
               </div>
             </form>
           </div>
