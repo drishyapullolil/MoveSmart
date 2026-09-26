@@ -119,6 +119,9 @@ app.use("/api", require("./routes/driverRoutes"));
 app.use("/api/lostfound", require("./routes/lostFoundRoutes"));
 app.use("/api/lost-found", require("./routes/lostFoundRoutes"));
 
+// Bus Gallery Photo & Video Routes
+app.use("/api/bus-gallery", require("./routes/galleryRoutes"));
+
 // Test Route
 app.get("/", (req, res) => {
     res.send("Backend running 🚀");

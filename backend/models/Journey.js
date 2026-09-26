@@ -64,6 +64,48 @@ const journeySchema = new mongoose.Schema({
   driverEmail: {
     type: String,
     default: ""
+  },
+  tripSessionId: {
+    type: String,
+    default: "",
+    index: true
+  },
+  routeId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Route",
+    default: null
+  },
+  routeName: {
+    type: String,
+    default: ""
+  },
+  cardUid: {
+    type: String,
+    default: ""
+  },
+  passengerName: {
+    type: String,
+    default: ""
+  },
+  cardType: {
+    type: String,
+    default: "Silver"
+  },
+  tapInPrevBalance: {
+    type: Number,
+    default: 0
+  },
+  tapInNewBalance: {
+    type: Number,
+    default: 0
+  },
+  tapOutPrevBalance: {
+    type: Number,
+    default: 0
+  },
+  tapOutNewBalance: {
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 

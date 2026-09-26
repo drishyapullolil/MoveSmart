@@ -17,6 +17,9 @@ import {
   Megaphone
 } from "lucide-react";
 import { getStoredUser, getStoredToken, clearStoredSession } from "../utils/session";
+import DriverLayout from "../components/driver/DriverLayout";
+import DriverCard from "../components/driver/DriverCard";
+import StatusBadge from "../components/driver/StatusBadge";
 
 // ----------------------------------------------------
 // BILINGUAL TRANSLATIONS (English & Malayalam)
@@ -410,184 +413,166 @@ export default function DriverNotifications({ isEmbedded = false }) {
     }
   };
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "Inter, system-ui, sans-serif" }}>
-      {/* 🧭 HEADER WITH LOGO & LANGUAGE TOGGLE */}
-      {!isEmbedded && (
-        <header style={{ background: "rgba(255, 255, 255, 0.95)", backdropFilter: "blur(12px)", borderBottom: "1px solid #e2e8f0", position: "sticky", top: 0, zIndex: 50, padding: "14px 20px" }}>
-          <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-              <Link to="/driver" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px" }}>
-                <div style={{ width: 40, height: 40, borderRadius: "12px", background: "linear-gradient(135deg, #6d28d9, #4c1d95)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: "900", fontSize: 18 }}>
-                  🚌
-                </div>
-                <div>
-                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a" }}>{t("brandTitle")}</div>
-                  <div style={{ fontSize: "11px", color: "#6d28d9", fontWeight: "800" }}>{t("driverBadge")}</div>
-                </div>
-              </Link>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <button
-                type="button"
-                onClick={() => setLang(lang === "en" ? "ml" : "en")}
-                style={{ padding: "8px 16px", borderRadius: "20px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#0f172a", fontSize: "13px", fontWeight: "800", cursor: "pointer" }}
-              >
-                🌐 {t("langToggle")}
-              </button>
-
-              <Link
-                to="/driver"
-                style={{ textDecoration: "none", padding: "8px 16px", borderRadius: "14px", background: "#f1f5f9", color: "#475569", fontSize: "13px", fontWeight: "800", display: "inline-flex", alignItems: "center", gap: "6px" }}
-              >
-                {t("backToDashboard")}
-              </Link>
-            </div>
-          </div>
-        </header>
-      )}
-
-      {/* MAIN NOTIFICATION BOARD CONTENT */}
-      <main style={{ maxWidth: "860px", margin: "0 auto", padding: "24px 16px" }}>
-
-        {/* TOP TITLE & CONTROLS */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <h1 style={{ fontSize: "24px", fontWeight: "900", color: "#0f172a", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
-                <Bell size={26} style={{ color: "#6d28d9" }} /> {t("pageTitle")}
-              </h1>
-
-              {unreadCount > 0 && (
-                <span style={{ background: "#ef4444", color: "#ffffff", padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "900", boxShadow: "0 2px 8px rgba(239, 68, 68, 0.4)" }}>
-                  {unreadCount} {t("unreadCountBadge")}
-                </span>
-              )}
-            </div>
-            <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0 0", fontWeight: "600" }}>
-              {t("pageSubtitle")}
-            </p>
-          </div>
-
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              type="button"
-              onClick={fetchNotifications}
-              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 16px", borderRadius: "12px", background: "#ffffff", border: "1.5px solid #cbd5e1", color: "#475569", fontSize: "13px", fontWeight: "800", cursor: "pointer" }}
-            >
-              <RefreshCw size={15} className={loading ? "spin" : ""} /> {t("refreshBtn")}
-            </button>
+  const notifContent = (
+    <div style={{ maxWidth: isEmbedded ? "100%" : "880px", margin: "0 auto" }}>
+      {/* TOP CONTROLS */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <h2 style={{ fontSize: "20px", fontWeight: "900", color: "#182033", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+              <Bell size={22} style={{ color: "#6D35D8" }} /> {t("pageTitle")}
+            </h2>
 
             {unreadCount > 0 && (
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 16px", borderRadius: "12px", background: "#e0e7ff", border: "1px solid #c7d2fe", color: "#3730a3", fontSize: "13px", fontWeight: "800", cursor: "pointer" }}
-              >
-                {t("markAllRead")}
-              </button>
+              <span style={{ background: "#EF4444", color: "#ffffff", padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "900", boxShadow: "0 2px 8px rgba(239, 68, 68, 0.4)" }}>
+                {unreadCount} {t("unreadCountBadge")}
+              </span>
             )}
           </div>
+          <p style={{ fontSize: "13px", color: "#667085", margin: "4px 0 0 0", fontWeight: "600" }}>
+            {t("pageSubtitle")}
+          </p>
         </div>
 
-        {/* LOADING STATE */}
-        {loading && (
-          <div style={{ background: "#ffffff", padding: "40px", borderRadius: "20px", textAlign: "center", border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(0,0,0,0.03)" }}>
-            <RefreshCw size={32} className="spin" style={{ color: "#6d28d9", marginBottom: "12px" }} />
-            <div style={{ fontSize: "15px", fontWeight: "800", color: "#0f172a" }}>{t("loadingMsg")}</div>
-          </div>
-        )}
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button
+            type="button"
+            className="btn-drv-secondary"
+            onClick={fetchNotifications}
+            style={{ fontSize: "13px", padding: "8px 16px" }}
+          >
+            <RefreshCw size={14} className={loading ? "spin" : ""} /> {t("refreshBtn")}
+          </button>
 
-        {/* ERROR STATE */}
-        {!loading && error && (
-          <div style={{ background: "#fef2f2", padding: "24px", borderRadius: "20px", textAlign: "center", border: "1px solid #fecdd3", color: "#991b1b" }}>
-            <AlertTriangle size={36} style={{ color: "#dc2626", marginBottom: "10px" }} />
-            <div style={{ fontSize: "16px", fontWeight: "800", marginBottom: "12px" }}>{error}</div>
+          {unreadCount > 0 && (
             <button
               type="button"
-              onClick={fetchNotifications}
-              style={{ padding: "10px 20px", borderRadius: "12px", background: "#dc2626", color: "#ffffff", border: "none", fontSize: "13px", fontWeight: "800", cursor: "pointer" }}
+              className="btn-drv-purple"
+              onClick={handleMarkAllRead}
+              style={{ fontSize: "13px", padding: "8px 16px" }}
             >
-              {t("retryBtn")}
+              {t("markAllRead")}
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* LOADING STATE */}
+      {loading && (
+        <DriverCard style={{ textAlign: "center", padding: "48px 24px" }}>
+          <RefreshCw size={32} className="spin" style={{ color: "#6D35D8", marginBottom: "12px" }} />
+          <div style={{ fontSize: "15px", fontWeight: "800", color: "#182033" }}>{t("loadingMsg")}</div>
+        </DriverCard>
+      )}
+
+      {/* ERROR STATE */}
+      {!loading && error && (
+        <DriverCard accent="danger" style={{ textAlign: "center", padding: "32px 24px" }}>
+          <AlertTriangle size={36} style={{ color: "#DC2626", marginBottom: "10px" }} />
+          <div style={{ fontSize: "15px", fontWeight: "800", color: "#991B1B", marginBottom: "12px" }}>{error}</div>
+          <button
+            type="button"
+            className="btn-drv-danger"
+            onClick={fetchNotifications}
+          >
+            {t("retryBtn")}
+          </button>
+        </DriverCard>
+      )}
+
+      {/* EMPTY STATE */}
+      {!loading && !error && notifications.length === 0 && (
+        <DriverCard style={{ textAlign: "center", padding: "56px 24px" }}>
+          <div style={{ width: 68, height: 68, borderRadius: "50%", background: "#F4F3FA", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#98A2B3", marginBottom: "16px" }}>
+            <Bell size={32} />
           </div>
-        )}
+          <h3 style={{ fontSize: "17px", fontWeight: "800", color: "#182033", margin: "0 0 6px 0" }}>
+            {t("emptyTitle")}
+          </h3>
+          <p style={{ fontSize: "13px", color: "#667085", margin: 0, maxWidth: "400px", marginLeft: "auto", marginRight: "auto" }}>
+            {t("emptySubtitle")}
+          </p>
+        </DriverCard>
+      )}
 
-        {/* EMPTY STATE */}
-        {!loading && !error && notifications.length === 0 && (
-          <div style={{ background: "#ffffff", padding: "48px 24px", borderRadius: "24px", textAlign: "center", border: "1px solid #e2e8f0", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "#f1f5f9", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", marginBottom: "16px" }}>
-              <Bell size={36} />
-            </div>
-            <h3 style={{ fontSize: "18px", fontWeight: "900", color: "#0f172a", margin: "0 0 6px 0" }}>
-              {t("emptyTitle")}
-            </h3>
-            <p style={{ fontSize: "13px", color: "#64748b", margin: 0, maxWidth: "400px", marginLeft: "auto", marginRight: "auto" }}>
-              {t("emptySubtitle")}
-            </p>
-          </div>
-        )}
+      {/* NOTIFICATION CARDS LIST */}
+      {!loading && !error && notifications.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          {notifications.map((n) => {
+            const cardStyles = getCardBorderStyle(n);
+            return (
+              <div
+                key={n.id}
+                onClick={() => handleMarkAsRead(n.id)}
+                style={{
+                  ...cardStyles,
+                  padding: "16px 20px",
+                  borderRadius: "16px",
+                  borderTop: "1px solid #E8E5F0",
+                  borderRight: "1px solid #E8E5F0",
+                  borderBottom: "1px solid #E8E5F0",
+                  boxShadow: n.isRead ? "none" : "0 4px 16px rgba(109, 53, 216, 0.06)",
+                  cursor: "pointer",
+                  transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                  position: "relative",
+                }}
+              >
+                <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                  {/* TYPE ICON */}
+                  {renderNotifIcon(n.type, n.severity)}
 
-        {/* NOTIFICATION CARDS LIST */}
-        {!loading && !error && notifications.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            {notifications.map((n) => {
-              const cardStyles = getCardBorderStyle(n);
-              return (
-                <div
-                  key={n.id}
-                  onClick={() => handleMarkAsRead(n.id)}
-                  style={{
-                    ...cardStyles,
-                    padding: "18px 20px",
-                    borderRadius: "18px",
-                    borderTop: "1px solid #f1f5f9",
-                    borderRight: "1px solid #f1f5f9",
-                    borderBottom: "1px solid #f1f5f9",
-                    boxShadow: n.isRead ? "none" : "0 4px 16px rgba(0,0,0,0.05)",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    position: "relative",
-                  }}
-                >
-                  <div style={{ display: "flex", gap: "16px", alignItems: "flex-start" }}>
-                    {/* TYPE ICON */}
-                    {renderNotifIcon(n.type, n.severity)}
+                  {/* CONTENT DETAILS */}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <h4 style={{ fontSize: "15px", fontWeight: "800", color: "#182033", margin: 0 }}>
+                        {n.title}
+                      </h4>
 
-                    {/* CONTENT DETAILS */}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <h4 style={{ fontSize: "16px", fontWeight: "900", color: "#0f172a", margin: 0 }}>
-                          {n.title}
-                        </h4>
+                      {!n.isRead && (
+                        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#6D35D8", display: "inline-block" }} title={t("unreadStatus")} />
+                      )}
+                    </div>
 
-                        {!n.isRead && (
-                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#2563eb", display: "inline-block" }} title={t("unreadStatus")} />
-                        )}
-                      </div>
+                    <p style={{ fontSize: "13.5px", color: "#475467", margin: "4px 0 8px 0", lineHeight: "1.5", fontWeight: "600" }}>
+                      {n.message}
+                    </p>
 
-                      <p style={{ fontSize: "14px", color: "#334155", margin: "4px 0 8px 0", lineHeight: "1.5", fontWeight: "600" }}>
-                        {n.message}
-                      </p>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#667085" }}>
+                      <span style={{ fontWeight: "700", color: "#667085", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <Clock size={13} /> {formatTimeAgo(n.createdAt)}
+                      </span>
 
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#64748b" }}>
-                        <span style={{ fontWeight: "700", color: "#64748b", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <Clock size={13} /> {formatTimeAgo(n.createdAt)}
-                        </span>
-
-                        <span style={{ fontSize: "11px", fontWeight: "800", color: n.isRead ? "#94a3b8" : "#2563eb" }}>
-                          {n.isRead ? t("readStatus") : t("tapToRead")}
-                        </span>
-                      </div>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: n.isRead ? "#98A2B3" : "#6D35D8" }}>
+                        {n.isRead ? t("readStatus") : t("tapToRead")}
+                      </span>
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
+
+  if (isEmbedded) {
+    return notifContent;
+  }
+
+  const currentUser = getStoredUser();
+
+  return (
+    <DriverLayout
+      activeNav="notifications"
+      user={currentUser}
+      eyebrow="FLEET ALERTS & UPDATES"
+      title="Driver Notification Center"
+      description="Important route assignments, leave status, shift bulletins, and fleet announcements"
+      pageBadge={<StatusBadge variant="purple" text={`${unreadCount} Unread`} />}
+    >
+      {notifContent}
+    </DriverLayout>
+  );
 }
+

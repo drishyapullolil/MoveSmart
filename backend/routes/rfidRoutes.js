@@ -10,6 +10,7 @@ const CardApplication = require("../models/CardApplication");
 const Transaction = require("../models/Transaction");
 const Bus = require("../models/Bus");
 const User = require("../models/User");
+const TripSession = require("../models/TripSession");
 const { sendApplicationStatusEmail } = require("../utils/mailer");
 const { getIO } = require("../services/socketService");
 const {
@@ -577,7 +578,7 @@ router.post("/distances", async (req, res) => {
   }
 });
 
-// Live RFID Tap-In / Tap-Out Endpoint
+// Live RFID Tap-In / Tap-Out Endpoint (Strictly Isolated to Active Bus Trip Session)
 router.post("/tap", async (req, res) => {
   try {
     const rfidTag = req.body.rfidTag || req.body.cardUid || req.body.uid;
@@ -608,38 +609,63 @@ router.post("/tap", async (req, res) => {
       assignedBusRecord = await Bus.findOne({ is_active: true });
     }
 
-    // 2. Check for an active Live Drive Session for this Bus or Driver
-    let activeLiveDriveStop = null;
-    try {
-      const driverRoutes = require("./driverRoutes");
-      const liveSessions = driverRoutes.liveDriveSessions;
-      if (liveSessions && assignedBusRecord) {
-        const session = liveSessions.get(String(assignedBusRecord._id)) ||
-                        (assignedBusRecord.driverId ? liveSessions.get(String(assignedBusRecord.driverId)) : null);
-        if (session && session.status === "ACTIVE" && session.currentStop) {
-          activeLiveDriveStop = session.currentStop;
-        }
-      }
-    } catch {}
+    if (!assignedBusRecord) {
+      return res.status(404).json({
+        success: false,
+        allowed: false,
+        action: "REJECTED",
+        reason: "Bus not found",
+        message: "No assigned or registered bus found in system."
+      });
+    }
+
+    // 2. ENFORCE REQUIREMENT 2 & 12: Validate Active Driving Session for this Bus
+    let activeTrip = await TripSession.findOne({
+      busId: assignedBusRecord._id,
+      status: "ACTIVE"
+    }).sort({ createdAt: -1 });
+
+    if (!activeTrip && assignedBusRecord.busNumber) {
+      activeTrip = await TripSession.findOne({
+        busNumber: assignedBusRecord.busNumber,
+        status: "ACTIVE"
+      }).sort({ createdAt: -1 });
+    }
+
+    if (!activeTrip && assignedBusRecord.driverId) {
+      activeTrip = await TripSession.findOne({
+        driverId: assignedBusRecord.driverId,
+        status: "ACTIVE"
+      }).sort({ createdAt: -1 });
+    }
+
+    // If no active trip session is found, reject the tap immediately
+    if (!activeTrip) {
+      return res.status(403).json({
+        success: false,
+        allowed: false,
+        action: "REJECTED",
+        reason: "No active trip found for this bus",
+        message: `No active trip found for bus ${assignedBusRecord.busNumber} (${assignedBusRecord.busName}). The driver must click START DRIVE before scanning RFID cards.`
+      });
+    }
+
+    const currentTripSessionId = activeTrip.tripSessionId;
 
     // 3. Resolve the actual Stop
     let stop = null;
 
-    if (activeLiveDriveStop) {
-      // If the bus has an active live drive, ALWAYS use the bus's live position
-      if (activeLiveDriveStop.code) {
-        stop = await Stop.findOne({ code: activeLiveDriveStop.code.toUpperCase() });
+    if (activeTrip.currentStop) {
+      if (activeTrip.currentStop.code) {
+        stop = await Stop.findOne({ code: activeTrip.currentStop.code.toUpperCase() });
       }
-      if (!stop && activeLiveDriveStop.name) {
-        stop = await Stop.findOne({ name: activeLiveDriveStop.name });
+      if (!stop && activeTrip.currentStop.name) {
+        stop = await Stop.findOne({ name: activeTrip.currentStop.name });
       }
     }
 
-    if (!stop) {
-      // Check if a specific valid non-generic stopCode was sent
-      if (stopCode && stopCode !== "STOP_VYTTILA") {
-        stop = await Stop.findOne({ code: String(stopCode).toUpperCase() });
-      }
+    if (!stop && stopCode && stopCode !== "STOP_VYTTILA") {
+      stop = await Stop.findOne({ code: String(stopCode).toUpperCase() });
     }
 
     if (!stop && (deviceId || busNumber)) {
@@ -654,29 +680,18 @@ router.post("/tap", async (req, res) => {
       }
     }
 
-    if (!stop && assignedBusRecord) {
-      // Use the first stop of the assigned bus's route (e.g. Kanjirappally Stand)
-      if (assignedBusRecord.stops && assignedBusRecord.stops.length > 0) {
-        const firstStopName = assignedBusRecord.stops[0];
-        stop = await Stop.findOne({
-          $or: [
-            { name: firstStopName },
-            { code: `STOP_${firstStopName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` }
-          ]
-        });
-      }
-      if (!stop && assignedBusRecord.fromLocation) {
-        stop = await Stop.findOne({
-          $or: [
-            { name: { $regex: new RegExp(assignedBusRecord.fromLocation.trim(), "i") } },
-            { code: { $regex: new RegExp(assignedBusRecord.fromLocation.trim(), "i") } }
-          ]
-        });
-      }
+    if (!stop && assignedBusRecord.stops && assignedBusRecord.stops.length > 0) {
+      const firstStopName = assignedBusRecord.stops[0];
+      stop = await Stop.findOne({
+        $or: [
+          { name: firstStopName },
+          { code: `STOP_${firstStopName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` }
+        ]
+      });
     }
 
     if (!stop) {
-      stop = await Stop.findOne({ code: (stopCode || "STOP_KANJIRAPPALLY").toUpperCase() });
+      stop = await Stop.findOne({ code: "STOP_KANJIRAPPALLY" });
     }
     if (!stop) {
       stop = await Stop.findOne({});
@@ -691,7 +706,7 @@ router.post("/tap", async (req, res) => {
       });
     }
 
-    // 4. Find RFID Card using flexible lookup (raw hex, colon-separated, spaced)
+    // 4. Find RFID Card using flexible lookup
     const card = await findCardByTagOrNumber(rfidTag);
     if (!card) {
       return res.status(404).json({
@@ -711,10 +726,9 @@ router.post("/tap", async (req, res) => {
       });
     }
 
-    // Dynamically retrieve linked user details from MongoDB User model (NEVER hardcoded)
+    // Retrieve passenger information
     let passengerInfo = null;
     if (card.user) {
-      const User = require("../models/User");
       const userDoc = await User.findById(card.user).select("name email phone role");
       if (userDoc) {
         passengerInfo = {
@@ -727,67 +741,55 @@ router.post("/tap", async (req, res) => {
       }
     }
 
-    // 5. Look for active journey
+    const passengerName = passengerInfo?.name || "Passenger";
+
+    // 5. Look for active journey for this card in this trip session
     let activeJourney = await Journey.findOne({
       card: card._id,
       status: "In-Progress"
     });
 
-    const MIN_BALANCE = 5.00;  // Minimum balance to allow tap-in
-    const MAX_FARE = 200.00;  // Tariff cap
-    const BASE_FARE = 10.00;  // Minimum Base Fare (first 2.5 km)
-    const BASE_KM = 2.5;      // Included minimum base distance in km
-    const RATE_PER_KM = 1.25; // Rate per additional kilometer (₹1.25 / km)
+    const MIN_BALANCE = 5.00;
+    const MAX_FARE = 200.00;
+    const BASE_FARE = 10.00;
+    const BASE_KM = 2.5;
+    const RATE_PER_KM = 1.25;
 
-    // Helper to calculate passenger category fare multiplier
     const getMultiplier = (type) => {
       if (!type) return 1.0;
       const t = String(type).trim().toLowerCase();
-      if (t.includes("student") || t === "blue") return 0.5; // 50% Student Concession
-      if (t.includes("foreigner") || t.includes("tourist") || t === "gold") return 1.5; // Tourist tariff
-      return 1.0; // Regular / Normal Passenger / Silver
+      if (t.includes("student") || t === "blue") return 0.5;
+      if (t.includes("foreigner") || t.includes("tourist") || t === "gold") return 1.5;
+      return 1.0;
     };
 
-
-
-    const busDetails = assignedBusRecord ? {
+    const busDetails = {
       busNumber: assignedBusRecord.busNumber,
       busName: assignedBusRecord.busName,
       busType: assignedBusRecord.busType || "Standard Transit",
-      routeName: assignedBusRecord.routeName || (assignedBusRecord.fromLocation && assignedBusRecord.toLocation ? `${assignedBusRecord.fromLocation} ➔ ${assignedBusRecord.toLocation}` : "Active Route"),
+      routeName: activeTrip.routeName || assignedBusRecord.routeName || (assignedBusRecord.fromLocation && assignedBusRecord.toLocation ? `${assignedBusRecord.fromLocation} ➔ ${assignedBusRecord.toLocation}` : "Active Route"),
       fromLocation: assignedBusRecord.fromLocation || "",
       toLocation: assignedBusRecord.toLocation || "",
       departureTime: assignedBusRecord.departureTime || "",
       arrivalTime: assignedBusRecord.arrivalTime || "",
-      driverId: assignedBusRecord.driverId || null,
-      driverEmail: assignedBusRecord.driverEmail || "",
-      driverName: assignedBusRecord.driverName || "Driver"
-    } : {
-      busNumber: req.body.busNumber || "N/A",
-      busName: "MoveSmart Bus",
-      busType: "Standard Transit",
-      routeName: "Active Route",
-      fromLocation: "",
-      toLocation: "",
-      departureTime: "",
-      arrivalTime: "",
-      driverId: null,
-      driverEmail: "",
-      driverName: "Driver"
+      driverId: activeTrip.driverId || assignedBusRecord.driverId || null,
+      driverEmail: activeTrip.driverEmail || assignedBusRecord.driverEmail || "",
+      driverName: activeTrip.driverName || assignedBusRecord.driverName || "Driver"
     };
 
     if (activeJourney) {
-      // Tap-Out logic (or Expired Check)
+      // Tap-Out logic
 
-      // Double tap prevention (tapped at same stop within 10 seconds)
+      // Double tap prevention (within 10 seconds at same stop)
       const secondsSinceTapIn = (Date.now() - new Date(activeJourney.tapInTime).getTime()) / 1000;
       if (activeJourney.tapInStop.toString() === stop._id.toString() && secondsSinceTapIn < 10) {
         return res.status(200).json({
           allowed: true,
           action: "IGNORE",
+          tripSessionId: currentTripSessionId,
           message: "Double-tap ignored. Already checked in.",
           passenger: passengerInfo,
-          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerName,
           passengerEmail: passengerInfo ? passengerInfo.email : "",
           bus: busDetails,
           card: {
@@ -798,40 +800,27 @@ router.post("/tap", async (req, res) => {
         });
       }
 
-      // Check if journey has expired (> 4 hours)
+      // Expired journey check (> 4 hours)
       const hoursSinceTapIn = secondsSinceTapIn / 3600;
       if (hoursSinceTapIn > 4) {
-        // Expire the active journey, deduct penalty, and process this tap as a new TAP_IN
         activeJourney.status = "Expired";
         activeJourney.fare = MAX_FARE * getMultiplier(card.cardType);
-
+        const prevBal = card.balance;
         card.balance -= activeJourney.fare;
+        activeJourney.tapOutPrevBalance = prevBal;
+        activeJourney.tapOutNewBalance = card.balance;
         await activeJourney.save();
         await card.save();
 
-        // Record Penalty Transaction
-        const penaltyTxn = new Transaction({
-          transactionId: `TXN-PEN-${Math.floor(100000 + Math.random() * 900000)}`,
-          user: card.user || null,
-          cardNumber: card.cardNumber ? card.cardNumber.slice(-4) : "RFID",
-          amount: activeJourney.fare,
-          type: "Travel",
-          isDebit: true,
-          status: "Success",
-          paymentMethod: "RFID Card Wallet",
-          description: `Penalty Fare: Expired Transit Journey (>4 hrs without tap-out)`
-        });
-        await penaltyTxn.save().catch(err => console.error("Penalty transaction save error:", err));
-
-        // Now process as a brand new Tap-In
         if (card.balance < MIN_BALANCE) {
           return res.status(400).json({
             allowed: false,
             action: "REJECTED",
+            tripSessionId: currentTripSessionId,
             reason: "Insufficient balance after penalty",
             message: `Previous journey expired: -₹${activeJourney.fare.toFixed(2)}. Insufficient balance to tap-in: ₹${card.balance.toFixed(2)}.`,
             passenger: passengerInfo,
-            passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+            passengerName,
             passengerEmail: passengerInfo ? passengerInfo.email : "",
             bus: busDetails,
             card: {
@@ -844,23 +833,36 @@ router.post("/tap", async (req, res) => {
         const newJourney = new Journey({
           card: card._id,
           user: card.user,
+          tripSessionId: currentTripSessionId,
+          routeId: activeTrip.routeId || null,
+          routeName: activeTrip.routeName || busDetails.routeName,
+          cardUid: card.rfidTag || rfidTag,
+          passengerName,
+          cardType: card.cardType,
           tapInStop: stop._id,
           tapInTime: new Date(),
+          tapInPrevBalance: card.balance,
+          tapInNewBalance: card.balance,
           status: "In-Progress",
           busNumber: busDetails.busNumber,
           busName: busDetails.busName,
-          busId: assignedBusRecord ? assignedBusRecord._id : null,
+          busId: assignedBusRecord._id,
           driverId: busDetails.driverId,
           driverEmail: busDetails.driverEmail
         });
         await newJourney.save();
 
+        await TripSession.findByIdAndUpdate(activeTrip._id, {
+          $inc: { totalRfidTaps: 1, totalTapIns: 1 }
+        });
+
         return res.status(200).json({
           allowed: true,
           action: "TAP_IN",
+          tripSessionId: currentTripSessionId,
           message: `Previous journey expired (-₹${activeJourney.fare.toFixed(2)}). Boarded at ${stop.name}.`,
           passenger: passengerInfo,
-          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerName,
           passengerEmail: passengerInfo ? passengerInfo.email : "",
           bus: busDetails,
           card: {
@@ -878,7 +880,6 @@ router.post("/tap", async (req, res) => {
       // Valid Tap-Out
       const tapInStopObj = await Stop.findById(activeJourney.tapInStop);
 
-      // 1. Lookup distance in database StopDistance
       const distObj = await StopDistance.findOne({
         $or: [
           { fromStop: activeJourney.tapInStop, toStop: stop._id },
@@ -888,10 +889,9 @@ router.post("/tap", async (req, res) => {
 
       let distanceKm = distObj ? distObj.distanceKm : null;
 
-      // 2. If not found in StopDistance, calculate using GPS coordinates of the two stops
       if (distanceKm === null || distanceKm === undefined) {
         if (tapInStopObj?.latitude && tapInStopObj?.longitude && stop.latitude && stop.longitude) {
-          const R = 6371; // km
+          const R = 6371;
           const dLat = ((stop.latitude - tapInStopObj.latitude) * Math.PI) / 180;
           const dLon = ((stop.longitude - tapInStopObj.longitude) * Math.PI) / 180;
           const a =
@@ -909,7 +909,6 @@ router.post("/tap", async (req, res) => {
 
       distanceKm = Math.max(1.0, Number(distanceKm));
 
-      // 3. Calculate Fare based on Kilometers (Base Fare + km charge)
       const multiplier = getMultiplier(card.cardType);
       let calculatedFare = BASE_FARE;
       if (distanceKm > BASE_KM) {
@@ -917,12 +916,10 @@ router.post("/tap", async (req, res) => {
       }
       calculatedFare = Number((calculatedFare * multiplier).toFixed(2));
 
-      // Cap fare at max
       if (calculatedFare > (MAX_FARE * multiplier)) {
         calculatedFare = Number((MAX_FARE * multiplier).toFixed(2));
       }
 
-      // 4. Deduct amount from user's RFID card balance
       const previousBalance = card.balance;
       card.balance = Number((card.balance - calculatedFare).toFixed(2));
       await card.save();
@@ -933,12 +930,20 @@ router.post("/tap", async (req, res) => {
       activeJourney.distanceKm = distanceKm;
       activeJourney.fare = calculatedFare;
       activeJourney.status = "Completed";
+      activeJourney.tapOutPrevBalance = previousBalance;
+      activeJourney.tapOutNewBalance = card.balance;
+      if (!activeJourney.tripSessionId) activeJourney.tripSessionId = currentTripSessionId;
       if (!activeJourney.busNumber) activeJourney.busNumber = busDetails.busNumber;
       if (!activeJourney.busName) activeJourney.busName = busDetails.busName;
       if (!activeJourney.driverEmail) activeJourney.driverEmail = busDetails.driverEmail;
       await activeJourney.save();
 
-      // Record Travel Deduction in Transaction model to keep wallet history synchronized
+      // Update TripSession statistics
+      await TripSession.findByIdAndUpdate(activeTrip._id, {
+        $inc: { totalRfidTaps: 1, totalTapOuts: 1, totalFare: calculatedFare }
+      });
+
+      // Record Travel Deduction Transaction
       const travelTxn = new Transaction({
         transactionId: `TXN-TRV-${Math.floor(100000 + Math.random() * 900000)}`,
         user: card.user || null,
@@ -948,17 +953,19 @@ router.post("/tap", async (req, res) => {
         isDebit: true,
         status: "Success",
         paymentMethod: "RFID Card Wallet",
-        description: `Transit Journey (${busDetails.busName} - ${busDetails.busNumber}): ${tapInStopObj ? tapInStopObj.name : "Origin"} to ${stop.name} (${distanceKm.toFixed(1)} km)`
+        description: `Transit Journey (${busDetails.busName} - ${busDetails.busNumber} [${currentTripSessionId}]): ${tapInStopObj ? tapInStopObj.name : "Origin"} to ${stop.name} (${distanceKm.toFixed(1)} km)`
       });
       await travelTxn.save().catch(err => console.error("Travel transaction save error:", err));
 
       const responsePayload = {
+        success: true,
         allowed: true,
         action: "TAP_OUT",
         status: "Accepted",
+        tripSessionId: currentTripSessionId,
         message: `Tap-Out success. Charged: ₹${calculatedFare.toFixed(2)} for ${distanceKm.toFixed(1)} km on ${busDetails.busName} (${busDetails.busNumber}).`,
         passenger: passengerInfo,
-        passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+        passengerName,
         passengerEmail: passengerInfo ? passengerInfo.email : "",
         bus: busDetails,
         journey: {
@@ -968,6 +975,7 @@ router.post("/tap", async (req, res) => {
           fare: calculatedFare
         },
         fare: calculatedFare,
+        previousBalance: Number(previousBalance.toFixed(2)),
         balance: Number(card.balance.toFixed(2)),
         card: {
           cardNumber: card.cardNumber,
@@ -982,7 +990,7 @@ router.post("/tap", async (req, res) => {
         timestamp: new Date().toISOString()
       };
 
-      // Broadcast real-time tap event via Socket.IO
+      // Broadcast real-time tap event via Socket.IO with tripSessionId
       try {
         const io = getIO();
         if (io) {
@@ -990,9 +998,7 @@ router.post("/tap", async (req, res) => {
           if (card.user) io.to(`user-${card.user}`).emit("rfid:tap-event", responsePayload);
           if (busDetails.driverId) io.to(`driver-${busDetails.driverId}`).emit("rfid:tap-event", responsePayload);
         }
-      } catch (sErr) {
-        // Safe socket fallback
-      }
+      } catch (sErr) {}
 
       return res.status(200).json(responsePayload);
 
@@ -1000,13 +1006,15 @@ router.post("/tap", async (req, res) => {
       // Tap-In logic
       if (card.balance < MIN_BALANCE) {
         const rejectPayload = {
+          success: false,
           allowed: false,
           action: "REJECTED",
           status: "Rejected",
+          tripSessionId: currentTripSessionId,
           reason: "Insufficient balance",
           message: `Card balance (₹${card.balance.toFixed(2)}) is below the minimum required balance of ₹${MIN_BALANCE.toFixed(2)}.`,
           passenger: passengerInfo,
-          passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+          passengerName,
           passengerEmail: passengerInfo ? passengerInfo.email : "",
           bus: busDetails,
           card: {
@@ -1033,28 +1041,44 @@ router.post("/tap", async (req, res) => {
       const newJourney = new Journey({
         card: card._id,
         user: card.user,
+        tripSessionId: currentTripSessionId,
+        routeId: activeTrip.routeId || null,
+        routeName: activeTrip.routeName || busDetails.routeName,
+        cardUid: card.rfidTag || rfidTag,
+        passengerName,
+        cardType: card.cardType,
         tapInStop: stop._id,
         tapInTime: new Date(),
+        tapInPrevBalance: card.balance,
+        tapInNewBalance: card.balance,
         status: "In-Progress",
         busNumber: busDetails.busNumber,
         busName: busDetails.busName,
-        busId: assignedBusRecord ? assignedBusRecord._id : null,
+        busId: assignedBusRecord._id,
         driverId: busDetails.driverId,
         driverEmail: busDetails.driverEmail
       });
 
       await newJourney.save();
 
+      // Update TripSession statistics
+      await TripSession.findByIdAndUpdate(activeTrip._id, {
+        $inc: { totalRfidTaps: 1, totalTapIns: 1 }
+      });
+
       const responsePayload = {
+        success: true,
         allowed: true,
         action: "TAP_IN",
         status: "Accepted",
+        tripSessionId: currentTripSessionId,
         message: `Tap-In success. Boarded ${busDetails.busName} (${busDetails.busNumber}) at ${stop.name}.`,
         passenger: passengerInfo,
-        passengerName: passengerInfo ? passengerInfo.name : "Passenger",
+        passengerName,
         passengerEmail: passengerInfo ? passengerInfo.email : "",
         bus: busDetails,
         fare: 0,
+        previousBalance: Number(card.balance.toFixed(2)),
         balance: Number(card.balance.toFixed(2)),
         card: {
           cardNumber: card.cardNumber,
@@ -1069,7 +1093,7 @@ router.post("/tap", async (req, res) => {
         timestamp: new Date().toISOString()
       };
 
-      // Broadcast real-time tap event via Socket.IO
+      // Broadcast real-time tap event via Socket.IO with tripSessionId
       try {
         const io = getIO();
         if (io) {
@@ -1077,9 +1101,7 @@ router.post("/tap", async (req, res) => {
           if (card.user) io.to(`user-${card.user}`).emit("rfid:tap-event", responsePayload);
           if (busDetails.driverId) io.to(`driver-${busDetails.driverId}`).emit("rfid:tap-event", responsePayload);
         }
-      } catch (sErr) {
-        // Safe socket fallback
-      }
+      } catch (sErr) {}
 
       return res.status(200).json(responsePayload);
     }
@@ -1093,17 +1115,26 @@ router.post("/tap", async (req, res) => {
 // Recent RFID Taps Feed (For Driver Dashboard & RFID Tap Monitor)
 router.get("/taps/recent", async (req, res) => {
   try {
-    const { busNumber, driverEmail, driverId, limit = 25 } = req.query;
+    const { tripSessionId, busNumber, busId, driverEmail, driverId, limit = 25 } = req.query;
 
     const query = {};
-    if (busNumber) {
-      query.busNumber = busNumber;
-    }
-    if (driverEmail) {
-      query.driverEmail = driverEmail;
-    }
-    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
-      query.driverId = driverId;
+
+    // STRICT ISOLATION BY TRIP SESSION ID
+    if (tripSessionId) {
+      query.tripSessionId = String(tripSessionId).trim();
+    } else {
+      if (busId && mongoose.Types.ObjectId.isValid(busId)) {
+        query.busId = busId;
+      }
+      if (busNumber) {
+        query.busNumber = busNumber;
+      }
+      if (driverEmail) {
+        query.driverEmail = driverEmail;
+      }
+      if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
+        query.driverId = driverId;
+      }
     }
 
     const journeys = await Journey.find(query)
@@ -1120,13 +1151,13 @@ router.get("/taps/recent", async (req, res) => {
     for (const j of journeys) {
       if (!j.card) continue;
 
-      const passengerName = j.user?.name || (j.card.user ? "Passenger" : "Unassigned Passenger");
+      const passengerName = j.user?.name || j.passengerName || (j.card.user ? "Passenger" : "Passenger");
       const passengerEmail = j.user?.email || "";
       const bObj = j.busId;
       const tapBus = {
         busNumber: j.busNumber || (bObj?.busNumber || ""),
         busName: j.busName || (bObj?.busName || "MoveSmart Transit"),
-        routeName: bObj?.routeName || (bObj?.fromLocation && bObj?.toLocation ? `${bObj.fromLocation} ➔ ${bObj.toLocation}` : ""),
+        routeName: j.routeName || bObj?.routeName || (bObj?.fromLocation && bObj?.toLocation ? `${bObj.fromLocation} ➔ ${bObj.toLocation}` : ""),
         departureTime: bObj?.departureTime || "",
         arrivalTime: bObj?.arrivalTime || "",
         driverEmail: j.driverEmail || (bObj?.driverEmail || ""),
@@ -1138,6 +1169,7 @@ router.get("/taps/recent", async (req, res) => {
         formattedTaps.push({
           id: `${j._id}-out`,
           action: "TAP_OUT",
+          tripSessionId: j.tripSessionId || "",
           passengerName,
           passengerEmail,
           passenger: j.user ? { name: j.user.name, email: j.user.email } : null,
@@ -1146,7 +1178,7 @@ router.get("/taps/recent", async (req, res) => {
             cardNumber: j.card.cardNumber,
             rfidTag: j.card.rfidTag,
             cardType: j.card.cardType,
-            balance: j.card.balance.toFixed(2),
+            balance: (j.tapOutNewBalance !== undefined ? j.tapOutNewBalance : j.card.balance).toFixed(2),
           },
           stop: {
             name: j.tapOutStop.name,
@@ -1159,7 +1191,8 @@ router.get("/taps/recent", async (req, res) => {
             fare: j.fare || 0,
           },
           fare: j.fare || 0,
-          balance: j.card.balance.toFixed(2),
+          previousBalance: (j.tapOutPrevBalance !== undefined ? j.tapOutPrevBalance : j.card.balance).toFixed(2),
+          balance: (j.tapOutNewBalance !== undefined ? j.tapOutNewBalance : j.card.balance).toFixed(2),
           timestamp: j.tapOutTime,
           status: "Accepted",
         });
@@ -1170,6 +1203,7 @@ router.get("/taps/recent", async (req, res) => {
         formattedTaps.push({
           id: `${j._id}-in`,
           action: "TAP_IN",
+          tripSessionId: j.tripSessionId || "",
           passengerName,
           passengerEmail,
           passenger: j.user ? { name: j.user.name, email: j.user.email } : null,
@@ -1178,14 +1212,15 @@ router.get("/taps/recent", async (req, res) => {
             cardNumber: j.card.cardNumber,
             rfidTag: j.card.rfidTag,
             cardType: j.card.cardType,
-            balance: j.card.balance.toFixed(2),
+            balance: (j.tapInNewBalance !== undefined ? j.tapInNewBalance : j.card.balance).toFixed(2),
           },
           stop: {
             name: j.tapInStop.name,
             code: j.tapInStop.code,
           },
           fare: 0,
-          balance: j.card.balance.toFixed(2),
+          previousBalance: (j.tapInPrevBalance !== undefined ? j.tapInPrevBalance : j.card.balance).toFixed(2),
+          balance: (j.tapInNewBalance !== undefined ? j.tapInNewBalance : j.card.balance).toFixed(2),
           timestamp: j.tapInTime,
           status: "Accepted",
         });
@@ -1198,11 +1233,79 @@ router.get("/taps/recent", async (req, res) => {
     res.json({
       success: true,
       count: formattedTaps.length,
+      tripSessionId: tripSessionId || null,
       taps: formattedTaps.slice(0, Number(limit)),
     });
   } catch (error) {
     console.error("Recent Taps Error:", error);
     res.status(500).json({ message: "Error fetching recent taps: " + error.message });
+  }
+});
+
+// Dedicated endpoint to get all taps for a specific Trip Session
+router.get("/taps/by-trip/:tripSessionId", async (req, res) => {
+  try {
+    const { tripSessionId } = req.params;
+    const journeys = await Journey.find({ tripSessionId })
+      .populate("card")
+      .populate("user", "name email phone role")
+      .populate("tapInStop")
+      .populate("tapOutStop")
+      .sort({ createdAt: 1 });
+
+    const taps = [];
+    for (const j of journeys) {
+      const passengerName = j.user?.name || j.passengerName || "Passenger";
+      if (j.tapInTime && j.tapInStop) {
+        taps.push({
+          id: `${j._id}-in`,
+          action: "TAP_IN",
+          tripSessionId,
+          passengerName,
+          card: {
+            cardNumber: j.card?.cardNumber,
+            rfidTag: j.card?.rfidTag,
+            cardType: j.card?.cardType || j.cardType || "Silver"
+          },
+          stop: j.tapInStop,
+          fare: 0,
+          previousBalance: j.tapInPrevBalance || 0,
+          balance: j.tapInNewBalance || 0,
+          timestamp: j.tapInTime,
+          status: "Accepted"
+        });
+      }
+      if (j.status === "Completed" && j.tapOutTime && j.tapOutStop) {
+        taps.push({
+          id: `${j._id}-out`,
+          action: "TAP_OUT",
+          tripSessionId,
+          passengerName,
+          card: {
+            cardNumber: j.card?.cardNumber,
+            rfidTag: j.card?.rfidTag,
+            cardType: j.card?.cardType || j.cardType || "Silver"
+          },
+          stop: j.tapOutStop,
+          fare: j.fare || 0,
+          previousBalance: j.tapOutPrevBalance || 0,
+          balance: j.tapOutNewBalance || 0,
+          timestamp: j.tapOutTime,
+          status: "Accepted"
+        });
+      }
+    }
+
+    taps.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    res.json({
+      success: true,
+      tripSessionId,
+      count: taps.length,
+      taps
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

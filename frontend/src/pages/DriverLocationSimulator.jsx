@@ -38,8 +38,8 @@ import {
   ArrowLeftRight
 } from "lucide-react";
 import { getStoredUser, getStoredToken } from "../utils/session";
-import Header from "../components/Header";
-import Footer from "../components/Footer";
+import DriverLayout from "../components/driver/DriverLayout";
+import StatusBadge from "../components/driver/StatusBadge";
 
 export default function DriverLocationSimulator() {
   const navigate = useNavigate();
@@ -276,9 +276,24 @@ export default function DriverLocationSimulator() {
   }, [calcFromStop, calcToStop, getDistanceBetween]);
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "#f8fafc", fontFamily: "'Inter', sans-serif" }}>
-      <Header />
-
+    <DriverLayout
+      activeNav="live-drive"
+      user={user}
+      assignedBus={assignedBus}
+      eyebrow="ROUTE SIMULATOR"
+      title="Manual Route Stop & Distance Control"
+      description="Manually change your bus's active stop position to test distance calculations, kilometer accuracy, concession tariffs, and RFID card fare deductions without physically traveling."
+      pageActions={
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <Link to="/driver/live-drive" className="btn-drv-primary">
+            <span>🚍 Live Drive Cockpit ➔</span>
+          </Link>
+          <Link to="/driver/rfid-device" className="btn-drv-secondary">
+            <span>📡 RFID Reader</span>
+          </Link>
+        </div>
+      }
+    >
       {/* TOAST NOTIFICATION BANNER */}
       {toastMessage && (
         <div
@@ -287,14 +302,14 @@ export default function DriverLocationSimulator() {
             bottom: "24px",
             right: "24px",
             zIndex: 9999,
-            background: "#0f172a",
+            background: "#182033",
             color: "#ffffff",
             padding: "14px 22px",
             borderRadius: "14px",
             fontSize: "13.5px",
-            fontWeight: "700",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-            border: "1px solid rgba(255,255,255,0.1)",
+            fontWeight: "800",
+            boxShadow: "0 10px 30px rgba(24, 32, 51, 0.3)",
+            border: "1.5px solid rgba(255,255,255,0.15)",
             display: "flex",
             alignItems: "center",
             gap: "10px",
@@ -306,104 +321,8 @@ export default function DriverLocationSimulator() {
         </div>
       )}
 
-      {/* HERO HEADER */}
-      <div style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)", padding: "40px 24px 30px", color: "#ffffff" }}>
-        <div style={{ maxWidth: "1240px", margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
-            <div>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: "rgba(124, 58, 237, 0.25)", border: "1px solid rgba(139, 92, 246, 0.4)", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", color: "#c4b5fd", marginBottom: "8px" }}>
-                <Navigation size={14} />
-                <span>MoveSmart Transit Simulation &amp; Kilometer Testing Lab</span>
-              </div>
-              <h1 style={{ fontSize: "28px", fontWeight: "900", margin: "0 0 6px", letterSpacing: "-0.5px" }}>
-                Manual Route Stop &amp; Distance Control
-              </h1>
-              <p style={{ margin: 0, color: "#94a3b8", fontSize: "14px", maxWidth: "700px" }}>
-                Manually change your bus's active stop position to test distance calculations, kilometer accuracy, concession tariffs, and RFID card fare deductions without physically traveling.
-              </p>
-            </div>
-
-            {/* QUICK NAVIGATION BUTTONS */}
-            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <Link
-                to="/driver"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "9px 16px",
-                  borderRadius: "10px",
-                  background: "rgba(255,255,255,0.08)",
-                  color: "#ffffff",
-                  textDecoration: "none",
-                  fontWeight: "700",
-                  fontSize: "13px",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                }}
-              >
-                <ArrowLeft size={14} />
-                <span>Driver Console</span>
-              </Link>
-              <Link
-                to="/driver/rfid-device"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "9px 16px",
-                  borderRadius: "10px",
-                  background: "linear-gradient(135deg, #16a34a, #15803d)",
-                  color: "#ffffff",
-                  textDecoration: "none",
-                  fontWeight: "700",
-                  fontSize: "13px",
-                  boxShadow: "0 4px 14px rgba(22, 163, 74, 0.3)",
-                }}
-              >
-                <Radio size={14} />
-                <span>RFID Hardware</span>
-              </Link>
-            </div>
-          </div>
-
-          {/* DRIVER & VEHICLE SUMMARY BAR */}
-          <div style={{ background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)", borderRadius: "16px", padding: "16px 20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-            <div>
-              <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700", textTransform: "uppercase" }}>Active Vehicle</div>
-              <div style={{ fontSize: "15px", fontWeight: "900", color: "#38bdf8", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <Bus size={16} />
-                {assignedBus ? `${assignedBus.busName} (${assignedBus.busNumber})` : (user?.busNumber ? `Bus (${user.busNumber})` : "No Bus Assigned")}
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700", textTransform: "uppercase" }}>Driver Profile</div>
-              <div style={{ fontSize: "14px", fontWeight: "800", color: "#ffffff", marginTop: "2px" }}>
-                {user?.name || "Driver"} ({user?.email || ""})
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700", textTransform: "uppercase" }}>Current Active Stop</div>
-              <div style={{ fontSize: "14px", fontWeight: "900", color: "#4ade80", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <MapPin size={16} />
-                {currentStop.name} ({currentStop.code})
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "700", textTransform: "uppercase" }}>Tariff Rule Base</div>
-              <div style={{ fontSize: "13.5px", fontWeight: "800", color: "#facc15", marginTop: "2px" }}>
-                ₹3.00 Base + ₹0.50/km
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* MAIN CONTENT AREA */}
-      <main style={{ maxWidth: "1240px", margin: "0 auto", padding: "30px 24px 60px", width: "100%", flex: 1 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "28px" }}>
+      {/* SIMULATOR TWO COLUMN GRID */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "24px" }}>
           
           {/* LEFT COLUMN: ACTIVE STOP CONTROLLER & ROUTE STEPPER */}
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -832,12 +751,8 @@ export default function DriverLocationSimulator() {
               </div>
             )}
 
-          </div>
-
         </div>
-      </main>
-
-      <Footer />
-    </div>
+      </div>
+    </DriverLayout>
   );
 }

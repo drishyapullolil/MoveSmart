@@ -14,15 +14,19 @@ import {
   X,
   Info,
   Navigation,
-  ArrowRight
+  ArrowRight,
+  Camera,
+  Film
 } from "lucide-react";
 
 import LiveBusMap from "../common/LiveBusMap";
+import BusGallery from "./BusGallery";
 
 export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
   const [showDetails, setShowDetails] = useState(false);
   const [showLiveMap, setShowLiveMap] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
   const [selectedStationIndex, setSelectedStationIndex] = useState(null);
 
   const {
@@ -277,6 +281,38 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
               <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fare / Ticket</span>
               <span className="price-num">₹{price}</span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowGallery(true)}
+              className="bus-gallery-btn"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 12,
+                background: "rgba(124, 58, 237, 0.1)",
+                color: "#7c3aed",
+                border: "1.5px solid rgba(124, 58, 237, 0.3)",
+                fontWeight: 800,
+                fontSize: 12,
+                cursor: "pointer",
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#7c3aed";
+                e.currentTarget.style.color = "#ffffff";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(124, 58, 237, 0.1)";
+                e.currentTarget.style.color = "#7c3aed";
+              }}
+              title="View bus photos and YouTube video walkthroughs"
+            >
+              <Camera size={14} />
+              <span>Bus Gallery</span>
+            </button>
 
             <button
               type="button"
@@ -744,6 +780,15 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
           </div>
         </div>
       )}
+
+      {/* Bus Multimedia Photo & YouTube Video Gallery Modal */}
+      <BusGallery
+        busId={_id}
+        busNumber={busNumber}
+        busName={busName}
+        isOpen={showGallery}
+        onClose={() => setShowGallery(false)}
+      />
     </div>
   );
 }

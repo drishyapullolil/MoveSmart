@@ -15,7 +15,8 @@ import {
   Package,
   Bell,
   MapPin,
-  Radio
+  Radio,
+  Image as ImageIcon
 } from "lucide-react";
 import { getStoredUser, clearStoredSession } from "../utils/session";
 
@@ -39,6 +40,9 @@ export default function Header() {
     }
     if (path === "/lost-found") {
       return location.pathname === "/lost-found" || location.pathname === "/dashboard/lost-found";
+    }
+    if (path === "/bus-gallery" || path === "/gallery") {
+      return location.pathname === "/bus-gallery" || location.pathname === "/gallery";
     }
     if (path === "/wallet") {
       return location.pathname === "/wallet";
@@ -373,6 +377,33 @@ export default function Header() {
               >
                 <Bus size={14} />
                 <span>Bus Schedules</span>
+              </Link>
+
+              {/* Bus Gallery */}
+              <Link
+                to="/bus-gallery"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 13px",
+                  borderRadius: "9px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  textDecoration: "none",
+                  transition: "all 0.2s ease",
+                  whiteSpace: "nowrap",
+                  background: isActive("/bus-gallery") || isActive("/gallery")
+                    ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+                    : "transparent",
+                  color: isActive("/bus-gallery") || isActive("/gallery") ? "#ffffff" : "#475569",
+                  boxShadow: isActive("/bus-gallery") || isActive("/gallery")
+                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    : "none",
+                }}
+              >
+                <ImageIcon size={14} />
+                <span>Bus Gallery</span>
               </Link>
 
               {/* RFID Pass Apply */}
@@ -806,6 +837,24 @@ export default function Header() {
                 }}
               >
                 <Bus size={16} /> Bus Schedules
+              </Link>
+
+              <Link
+                to="/bus-gallery"
+                onClick={() => setMobileMenuOpen(false)}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  textDecoration: "none",
+                  color: "#334155",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <ImageIcon size={16} /> Bus Gallery
               </Link>
 
               <Link

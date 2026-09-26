@@ -37,7 +37,8 @@ import {
   ArrowUpRight,
   LocateFixed,
   Eye,
-  Maximize2
+  Maximize2,
+  Image as ImageIcon
 } from "lucide-react";
 import { getStoredUser, getStoredToken } from "../utils/session";
 import Header from "../components/Header";
@@ -333,8 +334,8 @@ export default function Dashboard() {
     handleSearchBuses(corr.from, corr.to);
   };
 
-  // Dynamic Chatbot Handler (queries active database buses in real-time)
-  const handleSendMessage = (customText) => {
+  // Dynamic AI Database Chatbot Handler (queries active MongoDB database in real-time)
+  const handleSendMessage = async (customText) => {
     const textToSend = typeof customText === "string" ? customText : chatInput;
     if (!textToSend.trim()) return;
     const userText = textToSend.trim();
@@ -342,41 +343,23 @@ export default function Dashboard() {
     setChatMessages(newMsgs);
     setChatInput("");
 
-    setTimeout(() => {
-      const q = userText.toLowerCase();
-      let reply = "";
-
-      // Dynamic match against live fleet buses in memory
-      const matchingBuses = allFleetBuses.filter((b) => {
-        const from = (b.fromLocation || "").toLowerCase();
-        const to = (b.toLocation || "").toLowerCase();
-        const bName = (b.busName || "").toLowerCase();
-        const bNum = (b.busNumber || "").toLowerCase();
-        return q.includes(from) || q.includes(to) || q.includes(bName) || q.includes(bNum);
-      });
-
-      if (matchingBuses.length > 0) {
-        const b = matchingBuses[0];
-        reply = `Found ${matchingBuses.length} active service(s)! E.g. ${b.busName} (${b.busNumber}) connects ${b.fromLocation} ➔ ${b.toLocation}, departing at ${b.departureTime} with standard fare ₹${b.ticketPrice || b.fare || 0}.`;
-      } else if (q.includes("fare") || q.includes("ticket") || q.includes("price") || q.includes("cost")) {
-        const fares = allFleetBuses.map((b) => Number(b.ticketPrice || b.fare)).filter((f) => !isNaN(f) && f > 0);
-        const minFare = fares.length > 0 ? Math.min(...fares) : 15;
-        const maxFare = fares.length > 0 ? Math.max(...fares) : 120;
-        reply = `Transit fares across our active network range between ₹${minFare} and ₹${maxFare} depending on class and route distance. Contactless RFID cardholders get seamless tap boarding!`;
-      } else if (q.includes("bus") || q.includes("fleet") || q.includes("how many") || q.includes("count") || q.includes("active")) {
-        reply = `Currently, there are ${allFleetBuses.length} live scheduled buses actively operating across ${dbLocations.length} stations in Kerala. You can query any station above!`;
-      } else if (q.includes("wallet") || q.includes("recharge") || q.includes("top up") || q.includes("balance") || q.includes("card")) {
-        reply = "You can recharge your MoveSmart Nol Card instantly via Razorpay UPI & Net Banking in the MoveSmart Wallet section on your dashboard.";
-      } else if (q.includes("pass") || q.includes("rfid") || q.includes("student") || q.includes("apply")) {
-        reply = "You can submit an application for an RFID Smart Pass (Student, Senior Citizen, Concession, or General) directly through the Smart Pass Desk with quick status tracking.";
-      } else if (q.includes("lost") || q.includes("found") || q.includes("luggage") || q.includes("item")) {
-        reply = "Misplaced any belongings on a journey? Visit our dedicated Lost & Found Desk to submit a claim or browse depot-recovered items.";
+    try {
+      const res = await axios.post("/api/chat", { message: userText }, { timeout: 8000 });
+      if (res.data && res.data.reply) {
+        setChatMessages((prev) => [...prev, { sender: "bot", text: res.data.reply }]);
       } else {
-        reply = `We operate ${allFleetBuses.length} active bus services across ${dbLocations.length} Kerala transit stations. Type a city name or use our Route Finder to see live departures!`;
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: "bot", text: "I couldn't find relevant details in the database. Try asking for buses between two stations (e.g. 'Kanjirappally to Erumely')." }
+        ]);
       }
-
-      setChatMessages((prev) => [...prev, { sender: "bot", text: reply }]);
-    }, 400);
+    } catch (err) {
+      console.warn("Error querying database chat assistant:", err.message);
+      // Fallback local intelligent response if offline
+      const q = userText.toLowerCase();
+      let fallbackReply = `We have ${allFleetBuses.length} active buses across ${dbLocations.length} stations. Try asking for 'Kanjirappally to Erumely', fares, or driver details!`;
+      setChatMessages((prev) => [...prev, { sender: "bot", text: fallbackReply }]);
+    }
   };
 
   // Filter fleet buses for Timetable Radar
@@ -719,6 +702,59 @@ export default function Dashboard() {
                   <ArrowUpRight size={18} />
                 </Link>
               </div>
+
+              {/* Card 3: Bus Fleet Gallery Showcase */}
+              <Link
+                to="/bus-gallery"
+                style={{
+                  background: "rgba(255, 255, 255, 0.07)",
+                  backdropFilter: "blur(14px)",
+                  WebkitBackdropFilter: "blur(14px)",
+                  border: "1px solid rgba(147, 51, 234, 0.4)",
+                  borderRadius: "18px",
+                  padding: "16px 22px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
+                  textDecoration: "none",
+                  transition: "transform 0.2s, background 0.2s",
+                  cursor: "pointer"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.12)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.07)";
+                }}
+              >
+                <div
+                  style={{
+                    width: "46px",
+                    height: "46px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, rgba(236, 72, 153, 0.3) 0%, rgba(147, 51, 234, 0.4) 100%)",
+                    border: "1px solid rgba(236, 72, 153, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#f472b6"
+                  }}
+                >
+                  <ImageIcon size={24} />
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "#fbcfe8", textTransform: "uppercase", fontWeight: "700", letterSpacing: "0.5px" }}>
+                    Fleet Showcase
+                  </div>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#ffffff", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>Bus Gallery</span>
+                    <ArrowUpRight size={16} color="#f472b6" />
+                  </div>
+                </div>
+              </Link>
 
             </div>
           </div>
@@ -2138,32 +2174,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Quick Prompt Chips */}
-            <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #ede9fe", display: "flex", gap: "6px", overflowX: "auto" }}>
-              {quickChatPrompts.map((prompt, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleSendMessage(prompt)}
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: "700",
-                    background: "#f5f3ff",
-                    color: "#6d28d9",
-                    border: "1px solid #ddd6fe",
-                    borderRadius: "9999px",
-                    padding: "4px 10px",
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    transition: "all 0.15s"
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "#ede9fe")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "#f5f3ff")}
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-
             {/* Chat Messages Body */}
             <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "linear-gradient(180deg, #fbfaff 0%, #f4fbf7 100%)", display: "flex", flexDirection: "column", gap: "12px" }}>
               {chatMessages.map((msg, idx) => (
@@ -2189,21 +2199,100 @@ export default function Dashboard() {
               <div ref={chatBottomRef} />
             </div>
 
+            {/* Quick Prompt Chips (Positioned just above the search/input bar) */}
+            <div
+              className="no-scrollbar"
+              style={{
+                padding: "8px 12px",
+                background: "#f8fafc",
+                borderTop: "1px solid #ede9fe",
+                display: "flex",
+                gap: "6px",
+                overflowX: "auto",
+                whiteSpace: "nowrap",
+                alignItems: "center"
+              }}
+            >
+              {quickChatPrompts.map((prompt, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleSendMessage(prompt)}
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: "700",
+                    background: "#ffffff",
+                    color: "#059669",
+                    border: "1px solid #d1fae5",
+                    borderRadius: "9999px",
+                    padding: "5px 12px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                    transition: "all 0.18s ease"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#059669";
+                    e.currentTarget.style.color = "#ffffff";
+                    e.currentTarget.style.borderColor = "#059669";
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.boxShadow = "0 3px 8px rgba(5, 150, 105, 0.25)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "#ffffff";
+                    e.currentTarget.style.color = "#059669";
+                    e.currentTarget.style.borderColor = "#d1fae5";
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.03)";
+                  }}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
             {/* Chat Input Bar */}
-            <div style={{ padding: "12px 16px", borderTop: "1.5px solid #ede9fe", background: "#ffffff", display: "flex", gap: "10px" }}>
+            <div style={{ padding: "10px 14px", borderTop: "1.5px solid #ede9fe", background: "#ffffff", display: "flex", gap: "8px", alignItems: "center" }}>
               <input
                 type="text"
                 placeholder="Ask route, fares, smart cards..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSendMessage(); }}
-                style={{ flex: 1, padding: "10px 14px", borderRadius: "12px", border: "1.5px solid #ede9fe", fontSize: "13px", outline: "none" }}
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: "12px",
+                  border: "1.5px solid #ede9fe",
+                  fontSize: "13px",
+                  outline: "none",
+                  transition: "border-color 0.2s"
+                }}
                 onFocusCapture={(e) => (e.currentTarget.style.borderColor = "#059669")}
                 onBlurCapture={(e) => (e.currentTarget.style.borderColor = "#ede9fe")}
               />
               <button
+                type="button"
                 onClick={() => handleSendMessage()}
-                style={{ background: "linear-gradient(135deg, #059669 0%, #7c3aed 100%)", color: "#ffffff", border: "none", padding: "10px 16px", borderRadius: "12px", cursor: "pointer", fontWeight: "800", display: "flex", alignItems: "center", justifyContent: "center" }}
+                style={{
+                  background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                  color: "#ffffff",
+                  border: "none",
+                  width: "38px",
+                  height: "38px",
+                  borderRadius: "12px",
+                  cursor: "pointer",
+                  fontWeight: "800",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 2px 8px rgba(5, 150, 105, 0.3)",
+                  transition: "transform 0.15s"
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.05)")}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+                title="Send message"
               >
                 <Send size={16} />
               </button>

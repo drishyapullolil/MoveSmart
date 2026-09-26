@@ -60,4 +60,29 @@ const approvedDriverOnly = (req, res, next) => {
     }
 };
 
-module.exports = { protect, adminOnly, driverOnly, approvedDriverOnly };
+// Optional auth - populates req.user if valid token provided, but doesn't block unauthenticated queries
+const optionalProtect = async (req, res, next) => {
+    let token;
+
+    if (
+        req.headers.authorization &&
+        req.headers.authorization.startsWith("Bearer")
+    ) {
+        try {
+            token = req.headers.authorization.split(" ")[1];
+
+            const decoded = jwt.verify(
+                token,
+                process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026"
+            );
+
+            req.user = await User.findById(decoded.id).select("-password");
+        } catch (error) {
+            // Token invalid or expired, continue without req.user
+        }
+    }
+    next();
+};
+
+module.exports = { protect, optionalProtect, adminOnly, driverOnly, approvedDriverOnly };
+

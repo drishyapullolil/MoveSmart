@@ -8,6 +8,8 @@ import AdminFooter from "../components/AdminFooter";
 import AdminAddBusRoute from "./AdminAddBusRoute";
 import DriverSafetyMonitoring from "../components/admin/DriverSafetyMonitoring";
 import DriverBiometricsManager from "../components/admin/DriverBiometricsManager";
+import AdminTripHistory from "../components/admin/AdminTripHistory";
+import AdminBusGallery from "../components/admin/AdminBusGallery";
 import LiveBusMap from "../components/common/LiveBusMap";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
@@ -56,7 +58,8 @@ import {
   WifiOff,
   UserX,
   EyeOff,
-  Package
+  Package,
+  Image as ImageIcon
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -70,12 +73,18 @@ export default function Admin({ defaultTab = "overview" }) {
     if (location.pathname === "/admin/lost-found") {
       return "lostFound";
     }
+    if (location.pathname === "/admin/bus-gallery") {
+      return "busGallery";
+    }
     return defaultTab;
   });
 
   useEffect(() => {
     if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
       setActiveTab("busRoutes");
+    }
+    if (location.pathname === "/admin/bus-gallery") {
+      setActiveTab("busGallery");
     }
   }, [location.pathname]);
 
@@ -203,15 +212,29 @@ export default function Admin({ defaultTab = "overview" }) {
     }
   }, [activeTab, fetchLiveFleet]);
 
-  const filteredLiveFleet = liveFleetBuses.filter((b) => {
-    const q = liveFleetSearch.toLowerCase();
-    return (
-      (b.busNumber || "").toLowerCase().includes(q) ||
-      (b.busName || "").toLowerCase().includes(q) ||
-      (b.from || "").toLowerCase().includes(q) ||
-      (b.to || "").toLowerCase().includes(q)
-    );
-  });
+  // ── Bus Trip Sessions & Live Drives Admin States ──────────
+  const [activeTripSessions, setActiveTripSessions] = useState([]);
+  const [activeTripsCount, setActiveTripsCount] = useState(0);
+
+  const fetchActiveTripSessions = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/admin/trips/active", {
+        headers: { Authorization: `Bearer ${getStoredToken()}` }
+      });
+      if (res.data?.success) {
+        setActiveTripSessions(res.data.activeTrips || []);
+        setActiveTripsCount(res.data.count || 0);
+      }
+    } catch (err) {
+      console.warn("Could not load active trip sessions:", err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchActiveTripSessions();
+    const interval = setInterval(fetchActiveTripSessions, 8000);
+    return () => clearInterval(interval);
+  }, [fetchActiveTripSessions]);
 
   // ── Lost & Found Admin States ──────────────────────────────
   const [lfData, setLfData] = useState({ summary: {}, lostItems: [], foundItems: [], matches: [], handovers: [] });
@@ -219,7 +242,7 @@ export default function Admin({ defaultTab = "overview" }) {
   const [lfInnerTab, setLfInnerTab] = useState("lostQueue"); // lostQueue | foundQueue | matchingStudio | ownerRequests | finderHandover | custodyCollection | allLost | allFound | closedCases
   const [lfMatchLostId, setLfMatchLostId] = useState("");
   const [lfMatchFoundId, setLfMatchFoundId] = useState("");
-  
+
   // Handover intake state
   const [lfHandoverModal, setLfHandoverModal] = useState(null);
   const [lfHandoverForm, setLfHandoverForm] = useState({ receivedDate: new Date().toISOString().split("T")[0], receivedTime: "", itemCondition: "Good", handoverNotes: "" });
@@ -1182,9 +1205,20 @@ export default function Admin({ defaultTab = "overview" }) {
     showToast(`Exported ${exportData.length} records to ${filename}.csv`);
   };
 
+  // Helper to ensure only users who are drivers or requested to be a driver are processed
+  const validDriversList = adminDrivers.filter((d) => {
+    const role = (d.role || "").toLowerCase().trim();
+    const status = (d.verificationStatus || "").toLowerCase().trim();
+    const hasLicense = Boolean(d.licenseNumber && String(d.licenseNumber).trim().length > 0);
+    const hasLicenseImg = Boolean(d.licenseImage && String(d.licenseImage).trim().length > 0);
+    const hasFace = Boolean(d.faceProfile && Array.isArray(d.faceProfile.encoding) && d.faceProfile.encoding.length > 0);
+
+    return role === "driver" || ["pending", "approved", "rejected"].includes(status) || hasLicense || hasLicenseImg || hasFace;
+  });
+
   // Filtered Arrays
-  const filteredDrivers = adminDrivers.filter((d) => {
-    const currentStatus = (d.verificationStatus || "Pending").toLowerCase();
+  const filteredDrivers = validDriversList.filter((d) => {
+    const currentStatus = (d.verificationStatus || (d.role === "driver" ? "Approved" : "Pending")).toLowerCase();
     const filter = driverFilterStatus.toLowerCase();
     const matchesStatus = filter === "all" || currentStatus === filter;
     const q = driverSearchQuery.toLowerCase().trim();
@@ -1202,11 +1236,22 @@ export default function Admin({ defaultTab = "overview" }) {
     return !q || (c.cardNumber && c.cardNumber.toLowerCase().includes(q)) || (c.rfidTag && c.rfidTag.toLowerCase().includes(q)) || (c.user?.email && c.user.email.toLowerCase().includes(q));
   });
 
+  const filteredLiveFleet = liveFleetBuses.filter((bus) => {
+    const q = liveFleetSearch.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (bus.busNumber && bus.busNumber.toLowerCase().includes(q)) ||
+      (bus.busName && bus.busName.toLowerCase().includes(q)) ||
+      (bus.route && bus.route.toLowerCase().includes(q)) ||
+      (bus.driverName && bus.driverName.toLowerCase().includes(q))
+    );
+  });
+
   const pendingAppsCount = adminApplications.filter(a => (a.status || "").toLowerCase() === "pending").length;
   const pendingBusReqsCount = adminBusRequests.filter(r => (r.status || "").toLowerCase() === "pending").length;
-  const pendingDriversCount = adminDrivers.filter(d => (d.verificationStatus || "Pending").toLowerCase() === "pending" || (d.verificationStatus || "").toLowerCase() === "unverified").length;
-  const approvedDriversCount = adminDrivers.filter(d => (d.verificationStatus || "").toLowerCase() === "approved").length;
-  const rejectedDriversCount = adminDrivers.filter(d => (d.verificationStatus || "").toLowerCase() === "rejected").length;
+  const pendingDriversCount = validDriversList.filter(d => (d.verificationStatus || "").toLowerCase() === "pending" || (!d.verificationStatus && (d.role || "").toLowerCase() !== "driver")).length;
+  const approvedDriversCount = validDriversList.filter(d => (d.verificationStatus || "").toLowerCase() === "approved" || (d.role || "").toLowerCase() === "driver").length;
+  const rejectedDriversCount = validDriversList.filter(d => (d.verificationStatus || "").toLowerCase() === "rejected").length;
   const totalNotificationCount = pendingAppsCount + pendingBusReqsCount + pendingDriversCount + safetyAlertsCount;
 
   // Background Theme Colors
@@ -1379,6 +1424,7 @@ export default function Admin({ defaultTab = "overview" }) {
         }}>
           {[
             { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
+            { id: "tripHistory", label: "Bus Trips & RFID Reports", Icon: RouteIcon, badge: activeTripsCount },
             { id: "liveTracking", label: "Live Fleet Tracking", Icon: Navigation, badge: liveFleetBuses.filter(b => b.isLive).length },
             { id: "driverBiometrics", label: "Driver Face Biometrics", Icon: Scan },
             { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
@@ -1388,6 +1434,7 @@ export default function Admin({ defaultTab = "overview" }) {
             { id: "drivers", label: "Driver Management", Icon: UserCheck, badge: pendingDriversCount },
             { id: "transactions", label: "Payments & Logs", Icon: Wallet },
             { id: "leaves", label: "Driver Leaves", Icon: CalendarX },
+            { id: "busGallery", label: "Bus Gallery", Icon: ImageIcon },
             { id: "lostFound", label: "Lost & Found", Icon: Package },
             { id: "settings", label: "Settings & Tools", Icon: ShieldCheck },
           ].map((item) => {
@@ -1593,7 +1640,7 @@ export default function Admin({ defaultTab = "overview" }) {
                   { title: "Total Passengers", val: dbCards.length + adminApplications.length, icon: "👥", color: "#6d28d9", bg: "rgba(109, 40, 217, 0.08)", trend: "+14% this month" },
                   { title: "Active RFID Cards", val: dbCards.filter(c => c.status === "Active").length, icon: "💳", color: "#16a34a", bg: "rgba(22, 163, 74, 0.08)", trend: "Operational" },
                   { title: "Pending Applications", val: pendingAppsCount, icon: "📥", color: "#d97706", bg: "rgba(217, 119, 6, 0.08)", trend: "Action Required" },
-                  { title: "Verified Drivers", val: adminDrivers.filter(d => d.verificationStatus === "Approved").length, icon: "🧑✈️", color: "#2563eb", bg: "rgba(37, 99, 235, 0.08)", trend: "On Duty" },
+                  { title: "Verified Drivers", val: approvedDriversCount, icon: "🧑✈️", color: "#2563eb", bg: "rgba(37, 99, 235, 0.08)", trend: "On Duty" },
                   { title: "Active Safety Alerts", val: safetyAlertsCount, icon: "🚨", color: safetyAlertsCount > 0 ? "#dc2626" : "#16a34a", bg: safetyAlertsCount > 0 ? "rgba(220, 38, 38, 0.12)" : "rgba(22, 163, 74, 0.08)", trend: safetyAlertsCount > 0 ? "⚠️ Requires Attention" : "All Clear" },
                 ].map((card, idx) => (
                   <div key={idx} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
@@ -1607,6 +1654,129 @@ export default function Admin({ defaultTab = "overview" }) {
                     <div style={{ fontSize: "11.5px", fontWeight: "800", color: card.color, marginTop: "6px" }}>{card.trend}</div>
                   </div>
                 ))}
+              </div>
+
+              {/* ========================================================================= */}
+              {/* LIVE BUS TRIPS & ACTIVE DRIVING SESSIONS (ADMIN OVERVIEW)                 */}
+              {/* ========================================================================= */}
+              <div
+                style={{
+                  background: bgCard,
+                  borderRadius: "24px",
+                  border: `1px solid ${activeTripSessions.length > 0 ? "rgba(34, 197, 94, 0.35)" : borderCol}`,
+                  padding: "24px",
+                  marginBottom: "28px",
+                  boxShadow: activeTripSessions.length > 0 ? "0 8px 24px rgba(34, 197, 94, 0.08)" : "0 8px 20px rgba(0,0,0,0.03)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Zap size={20} />
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <h3 style={{ fontSize: "17.5px", fontWeight: "900", margin: 0, color: textPrimary }}>
+                          Active Bus Driving Sessions &amp; Live RFID Stream
+                        </h3>
+                        <span style={{
+                          padding: "2px 8px",
+                          borderRadius: "999px",
+                          fontSize: "11px",
+                          fontWeight: "900",
+                          background: activeTripSessions.length > 0 ? "rgba(34, 197, 94, 0.2)" : "rgba(100, 116, 139, 0.15)",
+                          color: activeTripSessions.length > 0 ? "#16a34a" : textSecondary,
+                        }}>
+                          {activeTripSessions.length > 0 ? `● ${activeTripSessions.length} BUSES ACTIVE` : "○ NO ACTIVE BUSES"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "12px", color: textSecondary, marginTop: "2px" }}>
+                        Real-time GPS progression, stop detection, and isolated RFID transaction logs.
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveTab("tripHistory")}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: "10px",
+                      background: "linear-gradient(135deg, #2e1065, #6d28d9)",
+                      color: "#ffffff",
+                      border: "none",
+                      fontSize: "12.5px",
+                      fontWeight: "800",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <RouteIcon size={14} /> Open Full Trip &amp; RFID Reports Hub →
+                  </button>
+                </div>
+
+                {activeTripSessions.length === 0 ? (
+                  <div style={{ padding: "24px", textAlign: "center", color: textSecondary, background: darkMode ? "#0f172a" : "#f8fafc", borderRadius: "16px", border: `1px dashed ${borderCol}` }}>
+                    <Bus size={28} style={{ margin: "0 auto 8px auto", display: "block", opacity: 0.4 }} />
+                    <strong style={{ fontSize: "13.5px", color: textPrimary }}>No buses are currently on an active trip</strong>
+                    <div style={{ fontSize: "12px", marginTop: "3px" }}>When a driver clicks START DRIVE, their session ID, GPS, and RFID taps appear here.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "14px" }}>
+                    {activeTripSessions.map((act) => (
+                      <div
+                        key={act._id || act.tripSessionId}
+                        style={{
+                          background: darkMode ? "#0f172a" : "#f8fafc",
+                          border: `1.5px solid ${borderCol}`,
+                          borderRadius: "16px",
+                          padding: "16px",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "10px",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <strong style={{ fontSize: "16px", color: textPrimary }}>{act.busNumber}</strong>
+                            <span style={{ fontSize: "12px", color: textSecondary, marginLeft: "6px" }}>({act.busName || "Bus"})</span>
+                          </div>
+                          <span style={{ fontSize: "11px", fontWeight: "900", fontFamily: "monospace", color: "#8b5cf6" }}>
+                            {act.tripSessionId}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: "12px", color: textSecondary, display: "flex", flexDirection: "column", gap: "4px" }}>
+                          <div>🧑✈️ Driver: <strong style={{ color: textPrimary }}>{act.driverName || "Driver"}</strong></div>
+                          <div>📍 Current Stop: <strong style={{ color: "#2563eb" }}>{act.currentStop?.name || act.currentStop || act.startStop || "En Route"}</strong></div>
+                          <div>⏱️ Duration: <strong style={{ color: "#16a34a" }}>{act.durationFormatted || "Live"}</strong> • Dist: <strong>{Number(act.distanceCoveredKm || act.totalDistanceKm || 0).toFixed(1)} km</strong></div>
+                        </div>
+
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "6px", borderTop: `1px dashed ${borderCol}` }}>
+                          <span style={{ fontSize: "12px", fontWeight: "800", color: textPrimary }}>
+                            💳 {act.totalRfidTaps || 0} Taps (₹{Number(act.totalFare || 0).toFixed(2)})
+                          </span>
+                          <button
+                            onClick={() => setActiveTab("tripHistory")}
+                            style={{
+                              padding: "5px 12px",
+                              borderRadius: "8px",
+                              background: "linear-gradient(135deg, #2e1065, #6d28d9)",
+                              color: "#ffffff",
+                              border: "none",
+                              fontSize: "11.5px",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Inspect Trip →
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* ========================================================================= */}
@@ -1730,10 +1900,10 @@ export default function Admin({ defaultTab = "overview" }) {
                         justifyContent: "center",
                         overflow: "hidden",
                         border: `2px solid ${activeSessions.find(s => s.busNumber === selectedVideoBus)?.currentAlertness === "CRITICAL_DROWSINESS"
-                            ? "#ef4444"
-                            : activeSessions.find(s => s.busNumber === selectedVideoBus)?.currentAlertness === "DROWSINESS_WARNING"
-                              ? "#f97316"
-                              : "#334155"
+                          ? "#ef4444"
+                          : activeSessions.find(s => s.busNumber === selectedVideoBus)?.currentAlertness === "DROWSINESS_WARNING"
+                            ? "#f97316"
+                            : "#334155"
                           }`,
                         boxShadow: "inset 0 0 20px rgba(0,0,0,0.8)",
                       }}
@@ -2290,7 +2460,7 @@ export default function Admin({ defaultTab = "overview" }) {
               {/* Driver Filter Tabs */}
               <div style={{ display: "flex", gap: "10px", marginBottom: "24px", flexWrap: "wrap" }}>
                 {[
-                  { id: "All", label: "All Drivers", count: adminDrivers.length },
+                  { id: "All", label: "All Drivers", count: validDriversList.length },
                   { id: "Pending", label: "⏳ Pending Verification", count: pendingDriversCount },
                   { id: "Approved", label: "✅ Approved Drivers", count: approvedDriversCount },
                   { id: "Rejected", label: "❌ Rejected", count: rejectedDriversCount },
@@ -2318,7 +2488,7 @@ export default function Admin({ defaultTab = "overview" }) {
               </div>
 
               {/* Drivers Grid / Loading / Empty State */}
-              {driversLoading && adminDrivers.length === 0 ? (
+              {driversLoading && validDriversList.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "50px 20px", background: bgCard, borderRadius: "20px", border: `1px solid ${borderCol}` }}>
                   <div style={{ fontSize: "28px", marginBottom: "10px" }}>⏳</div>
                   <strong style={{ fontSize: "16px", color: textPrimary, display: "block" }}>Loading Drivers...</strong>
@@ -2744,7 +2914,7 @@ export default function Admin({ defaultTab = "overview" }) {
                     {/* Side-by-Side Visual Comparison Cards */}
                     {(selectedLost || selectedFound) && (
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
-                        
+
                         {/* LEFT: LOST ITEM CARD */}
                         <div style={{ background: bgCard, border: "2px solid #dc2626", borderRadius: "18px", padding: "20px", display: "flex", flexDirection: "column" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -3457,6 +3627,16 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
           )}
 
+          {/* SECTION: BUS TRIP SESSIONS & RFID AUDIT REPORTS */}
+          {activeTab === "tripHistory" && (
+            <AdminTripHistory darkMode={darkMode} onNavigateTab={setActiveTab} />
+          )}
+
+          {/* SECTION: BUS GALLERY MANAGEMENT */}
+          {activeTab === "busGallery" && (
+            <AdminBusGallery darkMode={darkMode} />
+          )}
+
         </main>
       </div>
 
@@ -3464,7 +3644,7 @@ export default function Admin({ defaultTab = "overview" }) {
       {selectedDriverForVerify && (
         <div className="modal-overlay" style={{ zIndex: 9999, background: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(4px)" }}>
           <div className="modal-content" style={{ maxWidth: "840px", width: "95%", borderRadius: "24px", padding: "30px", background: bgCard, color: textPrimary, boxShadow: "0 25px 60px rgba(0,0,0,0.35)" }}>
-            
+
             {/* Modal Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "22px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "16px" }}>
               <div>
@@ -3479,7 +3659,7 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", marginBottom: "24px" }}>
-              
+
               {/* Left Column: Driver Profile Details */}
               <div style={{ background: darkMode ? "#334155" : "#f8fafc", padding: "20px", borderRadius: "18px", border: `1px solid ${borderCol}` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
@@ -3727,7 +3907,7 @@ export default function Admin({ defaultTab = "overview" }) {
                       <span>🪪 Submitted Govt ID Document Proof ({actionApp.idType || "ID Proof"}):</span>
                       <span style={{ color: "#16a34a", fontFamily: "monospace" }}>ID No: {actionApp.idNumber}</span>
                     </div>
-                    
+
                     <div
                       onClick={() => setZoomImage(actionApp.idProofUrl)}
                       style={{
@@ -3783,7 +3963,7 @@ export default function Admin({ defaultTab = "overview" }) {
                       <span>🎓 Submitted Student ID Document Proof:</span>
                       <span style={{ color: "#2563eb" }}>{actionApp.institutionName}</span>
                     </div>
-                    
+
                     <div
                       onClick={() => setZoomImage(actionApp.studentIdUrl)}
                       style={{

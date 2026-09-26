@@ -17,20 +17,23 @@ import DriverApply from "./pages/DriverApply";
 import BusBooking from "./pages/BusBooking";
 import Wallet from "./pages/Wallet";
 import LostFound from "./pages/LostFound";
+import BusGalleryPage from "./pages/BusGalleryPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 
-function App(){
-  return(
+function App() {
+  return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
-        
+
         {/* Passenger / User Routes */}
         <Route path="/dashboard" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><Dashboard /></ProtectedRoute>} />
         <Route path="/my-rfid-card" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><MyRfidCard /></ProtectedRoute>} />
         <Route path="/dashboard/my-rfid-card" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><MyRfidCard /></ProtectedRoute>} />
+        <Route path="/bus-gallery" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><BusGalleryPage /></ProtectedRoute>} />
+        <Route path="/gallery" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><BusGalleryPage /></ProtectedRoute>} />
         <Route path="/lost-found" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><LostFound /></ProtectedRoute>} />
         <Route path="/dashboard/lost-found" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><LostFound /></ProtectedRoute>} />
         <Route path="/dashboard/card-application" element={<ProtectedRoute allowedRoles={["passenger", "user", "admin"]}><CardApplication /></ProtectedRoute>} />
@@ -59,6 +62,7 @@ function App(){
         <Route path="/admin" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="overview" /></ProtectedRoute>} />
         <Route path="/admin/bus-routes" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
         <Route path="/admin/add-bus-route" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
+        <Route path="/admin/bus-gallery" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busGallery" /></ProtectedRoute>} />
         <Route path="/admin/lost-found" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="lostFound" /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>

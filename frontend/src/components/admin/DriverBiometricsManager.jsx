@@ -418,12 +418,12 @@ export default function DriverBiometricsManager({ darkMode = false, showToast = 
       prev.map((d) =>
         d._id === enrollingDriver._id
           ? {
-              ...d,
-              isEnrolled: true,
-              faceEncoding: candidateVec,
-              enrolledAt: enrolledAtDate,
-              faceProfile: { encoding: candidateVec, enrolledAt: enrolledAtDate },
-            }
+            ...d,
+            isEnrolled: true,
+            faceEncoding: candidateVec,
+            enrolledAt: enrolledAtDate,
+            faceProfile: { encoding: candidateVec, enrolledAt: enrolledAtDate },
+          }
           : d
       )
     );
