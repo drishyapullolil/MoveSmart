@@ -5,7 +5,7 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import { processRazorpayPayment } from "../utils/razorpay";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "/api";
 
 const getStoredUser = () => {
   try {

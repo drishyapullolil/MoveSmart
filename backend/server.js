@@ -139,9 +139,10 @@ const printRoutes = () => {
 
 // Start Server
 if (require.main === module) {
-    server.listen(5000, "0.0.0.0", () => {
+    const PORT = process.env.PORT || 5000;
+    server.listen(PORT, "0.0.0.0", () => {
         printRoutes();
-        console.log("Server running with Socket.IO on port 5000 🚀");
+        console.log(`Server running with Socket.IO on port ${PORT} 🚀`);
     });
 }
 

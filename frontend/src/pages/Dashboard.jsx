@@ -153,7 +153,11 @@ export default function Dashboard() {
 
   // Real-Time Socket.IO Listener for Fleet GPS Broadcasts
   useEffect(() => {
-    const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
+    const socketUrl =
+      import.meta.env.VITE_SOCKET_URL ||
+      (window.location.hostname === "localhost"
+        ? "http://localhost:5000"
+        : window.location.origin);
     const socket = io(socketUrl, {
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,

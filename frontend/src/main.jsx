@@ -6,6 +6,9 @@ import App from './App.jsx'
 import ErrorBoundary from './components/common/ErrorBoundary'
 import { getStoredToken } from './utils/session'
 
+// Configure Axios Base URL for Production & Local Development
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || "";
+
 // Global Axios Request Interceptor for Instant Auth Header
 axios.interceptors.request.use((config) => {
   const token = getStoredToken();

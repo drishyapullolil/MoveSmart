@@ -285,7 +285,7 @@ function Driver({ defaultTab = "dashboard" }) {
   const [rfidForm, setRfidForm] = useState({
     ssid: "",
     password: "",
-    serverApiUrl: `http://${window.location.hostname || "localhost"}:5000/api/rfid/tap`,
+    serverApiUrl: `${import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin)}/api/rfid/tap`,
     stopCode: "STOP_VYTTILA",
     busNumber: initialUser?.busNumber || "",
     deviceId: "MS-RFID-5326",
@@ -652,7 +652,11 @@ function Driver({ defaultTab = "dashboard" }) {
 
   // Real-Time Driver Safety & RFID Device Socket Connection
   useEffect(() => {
-    const socketUrl = window.location.hostname === "localhost" ? "http://localhost:5000" : window.location.origin;
+    const socketUrl =
+      import.meta.env.VITE_SOCKET_URL ||
+      (window.location.hostname === "localhost"
+        ? "http://localhost:5000"
+        : window.location.origin);
     const socket = io(socketUrl, {
       transports: ["websocket", "polling"],
       reconnectionAttempts: Infinity,
