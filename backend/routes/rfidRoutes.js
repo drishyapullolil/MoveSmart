@@ -27,6 +27,7 @@ const {
 
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const { protect, optionalProtect } = require("../middleware/authMiddleware");
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -578,9 +579,122 @@ router.post("/distances", async (req, res) => {
   }
 });
 
+// ==========================================
+// PHYSICAL ESP32 DEVICE MODE CONTROL
+// ==========================================
+
+/**
+ * PUT /api/rfid/device-mode
+ * Dispatches mode command to the shared physical ESP32 device
+ * Validates mode strictly as 'BUS' or 'BIN'
+ */
+router.put("/device-mode", protect, async (req, res) => {
+  try {
+    const { mode } = req.body;
+
+    // 1. Validate mode strictly
+    if (!mode || (mode !== "BUS" && mode !== "BIN")) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mode. Device mode must strictly be 'BUS' or 'BIN'."
+      });
+    }
+
+    // 2. Resolve ESP32 physical IP address
+    let esp32Ip = process.env.ESP32_IP || global.lastSeenEsp32Ip || null;
+
+    if (!esp32Ip && mongoose.connection.readyState === 1) {
+      try {
+        const device = await RfidDevice.findOne({ ipAddress: { $ne: "0.0.0.0", $exists: true } });
+        if (device && device.ipAddress && device.ipAddress !== "0.0.0.0") {
+          esp32Ip = device.ipAddress;
+        }
+      } catch (dbErr) {}
+    }
+
+    if (!esp32Ip) {
+      // Fallback default local address if unconfigured
+      esp32Ip = "192.168.4.1";
+    }
+
+    // 3. Dispatch HTTP GET command to physical ESP32 (/mode?mode=BUS or BIN)
+    const esp32Url = `http://${esp32Ip}/mode?mode=${encodeURIComponent(mode)}`;
+    console.log(`[DeviceMode] Dispatching mode '${mode}' to ESP32: ${esp32Url}`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    try {
+      const response = await fetch(esp32Url, {
+        method: "GET",
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        // Track mode and active device status
+        global.currentEsp32Mode = mode;
+        await RfidDevice.updateMany({}, {
+          $set: {
+            status: "Connected",
+            lastHeartbeat: new Date()
+          }
+        }).catch(() => {});
+
+        const modeDescription = (mode === "BUS") ? "Bus RFID mode." : "Smart Waste Bin mode.";
+        return res.json({
+          success: true,
+          mode: mode,
+          message: `ESP32 switched to ${modeDescription}`
+        });
+      } else {
+        return res.status(502).json({
+          success: false,
+          message: "ESP32 is offline. Mode was not changed."
+        });
+      }
+    } catch (netErr) {
+      clearTimeout(timeoutId);
+      console.warn(`[DeviceMode] ESP32 unreachable at ${esp32Url}:`, netErr.message);
+      return res.status(503).json({
+        success: false,
+        message: "ESP32 is offline. Mode was not changed."
+      });
+    }
+  } catch (error) {
+    console.error("[DeviceMode] Unexpected error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "ESP32 is offline. Mode was not changed."
+    });
+  }
+});
+
+// Also support POST /api/rfid/device-mode
+router.post("/device-mode", protect, async (req, res) => {
+  req.url = "/device-mode";
+  return router.handle(req, res);
+});
+
+// GET /api/rfid/device-mode (Returns current device mode)
+router.get("/device-mode", optionalProtect, async (req, res) => {
+  return res.json({
+    success: true,
+    mode: global.currentEsp32Mode || "BUS",
+    ipAddress: global.lastSeenEsp32Ip || process.env.ESP32_IP || "Dynamic"
+  });
+});
+
 // Live RFID Tap-In / Tap-Out Endpoint (Strictly Isolated to Active Bus Trip Session)
 router.post("/tap", async (req, res) => {
   try {
+    // Record ESP32 caller IP for dynamic device mode dispatching
+    const callerIp = (req.headers["x-forwarded-for"] || req.socket?.remoteAddress || req.ip || "").replace(/^.*:/, "");
+    if (callerIp && callerIp !== "127.0.0.1" && callerIp !== "localhost" && !callerIp.includes("::")) {
+      global.lastSeenEsp32Ip = callerIp;
+      RfidDevice.updateMany({}, { $set: { ipAddress: callerIp, lastHeartbeat: new Date() } }).catch(() => {});
+    }
+
     const rfidTag = req.body.rfidTag || req.body.cardUid || req.body.uid;
     const { deviceId, busNumber, busId } = req.body;
     let stopCode = req.body.stopCode;

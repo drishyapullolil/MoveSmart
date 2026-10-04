@@ -56,6 +56,8 @@ export default function MyRfidCard() {
   const [transactions, setTransactions] = useState([]);
   const [showUid, setShowUid] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const [rfidMode, setRfidMode] = useState(() => localStorage.getItem("rfidUsageMode") || "BUS");
+  const [modeLoading, setModeLoading] = useState(false);
 
   // Top-Up Modal / Form State
   const [showTopupModal, setShowTopupModal] = useState(false);
@@ -84,6 +86,34 @@ export default function MyRfidCard() {
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(""), 5000);
+  };
+
+  const handleModeChange = async (targetMode) => {
+    if (modeLoading) return;
+    setModeLoading(true);
+    const token = getStoredToken();
+    try {
+      const res = await axios.put(
+        "/api/rfid/device-mode",
+        { mode: targetMode },
+        {
+          headers: { Authorization: token ? `Bearer ${token}` : "" },
+          timeout: 6000
+        }
+      );
+      if (res.data?.success) {
+        setRfidMode(targetMode);
+        localStorage.setItem("rfidUsageMode", targetMode);
+        showToast(res.data.message || (targetMode === "BUS" ? "ESP32 switched to Bus RFID mode." : "ESP32 switched to Smart Waste Bin mode."));
+      } else {
+        showToast(res.data?.message || "ESP32 is offline. Mode was not changed.");
+      }
+    } catch (err) {
+      const errMsg = err.response?.data?.message || "ESP32 is offline. Mode was not changed.";
+      showToast(errMsg);
+    } finally {
+      setModeLoading(false);
+    }
   };
 
   // Fetch Cards & History for Authenticated User
@@ -308,7 +338,67 @@ export default function MyRfidCard() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            {/* Interactive Mode Switcher */}
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                background: "#f1f5f9",
+                padding: "3px 4px",
+                borderRadius: "12px",
+                border: "1.5px solid #e2e8f0",
+                gap: "4px"
+              }}
+            >
+              <button
+                type="button"
+                disabled={modeLoading}
+                onClick={() => handleModeChange("BUS")}
+                style={{
+                  padding: "7px 14px",
+                  borderRadius: "9px",
+                  border: "none",
+                  fontSize: "12.5px",
+                  fontWeight: "700",
+                  cursor: modeLoading ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "all 0.2s ease",
+                  background: rfidMode === "BUS" ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" : "transparent",
+                  color: rfidMode === "BUS" ? "#ffffff" : "#64748b",
+                  boxShadow: rfidMode === "BUS" ? "0 2px 8px rgba(16, 185, 129, 0.35)" : "none",
+                  opacity: modeLoading ? 0.7 : 1
+                }}
+              >
+                🚌 Bus RFID
+              </button>
+              <button
+                type="button"
+                disabled={modeLoading}
+                onClick={() => handleModeChange("BIN")}
+                style={{
+                  padding: "7px 14px",
+                  borderRadius: "9px",
+                  border: "none",
+                  fontSize: "12.5px",
+                  fontWeight: "700",
+                  cursor: modeLoading ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "all 0.2s ease",
+                  background: rfidMode === "BIN" ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" : "transparent",
+                  color: rfidMode === "BIN" ? "#ffffff" : "#64748b",
+                  boxShadow: rfidMode === "BIN" ? "0 2px 8px rgba(16, 185, 129, 0.35)" : "none",
+                  opacity: modeLoading ? 0.7 : 1
+                }}
+              >
+                🗑️ Smart Waste Bin
+              </button>
+            </div>
+
             <button
               onClick={() => fetchCardData(true)}
               disabled={refreshing}

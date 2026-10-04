@@ -48,6 +48,42 @@ import LiveBusMap from "../components/common/LiveBusMap";
 export default function Dashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(() => getStoredUser());
+  const [rfidMode, setRfidMode] = useState(() => localStorage.getItem("rfidUsageMode") || "BUS");
+  const [modeLoading, setModeLoading] = useState(false);
+  const [modeToast, setModeToast] = useState("");
+
+  const showModeToast = (msg) => {
+    setModeToast(msg);
+    setTimeout(() => setModeToast(""), 5000);
+  };
+
+  const handleModeChange = async (targetMode) => {
+    if (modeLoading) return;
+    setModeLoading(true);
+    const token = getStoredToken();
+    try {
+      const res = await axios.put(
+        "/api/rfid/device-mode",
+        { mode: targetMode },
+        {
+          headers: { Authorization: token ? `Bearer ${token}` : "" },
+          timeout: 6000
+        }
+      );
+      if (res.data?.success) {
+        setRfidMode(targetMode);
+        localStorage.setItem("rfidUsageMode", targetMode);
+        showModeToast(res.data.message || (targetMode === "BUS" ? "ESP32 switched to Bus RFID mode." : "ESP32 switched to Smart Waste Bin mode."));
+      } else {
+        showModeToast(res.data?.message || "ESP32 is offline. Mode was not changed.");
+      }
+    } catch (err) {
+      const errMsg = err.response?.data?.message || "ESP32 is offline. Mode was not changed.";
+      showModeToast(errMsg);
+    } finally {
+      setModeLoading(false);
+    }
+  };
 
   // Search & Planner States
   const [origin, setOrigin] = useState("");
@@ -522,8 +558,8 @@ export default function Dashboard() {
             }}
           >
             <div>
-              {/* Status Badge */}
-              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+              {/* Status Badge & Interactive Mode Switcher */}
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
                 <span
                   style={{
                     fontSize: "12px",
@@ -567,7 +603,101 @@ export default function Dashboard() {
                 >
                   ✨ {dbLocations.length > 0 ? `${dbLocations.length} Connected Stations` : "Network Active"}
                 </span>
+
+                {/* Interactive RFID Device Mode Switcher */}
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    background: "rgba(15, 23, 42, 0.75)",
+                    padding: "3px 4px",
+                    borderRadius: "9999px",
+                    border: "1px solid rgba(255, 255, 255, 0.16)",
+                    backdropFilter: "blur(12px)",
+                    gap: "4px"
+                  }}
+                >
+                  <button
+                    type="button"
+                    disabled={modeLoading}
+                    onClick={() => handleModeChange("BUS")}
+                    style={{
+                      padding: "5px 14px",
+                      borderRadius: "9999px",
+                      border: "none",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      cursor: modeLoading ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease",
+                      background: rfidMode === "BUS" ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" : "transparent",
+                      color: rfidMode === "BUS" ? "#ffffff" : "#94a3b8",
+                      boxShadow: rfidMode === "BUS" ? "0 2px 10px rgba(16, 185, 129, 0.4)" : "none",
+                      opacity: modeLoading ? 0.7 : 1
+                    }}
+                    title="Switch to Bus RFID Transit Mode"
+                  >
+                    🚌 Bus RFID
+                  </button>
+                  <button
+                    type="button"
+                    disabled={modeLoading}
+                    onClick={() => handleModeChange("BIN")}
+                    style={{
+                      padding: "5px 14px",
+                      borderRadius: "9999px",
+                      border: "none",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      cursor: modeLoading ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease",
+                      background: rfidMode === "BIN" ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" : "transparent",
+                      color: rfidMode === "BIN" ? "#ffffff" : "#94a3b8",
+                      boxShadow: rfidMode === "BIN" ? "0 2px 10px rgba(16, 185, 129, 0.4)" : "none",
+                      opacity: modeLoading ? 0.7 : 1
+                    }}
+                    title="Switch to Smart Waste Bin Recycling Mode"
+                  >
+                    🗑️ Smart Waste Bin
+                  </button>
+                </div>
               </div>
+
+              {/* Mode Change Toast Banner */}
+              {modeToast && (
+                <div
+                  style={{
+                    background: modeToast.includes("offline") || modeToast.includes("failed")
+                      ? "rgba(239, 68, 68, 0.2)"
+                      : "rgba(16, 185, 129, 0.2)",
+                    border: modeToast.includes("offline") || modeToast.includes("failed")
+                      ? "1px solid rgba(239, 68, 68, 0.4)"
+                      : "1px solid rgba(52, 211, 153, 0.4)",
+                    color: modeToast.includes("offline") || modeToast.includes("failed") ? "#fca5a5" : "#a7f3d0",
+                    padding: "8px 16px",
+                    borderRadius: "12px",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    marginBottom: "12px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <span>{modeToast}</span>
+                  <button
+                    onClick={() => setModeToast("")}
+                    style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontWeight: "900" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               <h1
                 style={{
@@ -607,8 +737,9 @@ export default function Dashboard() {
             {/* Dynamic Glassmorphic KPI Stat Cards */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "16px" }}>
               
-              {/* Card 1: Live Active Fleet */}
-              <div
+              {/* Card 1: Live Active Fleet / Travel */}
+              <Link
+                to="/book-bus"
                 style={{
                   background: "rgba(255, 255, 255, 0.07)",
                   backdropFilter: "blur(14px)",
@@ -620,8 +751,19 @@ export default function Dashboard() {
                   alignItems: "center",
                   gap: "14px",
                   boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
-                  transition: "transform 0.2s"
+                  textDecoration: "none",
+                  transition: "transform 0.2s, background 0.2s",
+                  cursor: "pointer"
                 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.12)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.07)";
+                }}
+                title="Book Bus & Travel Now"
               >
                 <div
                   style={{
@@ -646,10 +788,25 @@ export default function Dashboard() {
                     {loadingFleet ? "Checking..." : `${allFleetBuses.length} Buses Live`}
                   </div>
                 </div>
-              </div>
+                <div
+                  style={{
+                    color: "#a7f3d0",
+                    marginLeft: "4px",
+                    background: "rgba(255, 255, 255, 0.1)",
+                    borderRadius: "10px",
+                    padding: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}
+                >
+                  <ArrowUpRight size={18} />
+                </div>
+              </Link>
 
               {/* Card 2: Smart Pass / Wallet Balance */}
-              <div
+              <Link
+                to={activeCardsCount > 0 || userWalletBalance !== null ? "/my-rfid-card" : "/card-application"}
                 style={{
                   background: "rgba(255, 255, 255, 0.07)",
                   backdropFilter: "blur(14px)",
@@ -661,8 +818,19 @@ export default function Dashboard() {
                   alignItems: "center",
                   gap: "14px",
                   boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
-                  transition: "transform 0.2s"
+                  textDecoration: "none",
+                  transition: "transform 0.2s, background 0.2s",
+                  cursor: "pointer"
                 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.12)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.07)";
+                }}
+                title={activeCardsCount > 0 || userWalletBalance !== null ? "View My RFID Card & Pass" : "Apply for RFID Pass"}
               >
                 <div
                   style={{
@@ -687,25 +855,21 @@ export default function Dashboard() {
                     {userWalletBalance !== null ? `₹${userWalletBalance.toFixed(2)}` : (activeCardsCount > 0 ? "Active" : "Apply Pass")}
                   </div>
                 </div>
-                <Link
-                  to="/wallet"
+                <div
                   style={{
-                    color: "#a7f3d0",
-                    marginLeft: "8px",
+                    color: "#d8b4fe",
+                    marginLeft: "4px",
                     background: "rgba(255, 255, 255, 0.1)",
                     borderRadius: "10px",
                     padding: "8px",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    textDecoration: "none",
-                    transition: "all 0.2s"
+                    justifyContent: "center"
                   }}
-                  title="Open Wallet"
                 >
                   <ArrowUpRight size={18} />
-                </Link>
-              </div>
+                </div>
+              </Link>
 
               {/* Card 3: Bus Fleet Gallery Showcase */}
               <Link

@@ -106,6 +106,9 @@ app.use("/api/auth", require("./routes/authRoutes"));
 // RFID Transit Routes
 app.use("/api/rfid", require("./routes/rfidRoutes"));
 
+// Smart Bin Reward Routes
+app.use("/api/bin", require("./routes/binRoutes"));
+
 // Wallet & Payment Routes
 app.use("/api/wallet", require("./routes/walletRoutes"));
 

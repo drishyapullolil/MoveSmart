@@ -27,13 +27,18 @@ const transactionSchema = new mongoose.Schema({
     type: String,
     default: "",
   },
+  depositId: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
   amount: {
     type: Number,
     required: true,
   },
   type: {
     type: String,
-    enum: ["Recharge", "Travel", "Card Application", "Bus Booking"],
+    enum: ["Recharge", "Travel", "Card Application", "Bus Booking", "Smart Bin Reward", "Reward"],
     default: "Recharge",
   },
   isDebit: {

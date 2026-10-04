@@ -1,41 +1,3 @@
-/**
- * ============================================================================
- * MoveSmart IoT RFID Transit Tap Reader Firmware v2.5
- * ============================================================================
- * 
- * Hardware:
- * - ESP32 Development Board (ESP32 DevKit V1 / ESP32-WROOM-32)
- * - MFRC522 / RC522 RFID Reader module
- * - (Optional) Status LEDs & Buzzer
- * 
- * Wiring Configuration (STRICT HARDWARE PINS):
- * - RC522 SDA (SS)  -> ESP32 GPIO 5
- * - RC522 SCK       -> ESP32 GPIO 18
- * - RC522 MOSI      -> ESP32 GPIO 23
- * - RC522 MISO      -> ESP32 GPIO 19
- * - RC522 RST       -> ESP32 GPIO 22
- * - RC522 3.3V      -> ESP32 3V3 (Do NOT connect to 5V)
- * - RC522 GND       -> ESP32 GND
- * - RC522 IRQ       -> Not Connected
- * 
- * Optional Status Pins:
- * - Green LED       -> ESP32 GPIO 12 (Success indicator)
- * - Red LED         -> ESP32 GPIO 14 (Rejection / Error indicator)
- * - Buzzer          -> ESP32 GPIO 13 (Audio feedback)
- * 
- * Provisioning & Security:
- * - Zero hardcoded Wi-Fi passwords in Git/source code.
- * - Credentials stored in ESP32 Non-Volatile Storage (NVS Flash) via Preferences.h.
- * - On-demand SoftAP Mode ("MoveSmart-RFID-XXXX") with captive web server on 192.168.4.1.
- * - Auto-reconnect & real-time heartbeat to MoveSmart Node.js backend.
- * 
- * Arduino IDE Settings:
- * - Board: ESP32 Dev Module
- * - Baud Rate: 115200
- * - Libraries: MFRC522 (by GithubCommunity 1.4.12+), ArduinoJson (v6 or v7)
- * ============================================================================
- */
-
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -43,599 +5,831 @@
 #include <SPI.h>
 #include <MFRC522.h>
 #include <ArduinoJson.h>
+#include <ESP32Servo.h>
 
-// Hardware Pin Definitions
+// =====================================================
+// RC522 + ESP32 PINS (SHARED ACROSS BUS & BIN MODES)
+// =====================================================
+
 #define SS_PIN    5
 #define RST_PIN   22
+
+#define SCK_PIN   18
+#define MOSI_PIN  23
+#define MISO_PIN  19
+
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+// =====================================================
+// LED & BUZZER PINS
+// =====================================================
+
 #define GREEN_LED 12
 #define RED_LED   14
 #define BUZZER    13
 
-// NVS Persistent Storage
+// =====================================================
+// SMART BIN ADDITIONAL HARDWARE PINS & ANGLES
+// =====================================================
+
+#define SERVO_PIN    25
+#define CLOSED_ANGLE 180
+#define OPEN_ANGLE   90
+
+#define IR_PIN 27 // LOW = Object Detected, HIGH = No Object
+
+Servo binServo;
+
+// =====================================================
+// WIFI & PREFERENCES SETUP
+// =====================================================
+
 Preferences preferences;
+WebServer setupServer(80);
 
-// Local Web Server for Driver SoftAP Provisioning (Port 80)
-WebServer server(80);
+String savedSSID = "";
+String savedPassword = "";
 
-// Hardware Objects
-MFRC522 mfrc522(SS_PIN, RST_PIN);
+bool setupMode = false;
 
-// Runtime State Variables
-String deviceId = "MS-RFID-5326";
-String wifiSsid = "";
-String wifiPassword = "";
-String serverApiUrl = "http://192.168.1.5:5000/api/rfid/tap";
-String backendBaseUrl = "http://192.168.1.5:5000";
-String deviceStopCode = "STOP_KANJIRAPPALLY";
-String assignedBusNumber = "KL-06-345"; // Assigned bus number (configurable dynamically via portal or NVS)
-String assignedDriverId = "";
+// =====================================================
+// DEVICE MODE CONFIGURATION (BUS vs BIN)
+// =====================================================
 
-bool isProvisioningMode = false;
-bool isConnectedToWifi = false;
-unsigned long lastHeartbeatTime = 0;
-const unsigned long HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
+// Default mode is "BUS". Stored permanently in ESP32 Preferences ("movesmart", "mode").
+String deviceMode = "BUS"; // "BUS" or "BIN"
 
-// Forward Declarations
-void loadSavedPreferences();
-void saveConfiguration(String ssid, String pass, String serverUrl, String stopCode, String busNum, String drvId);
-void startSoftAPProvisioning();
-bool connectToWiFi(int timeoutSeconds = 15);
-void registerDeviceWithBackend();
-void sendPeriodicHeartbeat();
-void sendTapEvent(String rfidTagHex);
-void setupWebServerRoutes();
-void handleRoot();
-void handleConfigure();
-void handleStatus();
-void handleResetNVS();
-void successBeep();
-void triggerRejectionFeedback();
-void doubleBeep();
+// =====================================================
+// MOVESMART BACKEND CONFIGURATION
+// =====================================================
+
+// Base backend server URLs (Current Laptop IPv4: 10.103.189.140)
+const char* busApiUrl = "http://10.103.189.140:5000/api/rfid/tap";
+const char* binApiUrl = "http://10.103.189.140:5000/api/bin/deposit";
+
+// Device Identifiers
+const char* deviceStopCode = "STOP_VYTTILA";
+const char* binId = "BIN-001";
+
+// Forward declarations
+void connectToSavedWiFi();
+void startSetupMode();
+void handleSetupPage();
+void handleModePage();
+void handleModeEndpoint();
+void handleSaveWiFi();
+void handleResetWiFi();
+void handleSetModeAndRestart();
+void sendTapToBackend(String rfidTag);
+void sendBinDepositToBackend(String rfidTag, String depositId);
+void successFeedback();
+void errorFeedback();
+void openLid();
+void closeLid();
+
+// =====================================================
+// SETUP
+// =====================================================
 
 void setup() {
   Serial.begin(115200);
-  delay(600);
+  delay(1000);
 
-  Serial.println("\n========================================================");
-  Serial.println("   MoveSmart IoT RFID Reader Terminal v2.5");
-  Serial.println("========================================================");
-
-  // Initialize Indicators
+  // Initialize LEDs and Buzzer
   pinMode(GREEN_LED, OUTPUT);
   pinMode(RED_LED, OUTPUT);
   pinMode(BUZZER, OUTPUT);
-  
-  digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(RED_LED, HIGH);
-  delay(300);
+
   digitalWrite(GREEN_LED, LOW);
   digitalWrite(RED_LED, LOW);
+  digitalWrite(BUZZER, LOW);
 
-  // Generate Unique Device ID based on MAC
-  String mac = WiFi.macAddress();
-  mac.replace(":", "");
-  deviceId = "MS-RFID-" + mac.substring(mac.length() - 4);
-  deviceId.toUpperCase();
+  // Initialize IR sensor pin
+  pinMode(IR_PIN, INPUT);
 
-  // Initialize SPI & RC522 Reader
-  SPI.begin();
-  mfrc522.PCD_Init();
-  Serial.print("[RC522] Hardware RFID Reader Initialized. Device ID: ");
-  Serial.println(deviceId);
-  mfrc522.PCD_DumpVersionToSerial();
+  // Initialize Servo motor
+  ESP32PWM::allocateTimer(0);
+  binServo.setPeriodHertz(50);
+  binServo.attach(SERVO_PIN, 500, 2400);
+  binServo.write(CLOSED_ANGLE);
 
-  // Load Saved Configuration from NVS
-  loadSavedPreferences();
+  // -------------------------------------------------
+  // RC522 SPI INITIALIZATION
+  // -------------------------------------------------
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
+  rfid.PCD_Init();
+  delay(100);
 
-  // Attempt Wi-Fi Connection if SSID is saved
-  if (wifiSsid.length() > 0) {
-    Serial.print("[Wi-Fi] Saved network found: ");
-    Serial.println(wifiSsid);
-    isConnectedToWifi = connectToWiFi(12);
+  // -------------------------------------------------
+  // LOAD SAVED CONFIGURATION (WIFI & MODE)
+  // -------------------------------------------------
+  preferences.begin("movesmart", false);
+  savedSSID = preferences.getString("ssid", "");
+  savedPassword = preferences.getString("password", "");
+  deviceMode = preferences.getString("mode", "BUS"); // Default is "BUS"
+  deviceMode.toUpperCase();
+  if (deviceMode != "BIN") {
+    deviceMode = "BUS";
   }
 
-  if (!isConnectedToWifi) {
-    Serial.println("[Provisioning] No working Wi-Fi connection. Launching SoftAP Setup Mode...");
-    startSoftAPProvisioning();
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("   MOVESMART ESP32 COMBINED");
+  Serial.println("=================================");
+  Serial.print("DEVICE MODE: ");
+  if (deviceMode == "BIN") {
+    Serial.println("SMART BIN");
+    Serial.println("RFID + SERVO + IR READY");
+    Serial.print("Bin ID: ");
+    Serial.println(binId);
+    Serial.print("Bin Endpoint: ");
+    Serial.println(binApiUrl);
   } else {
-    Serial.println("[Wi-Fi] Connected to Driver's Network! ✅");
-    registerDeviceWithBackend();
-    setupWebServerRoutes();
-    server.begin();
-    successBeep();
-    Serial.println("System Ready. RFID reader is active for transit taps...\n");
+    Serial.println("BUS (TRANSIT TAP)");
+    Serial.print("Stop Code: ");
+    Serial.println(deviceStopCode);
+    Serial.print("Bus Endpoint: ");
+    Serial.println(busApiUrl);
+  }
+  Serial.println("=================================");
+
+  Serial.println("RC522 initialized.");
+  Serial.println("Checking RC522 firmware...");
+  rfid.PCD_DumpVersionToSerial();
+
+  // -------------------------------------------------
+  // WIFI CONNECTION
+  // -------------------------------------------------
+  if (savedSSID.length() == 0) {
+    Serial.println();
+    Serial.println("No Wi-Fi configured.");
+    startSetupMode();
+  } else {
+    Serial.println();
+    Serial.println("Saved Wi-Fi found.");
+    Serial.print("Wi-Fi: ");
+    Serial.println(savedSSID);
+    connectToSavedWiFi();
   }
 }
+
+// =====================================================
+// MAIN LOOP
+// =====================================================
 
 void loop() {
-  // Always handle HTTP server requests (both in SoftAP and Station mode)
-  server.handleClient();
+  // -------------------------------------------------
+  // WEB SERVER CLIENT HANDLING (NON-BLOCKING)
+  // -------------------------------------------------
+  setupServer.handleClient();
 
-  // In Normal Connected Mode: Monitor RFID Card Taps & Send Heartbeats
-  if (isConnectedToWifi && !isProvisioningMode) {
-    // Send periodic liveness heartbeat to MoveSmart backend
-    if (millis() - lastHeartbeatTime > HEARTBEAT_INTERVAL_MS) {
-      lastHeartbeatTime = millis();
-      sendPeriodicHeartbeat();
-    }
-
-    // Check for RFID Card Presence
-    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
-      String rfidTagHex = "";
-      String formattedUid = "";
-      for (byte i = 0; i < mfrc522.uid.size; i++) {
-        if (mfrc522.uid.uidByte[i] < 0x10) {
-          rfidTagHex += "0";
-          formattedUid += "0";
-        }
-        rfidTagHex += String(mfrc522.uid.uidByte[i], HEX);
-        formattedUid += String(mfrc522.uid.uidByte[i], HEX);
-        if (i < mfrc522.uid.size - 1) formattedUid += " ";
-      }
-      rfidTagHex.toUpperCase();
-      formattedUid.toUpperCase();
-
-      Serial.println("\n========================================");
-      Serial.println("RFID CARD DETECTED");
-      Serial.print("UID: ");
-      Serial.println(formattedUid);
-      Serial.print("Tag ID: ");
-      Serial.println(rfidTagHex);
-      Serial.print("Station Stop: ");
-      Serial.println(deviceStopCode);
-
-      // Transmit tap event to MoveSmart backend
-      sendTapEvent(rfidTagHex);
-
-      // Halt PICC & Stop PCD Encryption
-      mfrc522.PICC_HaltA();
-      mfrc522.PCD_StopCrypto1();
-
-      Serial.println("========================================\n");
-      delay(1500); // Debounce delay
-    }
+  // -------------------------------------------------
+  // SETUP AP MODE ACTIVE
+  // -------------------------------------------------
+  if (setupMode) {
+    delay(10);
+    return;
   }
 
-  // If Wi-Fi dropped in normal mode, attempt quick reconnect
-  if (!isProvisioningMode && WiFi.status() != WL_CONNECTED && wifiSsid.length() > 0) {
-    static unsigned long lastReconnectAttempt = 0;
-    if (millis() - lastReconnectAttempt > 10000) {
-      lastReconnectAttempt = millis();
-      Serial.println("[Wi-Fi] Connection lost. Reconnecting...");
-      if (WiFi.reconnect()) {
-        isConnectedToWifi = true;
-        Serial.println("[Wi-Fi] Reconnected successfully ✅");
-        registerDeviceWithBackend();
-      }
-    }
-  }
-}
-
-// ============================================================================
-// NVS PREFERENCES & CONFIGURATION
-// ============================================================================
-void loadSavedPreferences() {
-  preferences.begin("movesmart", true);
-  wifiSsid = preferences.getString("ssid", "");
-  wifiPassword = preferences.getString("pass", "");
-  serverApiUrl = preferences.getString("server", "http://192.168.1.5:5000/api/rfid/tap");
-  deviceStopCode = preferences.getString("stop", "STOP_VYTTILA");
-  assignedBusNumber = preferences.getString("bus", "KL-06-345");
-  assignedDriverId = preferences.getString("driver", "");
-  preferences.end();
-
-  // Extract base URL
-  int idx = serverApiUrl.indexOf("/api/");
-  if (idx > 0) {
-    backendBaseUrl = serverApiUrl.substring(0, idx);
-  } else {
-    backendBaseUrl = "http://192.168.1.5:5000";
-  }
-}
-
-void saveConfiguration(String ssid, String pass, String serverUrl, String stopCode, String busNum, String drvId) {
-  preferences.begin("movesmart", false);
-  if (ssid.length() > 0) preferences.putString("ssid", ssid);
-  if (pass.length() > 0) preferences.putString("pass", pass);
-  if (serverUrl.length() > 0) preferences.putString("server", serverUrl);
-  if (stopCode.length() > 0) preferences.putString("stop", stopCode);
-  if (busNum.length() > 0) preferences.putString("bus", busNum);
-  if (drvId.length() > 0) preferences.putString("driver", drvId);
-  preferences.end();
-
-  loadSavedPreferences();
-}
-
-// ============================================================================
-// WI-FI & SOFTAP PROVISIONING
-// ============================================================================
-bool connectToWiFi(int timeoutSeconds) {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
-  
-  Serial.print("Connecting to Wi-Fi");
-  int count = 0;
-  while (WiFi.status() != WL_CONNECTED && count < (timeoutSeconds * 2)) {
-    digitalWrite(GREEN_LED, HIGH);
-    delay(250);
-    digitalWrite(GREEN_LED, LOW);
-    delay(250);
-    Serial.print(".");
-    count++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[Wi-Fi] Connected! Local IP: " + WiFi.localIP().toString());
-    return true;
-  }
-
-  Serial.println("\n[Wi-Fi] Connection timed out.");
-  return false;
-}
-
-void startSoftAPProvisioning() {
-  isProvisioningMode = true;
-  WiFi.mode(WIFI_AP);
-
-  String apName = "MoveSmart-RFID-" + deviceId.substring(deviceId.length() - 4);
-  WiFi.softAP(apName.c_str());
-
-  IPAddress apIP = WiFi.softAPIP();
-  Serial.println("\n--------------------------------------------------------");
-  Serial.println("  ESP32 PROVISIONING AP ACTIVE");
-  Serial.println("  SSID: " + apName);
-  Serial.println("  Portal URL: http://" + apIP.toString());
-  Serial.println("--------------------------------------------------------");
-
-  setupWebServerRoutes();
-  server.begin();
-
-  // Rapid red blink to indicate setup mode
-  digitalWrite(RED_LED, HIGH);
-  delay(200);
-  digitalWrite(RED_LED, LOW);
-}
-
-// ============================================================================
-// BACKEND REGISTRATION & HEARTBEAT
-// ============================================================================
-void registerDeviceWithBackend() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  String registerUrl = backendBaseUrl + "/api/rfid/device/register";
-  http.begin(registerUrl);
-  http.addHeader("Content-Type", "application/json");
-
-  #if ARDUINOJSON_VERSION_MAJOR >= 7
-    JsonDocument doc;
-  #else
-    StaticJsonDocument<300> doc;
-  #endif
-
-  doc["deviceId"] = deviceId;
-  doc["driverId"] = assignedDriverId;
-  doc["busNumber"] = assignedBusNumber;
-  doc["stopCode"] = deviceStopCode;
-  doc["ipAddress"] = WiFi.localIP().toString();
-  doc["firmwareVersion"] = "v2.5-RC522-NVS";
-
-  String payload;
-  serializeJson(doc, payload);
-
-  int code = http.POST(payload);
-  if (code > 0) {
-    Serial.print("[Backend Register] HTTP ");
-    Serial.print(code);
-    Serial.println(" - Device registered with MoveSmart server ✅");
-  } else {
-    Serial.print("[Backend Register] Error: ");
-    Serial.println(code);
-  }
-  http.end();
-}
-
-void sendPeriodicHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  String hbUrl = backendBaseUrl + "/api/rfid/device/heartbeat";
-  http.begin(hbUrl);
-  http.addHeader("Content-Type", "application/json");
-
-  #if ARDUINOJSON_VERSION_MAJOR >= 7
-    JsonDocument doc;
-  #else
-    StaticJsonDocument<200> doc;
-  #endif
-
-  doc["deviceId"] = deviceId;
-  doc["ipAddress"] = WiFi.localIP().toString();
-  doc["stopCode"] = deviceStopCode;
-  doc["readerActive"] = true;
-
-  String payload;
-  serializeJson(doc, payload);
-  http.POST(payload);
-  http.end();
-}
-
-// ============================================================================
-// RFID TAP TRANSACTION
-// ============================================================================
-void sendTapEvent(String rfidTagHex) {
+  // -------------------------------------------------
+  // WIFI RECONNECT IF DISCONNECTED
+  // -------------------------------------------------
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Backend response: NETWORK ERROR (Wi-Fi Disconnected) ❌");
-    triggerRejectionFeedback();
+    Serial.println();
+    Serial.println("Wi-Fi disconnected. Trying to reconnect...");
+    connectToSavedWiFi();
+    delay(1000);
+    return;
+  }
+
+  // -------------------------------------------------
+  // CHECK FOR RFID CARD
+  // -------------------------------------------------
+  if (!rfid.PICC_IsNewCardPresent()) {
+    delay(100);
+    return;
+  }
+
+  if (!rfid.PICC_ReadCardSerial()) {
+    delay(100);
+    return;
+  }
+
+  // -------------------------------------------------
+  // READ AND NORMALIZE UID
+  // -------------------------------------------------
+  String rfidTag = "";
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10) {
+      rfidTag += "0";
+    }
+    rfidTag += String(rfid.uid.uidByte[i], HEX);
+  }
+  rfidTag.toUpperCase();
+
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("       RFID CARD DETECTED");
+  Serial.println("=================================");
+  Serial.print("RFID UID: ");
+  Serial.println(rfidTag);
+
+  // -------------------------------------------------
+  // BRANCH BY ACTIVE DEVICE MODE
+  // -------------------------------------------------
+  if (deviceMode == "BIN") {
+    // ===============================================
+    // SMART BIN MODE WORKFLOW
+    // ===============================================
+    Serial.println("MODE: SMART BIN");
+    Serial.print("Bin: ");
+    Serial.println(binId);
+
+    // 1. Open Servo Lid (90 degrees)
+    openLid();
+
+    // 2. Wait indefinitely for IR sensor confirmation (OUT == LOW)
+    Serial.println("[Smart Bin] Lid opened. Waiting for waste deposit (IR sensor)...");
+    while (true) {
+      setupServer.handleClient(); // keep web server responsive
+      if (digitalRead(IR_PIN) == LOW) {
+        Serial.println("[IR Sensor] >> Waste / Object detected! <<");
+        break;
+      }
+      delay(100);
+    }
+
+    // Debounce/settle time for dropped object
+    delay(500);
+
+    // 3. Generate unique depositId (ONLY AFTER object confirmed)
+    String depositId = String("DEP-") + binId + "-" + String(millis());
+
+    // 4. Send reward request to POST /api/bin/deposit
+    sendBinDepositToBackend(rfidTag, depositId);
+
+    // 5. Close Servo Lid (180 degrees)
+    closeLid();
+
+  } else {
+    // ===============================================
+    // BUS RFID MODE WORKFLOW (ORIGINAL PRESERVED)
+    // ===============================================
+    Serial.println("MODE: BUS");
+    Serial.print("Stop: ");
+    Serial.println(deviceStopCode);
+
+    // Send tap to POST /api/rfid/tap
+    sendTapToBackend(rfidTag);
+  }
+
+  // -------------------------------------------------
+  // STOP RFID COMMUNICATION & RESET
+  // -------------------------------------------------
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+
+  Serial.println();
+  Serial.println("Remove card...");
+  delay(1500);
+  Serial.println("RFID reader is READY.");
+}
+
+// =====================================================
+// SERVO CONTROL HELPERS
+// =====================================================
+
+void openLid() {
+  Serial.println("[Servo] Opening bin lid (90°)...");
+  binServo.write(OPEN_ANGLE);
+  delay(500);
+}
+
+void closeLid() {
+  Serial.println("[Servo] Closing bin lid (180°)...");
+  binServo.write(CLOSED_ANGLE);
+  delay(500);
+}
+
+// =====================================================
+// CONNECT TO SAVED WIFI
+// =====================================================
+
+void connectToSavedWiFi() {
+  setupMode = false;
+  WiFi.mode(WIFI_STA);
+
+  Serial.println();
+  Serial.println("Connecting to Wi-Fi...");
+  WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.println("=================================");
+    Serial.println("       WIFI CONNECTED");
+    Serial.println("=================================");
+    Serial.print("Wi-Fi: ");
+    Serial.println(savedSSID);
+    Serial.print("ESP32 IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Active Mode: ");
+    Serial.println(deviceMode == "BIN" ? "SMART BIN" : "BUS");
+    Serial.print("Active Endpoint: ");
+    Serial.println(deviceMode == "BIN" ? binApiUrl : busApiUrl);
+    Serial.print("Mode Switch Page: http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/mode");
+    Serial.println();
+    Serial.println("RFID reader is READY.");
+
+    digitalWrite(RED_LED, LOW);
+    digitalWrite(GREEN_LED, HIGH);
+    delay(500);
+    digitalWrite(GREEN_LED, LOW);
+
+    // Register Web Server routes for Wi-Fi Connected Mode
+    setupServer.on("/", HTTP_GET, handleModePage);
+    setupServer.on("/mode", HTTP_GET, handleModeEndpoint);
+    setupServer.on("/setmode", HTTP_GET, handleModeEndpoint);
+    setupServer.begin();
+    Serial.println("Local Device Mode Web Server started at /mode.");
+  } else {
+    Serial.println();
+    Serial.println("Wi-Fi connection failed.");
+    digitalWrite(RED_LED, HIGH);
+    delay(1000);
+    digitalWrite(RED_LED, LOW);
+    startSetupMode();
+  }
+}
+
+// =====================================================
+// START ESP32 SETUP MODE (AP PROVISIONING)
+// =====================================================
+
+void startSetupMode() {
+  setupMode = true;
+  WiFi.disconnect(true);
+  delay(500);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("MoveSmart-RFID", "movesmart123");
+
+  IPAddress IP = WiFi.softAPIP();
+
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("       WIFI & MODE SETUP");
+  Serial.println("=================================");
+  Serial.println("Connect your phone/laptop to:");
+  Serial.println("Wi-Fi Name: MoveSmart-RFID");
+  Serial.println("Password: movesmart123");
+  Serial.println();
+  Serial.print("Open this address: ");
+  Serial.println(IP);
+
+  setupServer.on("/", HTTP_GET, handleSetupPage);
+  setupServer.on("/mode", HTTP_GET, handleModeEndpoint);
+  setupServer.on("/save", HTTP_POST, handleSaveWiFi);
+  setupServer.on("/reset", HTTP_GET, handleResetWiFi);
+  setupServer.on("/setmode", HTTP_GET, handleModeEndpoint);
+
+  setupServer.begin();
+  Serial.println("Setup portal started.");
+}
+
+// =====================================================
+// DYNAMIC DEVICE MODE HTTP ENDPOINT (GET /mode?mode=BUS or BIN)
+// =====================================================
+
+void handleModeEndpoint() {
+  if (setupServer.hasArg("mode")) {
+    String targetMode = setupServer.arg("mode");
+    targetMode.toUpperCase();
+
+    if (targetMode == "BUS" || targetMode == "BIN") {
+      deviceMode = targetMode;
+      preferences.putString("mode", deviceMode);
+
+      Serial.println();
+      Serial.println("=================================");
+      Serial.println("     DYNAMIC MODE SWITCH");
+      Serial.println("=================================");
+      Serial.print("Device mode updated to: ");
+      Serial.println(deviceMode);
+      Serial.println("=================================");
+
+      if (deviceMode == "BIN") {
+        binServo.write(CLOSED_ANGLE);
+      }
+
+      setupServer.send(200, "application/json", "{\"success\":true,\"mode\":\"" + deviceMode + "\",\"message\":\"Switched to " + deviceMode + " mode\"}");
+      return;
+    } else {
+      setupServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid mode. Must be BUS or BIN\"}");
+      return;
+    }
+  }
+
+  // If no param, return current mode JSON
+  setupServer.send(200, "application/json", "{\"success\":true,\"mode\":\"" + deviceMode + "\"}");
+}
+
+// =====================================================
+// DEVICE MODE WEB PAGE (GET /mode-ui or GET /)
+// =====================================================
+
+void handleModePage() {
+  // Read current saved mode strictly from Preferences
+  String currentMode = preferences.getString("mode", "BUS");
+  currentMode.toUpperCase();
+  if (currentMode != "BIN") currentMode = "BUS";
+
+  bool isBin = (currentMode == "BIN");
+  String modeTitle = isBin ? "🗑️ SMART WASTE BIN" : "🚌 BUS RFID";
+  String busActive = !isBin ? "active" : "";
+  String binActive = isBin ? "active" : "";
+  String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+  String wifiStatus = (WiFi.status() == WL_CONNECTED) ? ("Connected (" + savedSSID + ")") : "SoftAP Mode";
+
+  String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<title>MoveSmart Device Mode</title><style>";
+  html += "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5fa; margin: 0; padding: 25px; display: flex; justify-content: center; }";
+  html += ".card { background: white; max-width: 400px; width: 100%; border-radius: 20px; padding: 28px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); text-align: center; }";
+  html += "h1 { color: #3b3086; margin: 0 0 6px 0; font-size: 22px; }";
+  html += ".subtitle { color: #71717a; font-size: 14px; margin-bottom: 22px; font-weight: 500; }";
+  html += ".current-badge { background: #f0edff; border: 1px solid #d4ccff; border-radius: 14px; padding: 16px; margin-bottom: 22px; }";
+  html += ".current-label { font-size: 12px; font-weight: bold; color: #6355d8; text-transform: uppercase; letter-spacing: 0.5px; }";
+  html += ".current-val { font-size: 19px; font-weight: bold; color: #18181b; margin-top: 4px; }";
+  html += ".btn-group { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }";
+  html += ".btn { display: block; padding: 15px 18px; border-radius: 12px; font-size: 16px; font-weight: bold; text-decoration: none; transition: all 0.2s ease; cursor: pointer; }";
+  html += ".btn-bus { background: #e0e7ff; color: #3730a3; border: 2px solid transparent; }";
+  html += ".btn-bus.active { background: #4338ca; color: white; box-shadow: 0 4px 14px rgba(67, 56, 202, 0.35); border-color: #312e81; }";
+  html += ".btn-bin { background: #dcfce7; color: #166534; border: 2px solid transparent; }";
+  html += ".btn-bin.active { background: #15803d; color: white; box-shadow: 0 4px 14px rgba(21, 128, 61, 0.35); border-color: #14532d; }";
+  html += ".info-box { background: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 14px; font-size: 13px; color: #52525b; text-align: left; }";
+  html += ".info-row { display: flex; justify-content: space-between; margin: 5px 0; }";
+  html += ".info-label { color: #71717a; }";
+  html += ".info-val { font-weight: 600; color: #18181b; }";
+  html += "</style></head><body><div class=\"card\">";
+  html += "<h1>MoveSmart Device</h1><div class=\"subtitle\">Device Operating Mode</div>";
+  html += "<div class=\"current-badge\"><div class=\"current-label\">Current Mode</div><div class=\"current-val\">" + modeTitle + "</div></div>";
+  html += "<div class=\"btn-group\">";
+  html += "<a href=\"/setmode?mode=BUS\" class=\"btn btn-bus " + busActive + "\">🚌 BUS RFID</a>";
+  html += "<a href=\"/setmode?mode=BIN\" class=\"btn btn-bin " + binActive + "\">🗑️ SMART WASTE BIN</a>";
+  html += "</div><div class=\"info-box\">";
+  html += "<div class=\"info-row\"><span class=\"info-label\">Wi-Fi:</span><span class=\"info-val\">" + wifiStatus + "</span></div>";
+  html += "<div class=\"info-row\"><span class=\"info-label\">Device IP:</span><span class=\"info-val\">" + ipStr + "</span></div>";
+  html += "</div></div></body></html>";
+
+  setupServer.send(200, "text/html", html);
+}
+
+// =====================================================
+// MODE SWITCH & RESTART HANDLER (GET /setmode?mode=BUS or BIN)
+// =====================================================
+
+void handleSetModeAndRestart() {
+  if (!setupServer.hasArg("mode")) {
+    setupServer.send(400, "text/plain", "Missing mode parameter. Use /setmode?mode=BUS or /setmode?mode=BIN");
+    return;
+  }
+
+  String targetMode = setupServer.arg("mode");
+  targetMode.toUpperCase();
+
+  if (targetMode != "BUS" && targetMode != "BIN") {
+    setupServer.send(400, "text/plain", "Invalid mode. Valid options are BUS or BIN.");
+    return;
+  }
+
+  // 1. Save to Preferences permanently
+  preferences.putString("mode", targetMode);
+  deviceMode = targetMode;
+
+  String modeName = (targetMode == "BIN") ? "Smart Waste Bin mode selected." : "Bus RFID mode selected.";
+  String badge = (targetMode == "BIN") ? "🗑️ SMART WASTE BIN" : "🚌 BUS RFID";
+
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("      MODE SWITCH REQUEST");
+  Serial.println("=================================");
+  Serial.println("New Mode: " + targetMode);
+  Serial.println("Saved to Preferences. Restarting ESP32...");
+
+  // 2. Send confirmation HTML response before reboot
+  String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<meta http-equiv=\"refresh\" content=\"6;url=/mode\">";
+  html += "<title>Mode Switching</title><style>";
+  html += "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5fa; display: flex; justify-content: center; padding: 40px 20px; }";
+  html += ".card { background: white; max-width: 380px; width: 100%; border-radius: 20px; padding: 30px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,0.08); }";
+  html += "h2 { color: #3b3086; margin-top: 0; font-size: 20px; }";
+  html += ".mode-badge { font-size: 18px; font-weight: bold; color: #18181b; margin: 12px 0; }";
+  html += "p { color: #52525b; font-size: 15px; }";
+  html += ".spinner { width: 36px; height: 36px; border: 4px solid #e0e7ff; border-top: 4px solid #4338ca; border-radius: 50%; margin: 22px auto; animation: spin 1s linear infinite; }";
+  html += "@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }";
+  html += "</style></head><body><div class=\"card\">";
+  html += "<h2>Mode Updated</h2><div class=\"mode-badge\">" + badge + "</div>";
+  html += "<p><b>" + modeName + "</b></p>";
+  html += "<div class=\"spinner\"></div>";
+  html += "<p style=\"font-size:13px; color:#71717a;\">Restarting device cleanly into new mode...</p>";
+  html += "</div></body></html>";
+
+  setupServer.send(200, "text/html", html);
+
+  // 3. Wait briefly so the browser receives the response completely
+  delay(800);
+
+  // 4. Clean restart into selected mode
+  ESP.restart();
+}
+
+// =====================================================
+// SETUP AP WEB PAGE (INCLUDES WIFI & MODE CONFIG)
+// =====================================================
+
+void handleSetupPage() {
+  String currentMode = preferences.getString("mode", "BUS");
+  currentMode.toUpperCase();
+  String isBusChecked = (currentMode != "BIN") ? "checked" : "";
+  String isBinChecked = (currentMode == "BIN") ? "checked" : "";
+
+  String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<title>MoveSmart Device Setup</title><style>";
+  html += "body { font-family: Arial, sans-serif; background: #f7f5ff; margin: 0; padding: 25px; }";
+  html += ".container { max-width: 440px; margin: auto; background: white; padding: 25px; border-radius: 18px; box-shadow: 0 5px 25px rgba(0,0,0,0.1); }";
+  html += "h1 { color: #4f46a5; margin-top: 0; } p { color: #555; font-size: 14px; }";
+  html += "label { display: block; margin-top: 16px; margin-bottom: 6px; font-weight: bold; }";
+  html += "input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #ccc; border-radius: 10px; font-size: 15px; }";
+  html += ".mode-box { background: #f0edff; padding: 15px; border-radius: 12px; margin-top: 18px; }";
+  html += ".mode-option { display: flex; align-items: center; margin: 10px 0; font-size: 15px; cursor: pointer; }";
+  html += ".mode-option input { margin-right: 10px; width: 18px; height: 18px; }";
+  html += "button { width: 100%; margin-top: 22px; padding: 14px; border: none; border-radius: 10px; background: #4f46a5; color: white; font-size: 16px; font-weight: bold; cursor: pointer; }";
+  html += "</style></head><body><div class=\"container\">";
+  html += "<h1>MoveSmart Device</h1><p>Configure Wi-Fi and choose operating mode for this ESP32.</p>";
+  html += "<form action=\"/save\" method=\"POST\">";
+  html += "<label>Wi-Fi Name (SSID)</label><input type=\"text\" name=\"ssid\" value=\"" + savedSSID + "\" placeholder=\"Enter Wi-Fi name\" required>";
+  html += "<label>Wi-Fi Password</label><input type=\"password\" name=\"password\" placeholder=\"Enter Wi-Fi password\">";
+  html += "<div class=\"mode-box\"><label style=\"margin-top:0;\">Operating Mode</label>";
+  html += "<label class=\"mode-option\"><input type=\"radio\" name=\"mode\" value=\"BUS\" " + isBusChecked + "> 🚌 Bus RFID Reader Mode</label>";
+  html += "<label class=\"mode-option\"><input type=\"radio\" name=\"mode\" value=\"BIN\" " + isBinChecked + "> ♻️ Smart Bin Waste Mode</label>";
+  html += "</div><button type=\"submit\">Save & Connect Device</button></form></div></body></html>";
+
+  setupServer.send(200, "text/html", html);
+}
+
+// =====================================================
+// SAVE WIFI & MODE DETAILS FROM AP PORTAL
+// =====================================================
+
+void handleSaveWiFi() {
+  if (!setupServer.hasArg("ssid")) {
+    setupServer.send(400, "text/plain", "Wi-Fi SSID is required.");
+    return;
+  }
+
+  String newSSID = setupServer.arg("ssid");
+  String newPassword = setupServer.hasArg("password") ? setupServer.arg("password") : "";
+  String newMode = setupServer.hasArg("mode") ? setupServer.arg("mode") : "BUS";
+
+  newSSID.trim();
+  newMode.toUpperCase();
+  if (newMode != "BIN") newMode = "BUS";
+
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("       SAVING CONFIGURATION");
+  Serial.println("=================================");
+  Serial.print("SSID: ");
+  Serial.println(newSSID);
+  Serial.print("MODE: ");
+  Serial.println(newMode);
+
+  preferences.putString("ssid", newSSID);
+  preferences.putString("password", newPassword);
+  preferences.putString("mode", newMode);
+
+  savedSSID = newSSID;
+  savedPassword = newPassword;
+  deviceMode = newMode;
+
+  String html = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<title>MoveSmart</title><style>body { font-family: Arial; background: #f7f5ff; text-align: center; padding: 50px; }";
+  html += ".box { max-width: 420px; margin: auto; background: white; padding: 30px; border-radius: 18px; }</style></head>";
+  html += "<body><div class=\"box\"><h1 style=\"color:#4f46a5;\">Settings Saved</h1>";
+  html += "<p>Mode set to: <b>" + (deviceMode == "BIN" ? String("Smart Bin Mode") : String("Bus Mode")) + "</b></p>";
+  html += "<p>Connecting to <b>" + savedSSID + "</b>...</p><p>You can close this page.</p></div></body></html>";
+
+  setupServer.send(200, "text/html", html);
+  delay(2000);
+
+  setupServer.stop();
+  WiFi.softAPdisconnect(true);
+  connectToSavedWiFi();
+}
+
+// =====================================================
+// RESET SETTINGS
+// =====================================================
+
+void handleResetWiFi() {
+  preferences.clear();
+  String html = "<!DOCTYPE html><html><body><h2>Settings Cleared</h2><p>Restart ESP32 to reconfigure.</p></body></html>";
+  setupServer.send(200, "text/html", html);
+}
+
+// =====================================================
+// SEND BUS RFID TAP TO BACKEND (/api/rfid/tap)
+// =====================================================
+
+void sendTapToBackend(String rfidTag) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("ERROR: Wi-Fi not connected.");
+    errorFeedback();
     return;
   }
 
   HTTPClient http;
-  http.begin(serverApiUrl);
+  Serial.println();
+  Serial.println("Sending tap to MoveSmart bus backend...");
+  Serial.print("Backend URL: ");
+  Serial.println(busApiUrl);
+
+  http.begin(busApiUrl);
   http.addHeader("Content-Type", "application/json");
 
-  #if ARDUINOJSON_VERSION_MAJOR >= 7
-    JsonDocument doc;
-  #else
-    StaticJsonDocument<256> doc;
-  #endif
+  String jsonData = "{";
+  jsonData += "\"rfidTag\":\"" + rfidTag + "\",";
+  jsonData += "\"stopCode\":\"" + String(deviceStopCode) + "\"";
+  jsonData += "}";
 
-  doc["rfidTag"] = rfidTagHex;
-  doc["stopCode"] = deviceStopCode;
-  doc["deviceId"] = deviceId;
-  doc["busNumber"] = assignedBusNumber;
+  Serial.print("Request: ");
+  Serial.println(jsonData);
 
-  String payload;
-  serializeJson(doc, payload);
-  int httpCode = http.POST(payload);
+  int httpCode = http.POST(jsonData);
+  Serial.print("HTTP Status: ");
+  Serial.println(httpCode);
 
   if (httpCode > 0) {
     String response = http.getString();
-    
-    #if ARDUINOJSON_VERSION_MAJOR >= 7
-      JsonDocument respDoc;
-    #else
-      StaticJsonDocument<512> respDoc;
-    #endif
+    Serial.println("Backend response:");
+    Serial.println(response);
 
-    DeserializationError err = deserializeJson(respDoc, response);
-    if (!err) {
-      bool allowed = respDoc["allowed"] | false;
-      String action = respDoc["action"] | "";
-      String message = respDoc["message"] | "";
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, response);
 
-      if (allowed) {
-        if (action == "TAP_IN") {
-          Serial.println("\nBackend response: TAP-IN SUCCESSFUL ✅");
-          const char* stopName = respDoc["stop"]["name"] | deviceStopCode.c_str();
-          const char* cardType = respDoc["card"]["cardType"] | "Regular";
-          const char* balance = respDoc["card"]["balance"] | "0.00";
+    if (error) {
+      Serial.print("JSON parsing failed: ");
+      Serial.println(error.c_str());
+      errorFeedback();
+      http.end();
+      return;
+    }
 
-          Serial.print("Boarded At: ");
-          Serial.println(stopName);
-          Serial.print("Pass Category: ");
-          Serial.println(cardType);
-          Serial.print("Card Balance: ₹");
-          Serial.println(balance);
-          
-          digitalWrite(GREEN_LED, HIGH);
-          digitalWrite(BUZZER, HIGH); delay(150);
-          digitalWrite(BUZZER, LOW);  delay(100);
-          digitalWrite(GREEN_LED, LOW);
-        }
-        else if (action == "TAP_OUT") {
-          Serial.println("\nBackend response: TAP-OUT SUCCESSFUL ✅");
-          const char* fromStop = respDoc["journey"]["from"] | "Origin";
-          const char* toStop = respDoc["journey"]["to"] | deviceStopCode.c_str();
-          double distanceKm = respDoc["journey"]["distanceKm"] | 0.0;
-          double fare = respDoc["journey"]["fare"] | 0.0;
-          const char* balance = respDoc["card"]["balance"] | "0.00";
+    bool allowed = doc["allowed"] | false;
+    String action = doc["action"] | "";
+    String message = doc["message"] | "";
 
-          Serial.print("Journey: ");
-          Serial.print(fromStop);
-          Serial.print(" ➔ ");
-          Serial.println(toStop);
-          Serial.print("Distance: ");
-          Serial.print(distanceKm, 1);
-          Serial.println(" km");
-          Serial.print("Fare: ₹");
-          Serial.println(fare, 2);
-          Serial.print("Remaining Balance: ₹");
-          Serial.println(balance);
+    Serial.println("--------- RESULT ---------");
+    Serial.print("Allowed: ");
+    Serial.println(allowed ? "YES" : "NO");
+    Serial.print("Action: ");
+    Serial.println(action);
+    Serial.print("Message: ");
+    Serial.println(message);
 
-          doubleBeep();
-        }
-        else if (action == "IGNORE") {
-          Serial.println("\nBackend response: DUPLICATE TAP IGNORED ⚠️");
-          Serial.println(message);
-          digitalWrite(GREEN_LED, HIGH);
-          digitalWrite(RED_LED, HIGH);
-          digitalWrite(BUZZER, HIGH); delay(60);
-          digitalWrite(BUZZER, LOW);
-          digitalWrite(GREEN_LED, LOW);
-          digitalWrite(RED_LED, LOW);
-        }
-      } else {
-        Serial.print("\nBackend response: TAP REJECTED ❌ (");
-        Serial.print(respDoc["reason"] | "Rejected");
-        Serial.println(")");
-        Serial.println(message);
-        triggerRejectionFeedback();
+    if (allowed) {
+      Serial.println("RFID TAP ACCEPTED");
+      if (action == "TAP_IN") {
+        Serial.println("Passenger TAP-IN successful.");
+      } else if (action == "TAP_OUT") {
+        Serial.println("Passenger TAP-OUT successful.");
       }
+      successFeedback();
+    } else if (action == "IGNORE") {
+      Serial.println("Duplicate tap ignored.");
     } else {
-      Serial.println("\nBackend response: JSON Parse Error ❌");
-      triggerRejectionFeedback();
+      Serial.println("RFID TAP REJECTED.");
+      errorFeedback();
     }
   } else {
-    Serial.print("\nBackend response: SERVER ERROR (HTTP ");
-    Serial.print(httpCode);
-    Serial.println(") ❌");
-    triggerRejectionFeedback();
+    Serial.println("ERROR: Backend unavailable.");
+    Serial.print("HTTP error: ");
+    Serial.println(http.errorToString(httpCode));
+    errorFeedback();
   }
 
   http.end();
 }
 
-// ============================================================================
-// EMBEDDED PROVISIONING WEB SERVER & REST ENDPOINTS
-// ============================================================================
-void setupWebServerRoutes() {
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/configure", HTTP_POST, handleConfigure);
-  server.on("/status", HTTP_GET, handleStatus);
-  server.on("/reset", HTTP_POST, handleResetNVS);
+// =====================================================
+// SEND SMART BIN DEPOSIT TO BACKEND (/api/bin/deposit)
+// =====================================================
 
-  // Enable CORS Options for all routes
-  server.on("/configure", HTTP_OPTIONS, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-    server.send(204);
-  });
-}
-
-void handleRoot() {
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>";
-  html += "<title>MoveSmart RFID Setup</title>";
-  html += "<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#0f172a;color:#f8fafc;padding:20px;display:flex;justify-content:center;margin:0}";
-  html += ".card{background:#1e293b;border:1.5px solid #334155;border-radius:18px;max-width:440px;width:100%;padding:24px;box-shadow:0 12px 32px rgba(0,0,0,0.4)}";
-  html += "h2{margin:0 0 6px 0;color:#38bdf8;font-size:22px}p{color:#94a3b8;font-size:13px;margin:0 0 20px 0}";
-  html += "label{display:block;font-size:12px;font-weight:700;color:#cbd5e1;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}";
-  html += "input,select{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:10px;border:1.5px solid #475569;background:#0f172a;color:#ffffff;font-size:14px;margin-bottom:16px;outline:none}";
-  html += "input:focus{border-color:#38bdf8}";
-  html += "button{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#0284c7,#0369a1);color:#ffffff;font-weight:800;font-size:15px;cursor:pointer;margin-top:6px}";
-  html += ".tag{display:inline-block;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#0369a1;color:#ffffff;margin-bottom:12px}";
-  html += "</style></head><body>";
-  html += "<div class='card'>";
-  html += "<span class='tag'>DEVICE: " + deviceId + "</span>";
-  html += "<h2>MoveSmart RFID Setup</h2>";
-  html += "<p>Configure Wi-Fi and terminal settings for this RFID reader.</p>";
-  html += "<form method='POST' action='/configure'>";
-  html += "<label>Wi-Fi Network Name (SSID)</label><input type='text' name='ssid' value='" + wifiSsid + "' placeholder='e.g. Bus_Hotspot' required>";
-  html += "<label>Wi-Fi Password</label><input type='password' name='password' placeholder='Enter Wi-Fi password' required>";
-  html += "<label>MoveSmart Backend Tap URL</label><input type='text' name='serverApiUrl' value='" + serverApiUrl + "' required>";
-  html += "<label>Terminal Stop Code</label>";
-  html += "<select name='stopCode'>";
-  html += "<option value='STOP_VYTTILA'" + String(deviceStopCode == "STOP_VYTTILA" ? " selected" : "") + ">Vyttila Mobility Hub (STOP_VYTTILA)</option>";
-  html += "<option value='STOP_KALOOR'" + String(deviceStopCode == "STOP_KALOOR" ? " selected" : "") + ">Kaloor Bus Terminal (STOP_KALOOR)</option>";
-  html += "<option value='STOP_EDAPPALLY'" + String(deviceStopCode == "STOP_EDAPPALLY" ? " selected" : "") + ">Edappally Junction (STOP_EDAPPALLY)</option>";
-  html += "<option value='STOP_ALUVA'" + String(deviceStopCode == "STOP_ALUVA" ? " selected" : "") + ">Aluva Bus & Metro Hub (STOP_ALUVA)</option>";
-  html += "<option value='STOP_ANGAMALY'" + String(deviceStopCode == "STOP_ANGAMALY" ? " selected" : "") + ">Angamaly Terminal (STOP_ANGAMALY)</option>";
-  html += "<option value='STOP_KAKKANAD'" + String(deviceStopCode == "STOP_KAKKANAD" ? " selected" : "") + ">Kakkanad InfoPark (STOP_KAKKANAD)</option>";
-  html += "</select>";
-  html += "<label>Bus Number</label><input type='text' name='busNumber' value='" + assignedBusNumber + "'>";
-  html += "<button type='submit'>Save & Connect Device</button>";
-  html += "</form></div></body></html>";
-
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/html", html);
-}
-
-void handleConfigure() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Content-Type", "application/json");
-
-  String newSsid = "";
-  String newPass = "";
-  String newServer = serverApiUrl;
-  String newStop = deviceStopCode;
-  String newBus = assignedBusNumber;
-  String newDrv = assignedDriverId;
-
-  if (server.hasArg("plain")) {
-    String body = server.arg("plain");
-    #if ARDUINOJSON_VERSION_MAJOR >= 7
-      JsonDocument doc;
-    #else
-      StaticJsonDocument<400> doc;
-    #endif
-    DeserializationError err = deserializeJson(doc, body);
-    if (!err) {
-      newSsid = doc["ssid"] | "";
-      newPass = doc["password"] | "";
-      newServer = doc["serverApiUrl"] | serverApiUrl;
-      newStop = doc["stopCode"] | deviceStopCode;
-      newBus = doc["busNumber"] | assignedBusNumber;
-      newDrv = doc["driverId"] | assignedDriverId;
-    }
-  } else {
-    newSsid = server.arg("ssid");
-    newPass = server.arg("password");
-    if (server.hasArg("serverApiUrl")) newServer = server.arg("serverApiUrl");
-    if (server.hasArg("stopCode")) newStop = server.arg("stopCode");
-    if (server.hasArg("busNumber")) newBus = server.arg("busNumber");
-    if (server.hasArg("driverId")) newDrv = server.arg("driverId");
-  }
-
-  if (newSsid.length() == 0) {
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID is required\"}");
+void sendBinDepositToBackend(String rfidTag, String depositId) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n--------------------------------");
+    Serial.println("BACKEND CONNECTION FAILED");
+    Serial.println("Waste detected, but reward could not be confirmed (No Wi-Fi).");
+    Serial.println("--------------------------------");
+    errorFeedback();
     return;
   }
 
-  saveConfiguration(newSsid, newPass, newServer, newStop, newBus, newDrv);
-  server.send(200, "application/json", "{\"success\":true,\"message\":\"Configuration saved to ESP32. Connecting to Wi-Fi...\"}");
+  HTTPClient http;
+  http.begin(binApiUrl);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(10000);
 
-  delay(1000);
-  ESP.restart();
+  String jsonData = "{";
+  jsonData += "\"rfidTag\":\"" + rfidTag + "\",";
+  jsonData += "\"binId\":\"" + String(binId) + "\",";
+  jsonData += "\"objectDetected\":true,";
+  jsonData += "\"depositId\":\"" + depositId + "\"";
+  jsonData += "}";
+
+  Serial.println("\n--------------------------------");
+  Serial.println("SMART BIN DEPOSIT");
+  Serial.println("--------------------------------");
+  Serial.println("RFID: " + rfidTag);
+  Serial.println("Bin: " + String(binId));
+  Serial.println("Object detected: YES");
+  Serial.println("Deposit ID: " + depositId);
+  Serial.println("Sending reward request...");
+
+  int httpCode = http.POST(jsonData);
+  String response = http.getString();
+
+  Serial.print("HTTP Status: ");
+  Serial.println(httpCode);
+  Serial.println("Backend response:");
+  Serial.println(response);
+  Serial.println("--------------------------------");
+
+  if (httpCode == 200) {
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, response);
+
+    if (!error && doc["success"] == true) {
+      if (doc["duplicate"] == true) {
+        Serial.println("\nDEPOSIT ALREADY PROCESSED");
+        Serial.println("No additional reward credited.");
+      } else {
+        Serial.println("\n₹10 REWARD CREDITED");
+        Serial.println("Smart Bin deposit completed.");
+        if (doc.containsKey("balance")) {
+          float newBal = doc["balance"].as<float>();
+          Serial.printf("Updated Card Balance: ₹%.2f\n", newBal);
+        }
+      }
+      successFeedback();
+    } else {
+      Serial.println("\nREWARD NOT CREDITED");
+      Serial.println("Backend error: " + response);
+      errorFeedback();
+    }
+  } else if (httpCode > 0) {
+    Serial.println("\nREWARD NOT CREDITED");
+    Serial.println("Backend error: " + response);
+    errorFeedback();
+  } else {
+    Serial.println("\nBACKEND CONNECTION FAILED");
+    Serial.println("Waste detected, but reward could not be confirmed.");
+    Serial.println("Error: " + http.errorToString(httpCode));
+    errorFeedback();
+  }
+
+  http.end();
 }
 
-void handleStatus() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Content-Type", "application/json");
+// =====================================================
+// SUCCESS FEEDBACK (LEDS + BUZZER)
+// =====================================================
 
-  #if ARDUINOJSON_VERSION_MAJOR >= 7
-    JsonDocument doc;
-  #else
-    StaticJsonDocument<300> doc;
-  #endif
-
-  doc["deviceId"] = deviceId;
-  doc["status"] = isConnectedToWifi ? "Connected" : (isProvisioningMode ? "Provisioning" : "Connecting");
-  doc["ipAddress"] = isConnectedToWifi ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
-  doc["stopCode"] = deviceStopCode;
-  doc["busNumber"] = assignedBusNumber;
-  doc["ssid"] = wifiSsid;
-  doc["readerActive"] = true;
-
-  String res;
-  serializeJson(doc, res);
-  server.send(200, "application/json", res);
-}
-
-void handleResetNVS() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  preferences.begin("movesmart", false);
-  preferences.clear();
-  preferences.end();
-  server.send(200, "application/json", "{\"success\":true,\"message\":\"NVS reset complete. Restarting in Provisioning Mode...\"}");
-  delay(1000);
-  ESP.restart();
-}
-
-// ============================================================================
-// AUDIO-VISUAL FEEDBACK HELPERS
-// ============================================================================
-void successBeep() {
+void successFeedback() {
+  digitalWrite(RED_LED, LOW);
   digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(BUZZER, HIGH); delay(100);
-  digitalWrite(BUZZER, LOW);  delay(80);
-  digitalWrite(BUZZER, HIGH); delay(100);
-  digitalWrite(BUZZER, LOW);
+  tone(BUZZER, 2000, 150);
+  delay(300);
   digitalWrite(GREEN_LED, LOW);
 }
 
-void doubleBeep() {
-  digitalWrite(GREEN_LED, HIGH);
-  digitalWrite(BUZZER, HIGH); delay(80);
-  digitalWrite(BUZZER, LOW);  delay(80);
-  digitalWrite(BUZZER, HIGH); delay(80);
-  digitalWrite(BUZZER, LOW);
-  digitalWrite(GREEN_LED, LOW);
-}
+// =====================================================
+// ERROR FEEDBACK (LEDS + BUZZER)
+// =====================================================
 
-void triggerRejectionFeedback() {
+void errorFeedback() {
+  digitalWrite(GREEN_LED, LOW);
   digitalWrite(RED_LED, HIGH);
-  digitalWrite(BUZZER, HIGH); delay(400);
-  digitalWrite(BUZZER, LOW);
+  tone(BUZZER, 500, 400);
+  delay(500);
   digitalWrite(RED_LED, LOW);
 }
