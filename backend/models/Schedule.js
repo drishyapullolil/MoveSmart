@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { inferShiftFromTime } = require("../utils/shiftConflictHelper");
 
 const scheduleSchema = new mongoose.Schema(
   {
@@ -13,6 +14,19 @@ const scheduleSchema = new mongoose.Schema(
     start_time: {
       type: String,
       required: true, // e.g. "08:00 AM", "10:30 AM", "14:00"
+    },
+    shift: {
+      type: String,
+      enum: ["Morning", "Evening", "Night"],
+      default: "Morning",
+    },
+    shiftStartTime: {
+      type: String,
+      default: "",
+    },
+    shiftEndTime: {
+      type: String,
+      default: "",
     },
     bus_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -40,5 +54,12 @@ const scheduleSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Auto-infer shift from start_time if missing or default
+scheduleSchema.pre("save", function () {
+  if (this.start_time && (!this.shift || this.isModified("start_time"))) {
+    this.shift = inferShiftFromTime(this.start_time);
+  }
+});
 
 module.exports = mongoose.model("Schedule", scheduleSchema);

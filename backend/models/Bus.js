@@ -22,12 +22,12 @@ const busSchema = new mongoose.Schema(
     },
     fromLocation: {
       type: String,
-      required: true,
+      default: "Depot",
       index: true,
     },
     toLocation: {
       type: String,
-      required: true,
+      default: "Depot",
       index: true,
     },
     routeName: {
@@ -40,11 +40,11 @@ const busSchema = new mongoose.Schema(
     },
     departureTime: {
       type: String,
-      required: true,
+      default: "06:00 AM",
     },
     arrivalTime: {
       type: String,
-      required: true,
+      default: "10:00 PM",
     },
     duration: {
       type: String,
@@ -60,7 +60,7 @@ const busSchema = new mongoose.Schema(
     },
     price: {
       type: Number,
-      required: true,
+      default: 100,
     },
     rating: {
       type: Number,
@@ -106,6 +106,89 @@ const busSchema = new mongoose.Schema(
     is_active: {
       type: Boolean,
       default: true,
+    },
+    shifts: {
+      morning: {
+        driverId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        driverName: {
+          type: String,
+          default: "Not Assigned",
+        },
+        driverEmail: {
+          type: String,
+          default: "",
+        },
+        driverPhone: {
+          type: String,
+          default: "",
+        },
+        startTime: {
+          type: String,
+          default: "06:00 AM",
+        },
+        endTime: {
+          type: String,
+          default: "02:00 PM",
+        },
+      },
+      evening: {
+        driverId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        driverName: {
+          type: String,
+          default: "Not Assigned",
+        },
+        driverEmail: {
+          type: String,
+          default: "",
+        },
+        driverPhone: {
+          type: String,
+          default: "",
+        },
+        startTime: {
+          type: String,
+          default: "02:00 PM",
+        },
+        endTime: {
+          type: String,
+          default: "10:00 PM",
+        },
+      },
+      night: {
+        driverId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        driverName: {
+          type: String,
+          default: "Not Assigned",
+        },
+        driverEmail: {
+          type: String,
+          default: "",
+        },
+        driverPhone: {
+          type: String,
+          default: "",
+        },
+        startTime: {
+          type: String,
+          default: "10:00 PM",
+        },
+        endTime: {
+          type: String,
+          default: "06:00 AM",
+        },
+      },
     },
   },
   { timestamps: true, strict: false }

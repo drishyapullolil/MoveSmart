@@ -62,6 +62,9 @@ function App() {
         <Route path="/admin" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="overview" /></ProtectedRoute>} />
         <Route path="/admin/bus-routes" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
         <Route path="/admin/add-bus-route" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busRoutes" /></ProtectedRoute>} />
+        <Route path="/admin/buses" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busFleet" /></ProtectedRoute>} />
+        <Route path="/admin/bus-fleet" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busFleet" /></ProtectedRoute>} />
+        <Route path="/admin/shift-roster" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="shiftRoster" /></ProtectedRoute>} />
         <Route path="/admin/bus-gallery" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="busGallery" /></ProtectedRoute>} />
         <Route path="/admin/lost-found" element={<ProtectedRoute allowedRoles={["admin"]}><Admin defaultTab="lostFound" /></ProtectedRoute>} />
       </Routes>

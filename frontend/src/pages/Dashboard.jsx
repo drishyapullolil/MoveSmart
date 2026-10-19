@@ -494,10 +494,10 @@ export default function Dashboard() {
       <main
         style={{
           flex: 1,
-          maxWidth: "1380px",
+          maxWidth: "1280px",
           width: "100%",
           margin: "0 auto",
-          padding: "32px 24px 64px",
+          padding: "14px 16px 36px",
           boxSizing: "border-box",
           position: "relative",
           zIndex: 1
@@ -509,11 +509,11 @@ export default function Dashboard() {
         <section
           style={{
             background: "linear-gradient(135deg, #1e1b4b 0%, #0f172a 40%, #064e3b 100%)",
-            borderRadius: "24px",
-            padding: "36px 40px",
+            borderRadius: "16px",
+            padding: "18px 22px",
             color: "#ffffff",
-            marginBottom: "36px",
-            boxShadow: "0 20px 40px -15px rgba(30, 27, 75, 0.4), 0 0 0 1px rgba(168, 85, 247, 0.2)",
+            marginBottom: "18px",
+            boxShadow: "0 8px 24px -8px rgba(30, 27, 75, 0.35), 0 0 0 1px rgba(168, 85, 247, 0.2)",
             position: "relative",
             overflow: "hidden"
           }}
@@ -701,11 +701,11 @@ export default function Dashboard() {
 
               <h1
                 style={{
-                  fontSize: "32px",
+                  fontSize: "22px",
                   fontWeight: "900",
-                  margin: "0 0 8px 0",
+                  margin: "0 0 6px 0",
                   color: "#ffffff",
-                  letterSpacing: "-0.5px",
+                  letterSpacing: "-0.4px",
                   lineHeight: "1.2"
                 }}
               >
@@ -934,11 +934,11 @@ export default function Dashboard() {
         <section
           style={{
             background: "linear-gradient(135deg, #ffffff 0%, #fbfaff 100%)",
-            borderRadius: "22px",
-            padding: "32px",
-            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            borderRadius: "16px",
+            padding: "20px 22px",
+            boxShadow: "0 4px 16px -2px rgba(168, 85, 247, 0.05), 0 2px 8px rgba(16, 185, 129, 0.03)",
             border: "1.5px solid #ede9fe",
-            marginBottom: "36px",
+            marginBottom: "22px",
             position: "relative"
           }}
         >
@@ -1119,11 +1119,11 @@ export default function Dashboard() {
         <section
           style={{
             background: "#ffffff",
-            borderRadius: "22px",
-            padding: "32px",
-            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            borderRadius: "16px",
+            padding: "20px 22px",
+            boxShadow: "0 4px 16px -2px rgba(168, 85, 247, 0.05), 0 2px 8px rgba(16, 185, 129, 0.03)",
             border: "1.5px solid #ede9fe",
-            marginBottom: "36px",
+            marginBottom: "22px",
             position: "relative"
           }}
         >
@@ -1923,11 +1923,11 @@ export default function Dashboard() {
         <section
           style={{
             background: "#ffffff",
-            borderRadius: "22px",
-            padding: "32px",
-            boxShadow: "0 10px 30px -5px rgba(168, 85, 247, 0.06), 0 4px 12px rgba(16, 185, 129, 0.04)",
+            borderRadius: "16px",
+            padding: "20px 22px",
+            boxShadow: "0 4px 16px -2px rgba(168, 85, 247, 0.05), 0 2px 8px rgba(16, 185, 129, 0.03)",
             border: "1.5px solid #ede9fe",
-            marginBottom: "38px"
+            marginBottom: "24px"
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "18px", marginBottom: "24px" }}>

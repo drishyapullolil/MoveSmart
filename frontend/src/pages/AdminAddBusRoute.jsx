@@ -48,69 +48,87 @@ import {
   Sparkles,
 } from "lucide-react";
 
-// Major Kottayam & Neighbouring District Transit Hubs Catalog
-const KERALA_TRANSIT_STOPS = [
-  // Kottayam Core
-  "Kottayam",
-  "Kanjirappally",
-  "Erumely",
-  "Pala",
-  "Erattupetta",
-  "Ponkunnam",
-  "Podimattom",
-  "Manarcadu",
-  "Ettumanoor",
-  "Changanassery",
-  "Vaikom",
-  "Mundakayam",
-  "Cherpunkal",
-  "Bharananganam",
-  "Vagamon",
-  "Kumarakom",
-  "Kuravilangad",
-  "Kaduthuruthy",
-  "Uzhavoor",
-  "Pampady",
-  "Poonjar",
-  "Teekoy",
-  "Kidangoor",
+import { INDIA_ALL_PLACES } from "../data/indiaPlaces";
 
-  // Pathanamthitta (Neighbouring)
-  "Sabarimala",
-  "Nilakkal",
-  "Pampa",
-  "Ranni",
-  "Konni",
-  "Pathanamthitta",
-  "Thiruvalla",
-  "Adoor",
-
-  // Idukki (Neighbouring)
-  "Kuttikkanam",
-  "Peermade",
-  "Kumily",
-  "Thodupuzha",
-  "Adimali",
-  "Kattappana",
-
-  // Alappuzha (Neighbouring)
-  "Alappuzha",
-  "Cherthala",
-  "Chengannur",
-  "Mavelikkara",
-  "Kayamkulam",
-
-  // Ernakulam (Neighbouring)
-  "Kochi",
-  "Aluva",
-  "Angamaly",
-  "Muvattupuzha",
-  "Piravom",
-  "Perumbavoor",
-];
+// All-India Transit Hubs, Cities & Sub-Stations Catalog
+const INDIA_TRANSIT_STOPS = INDIA_ALL_PLACES.map((p) => p.name);
 
 // Pre-configured Intercity Route Presets for Quick Auto-Fill
 const defaultRoutePresets = [
+  // Metro & Major Intercity Corridors
+  {
+    id: "preset-pan-1",
+    name: "Bengaluru ➔ Mysuru Highway Express",
+    fromLocation: "Bengaluru (Majestic / Kempegowda Bus Station)",
+    toLocation: "Mysuru (Mysore)",
+    price: 320,
+    base_start_time: "07:00 AM",
+    stopsList: [
+      { name: "Bengaluru (Majestic / Kempegowda Bus Station)", travel_time_from_prev: 0 },
+      { name: "Bengaluru (Satellite Bus Stand / Mysuru Rd)", travel_time_from_prev: 25 },
+      { name: "Mandya", travel_time_from_prev: 75 },
+      { name: "Mysuru (Mysore)", travel_time_from_prev: 50 },
+    ],
+  },
+  {
+    id: "preset-pan-2",
+    name: "Mumbai ➔ Pune Deccan Superfast",
+    fromLocation: "Mumbai (Dadar)",
+    toLocation: "Pune (Swargate)",
+    price: 450,
+    base_start_time: "06:30 AM",
+    stopsList: [
+      { name: "Mumbai (Dadar)", travel_time_from_prev: 0 },
+      { name: "Navi Mumbai (Vashi)", travel_time_from_prev: 35 },
+      { name: "Lonavala", travel_time_from_prev: 65 },
+      { name: "Pune (Shivajinagar)", travel_time_from_prev: 55 },
+      { name: "Pune (Swargate)", travel_time_from_prev: 20 },
+    ],
+  },
+  {
+    id: "preset-pan-3",
+    name: "Delhi ➔ Agra Taj Expressway Direct",
+    fromLocation: "Delhi (Sarai Kale Khan ISBT)",
+    toLocation: "Agra (ISBT Transport Nagar / Idgah)",
+    price: 520,
+    base_start_time: "06:00 AM",
+    stopsList: [
+      { name: "Delhi (Sarai Kale Khan ISBT)", travel_time_from_prev: 0 },
+      { name: "Noida", travel_time_from_prev: 25 },
+      { name: "Greater Noida", travel_time_from_prev: 30 },
+      { name: "Mathura", travel_time_from_prev: 80 },
+      { name: "Agra (ISBT Transport Nagar / Idgah)", travel_time_from_prev: 45 },
+    ],
+  },
+  {
+    id: "preset-pan-4",
+    name: "Chennai ➔ Bengaluru Interstate Express",
+    fromLocation: "Chennai (Koyambedu CMBT)",
+    toLocation: "Bengaluru (Majestic / Kempegowda Bus Station)",
+    price: 650,
+    base_start_time: "08:00 AM",
+    stopsList: [
+      { name: "Chennai (Koyambedu CMBT)", travel_time_from_prev: 0 },
+      { name: "Vellore", travel_time_from_prev: 110 },
+      { name: "Hosur", travel_time_from_prev: 120 },
+      { name: "Bengaluru (Electronic City)", travel_time_from_prev: 40 },
+      { name: "Bengaluru (Majestic / Kempegowda Bus Station)", travel_time_from_prev: 45 },
+    ],
+  },
+  {
+    id: "preset-pan-5",
+    name: "Hyderabad ➔ Vijayawada Highway Shuttle",
+    fromLocation: "Hyderabad (MGBS - Mahatma Gandhi Bus Station)",
+    toLocation: "Vijayawada (PNBS - Pandit Nehru Bus Station)",
+    price: 580,
+    base_start_time: "06:30 AM",
+    stopsList: [
+      { name: "Hyderabad (MGBS - Mahatma Gandhi Bus Station)", travel_time_from_prev: 0 },
+      { name: "Suryapet", travel_time_from_prev: 110 },
+      { name: "Vijayawada (PNBS - Pandit Nehru Bus Station)", travel_time_from_prev: 120 },
+    ],
+  },
+  // Kerala Regional Corridors
   {
     id: "preset-1",
     name: "Kottayam ➔ Kanjirappally ➔ Erumely Pilgrim Express",
@@ -130,7 +148,7 @@ const defaultRoutePresets = [
     id: "preset-2",
     name: "Kottayam ➔ Erumely ➔ Sabarimala / Pampa Direct",
     fromLocation: "Kottayam",
-    toLocation: "Pampa",
+    toLocation: "Pampa / Sabarimala",
     price: 250,
     base_start_time: "05:00 AM",
     stopsList: [
@@ -138,7 +156,7 @@ const defaultRoutePresets = [
       { name: "Kanjirappally", travel_time_from_prev: 50 },
       { name: "Erumely", travel_time_from_prev: 25 },
       { name: "Nilakkal", travel_time_from_prev: 60 },
-      { name: "Pampa", travel_time_from_prev: 20 },
+      { name: "Pampa / Sabarimala", travel_time_from_prev: 20 },
     ],
   },
   {
@@ -186,25 +204,50 @@ const defaultRoutePresets = [
     id: "preset-6",
     name: "Kottayam ➔ Vaikom ➔ Kochi Express",
     fromLocation: "Kottayam",
-    toLocation: "Kochi",
+    toLocation: "Kochi (Vyttila Mobility Hub)",
     price: 160,
     base_start_time: "07:00 AM",
     stopsList: [
       { name: "Kottayam", travel_time_from_prev: 0 },
       { name: "Ettumanoor", travel_time_from_prev: 20 },
       { name: "Vaikom", travel_time_from_prev: 40 },
-      { name: "Kochi", travel_time_from_prev: 60 },
+      { name: "Kochi (Vyttila Mobility Hub)", travel_time_from_prev: 60 },
     ],
   },
 ];
 
 const AVAILABLE_AMENITIES = ["Wi-Fi", "Charging Port", "Live Tracking", "AC", "Reclining Seats", "Water Bottle"];
 
-export default function AdminAddBusRoute({ isEmbedded = false }) {
+const isGenericDriverName = (n) => {
+  if (!n) return true;
+  const s = String(n).toLowerCase().trim();
+  return (
+    [
+      "unassigned", "not assigned", "driver assigned", "assigned driver",
+      "driver user", "driver", "n/a", "none", "no driver", "undefined", "null",
+      "replacement driver required", "pending", "select driver", "-", "--"
+    ].includes(s) ||
+    s.includes("unassigned") ||
+    s.includes("not assigned") ||
+    s.includes("replacement driver") ||
+    s.includes("driver user") ||
+    s === "driver" ||
+    s === "-" ||
+    s === "--"
+  );
+};
+
+export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, initialTab = "routes", onBusCountUpdate }) {
   const navigate = useNavigate();
   const [user] = useState(() => getStoredUser());
 
-  const [activeTab, setActiveTab] = useState("routes"); // "routes" | "schedules" | "buses"
+  const [activeTab, setActiveTab] = useState(initialTab || "routes"); // "routes" | "schedules" | "buses"
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Feedback messages & Loading state
   const [successMsg, setSuccessMsg] = useState("");
@@ -312,68 +355,121 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const [scheduleRouteId, setScheduleRouteId] = useState("");
   const [scheduleStartTime, setScheduleStartTime] = useState("08:30 AM");
   const [scheduleBusId, setScheduleBusId] = useState("");
-  const [scheduleDriverId, setScheduleDriverId] = useState("");
   const [scheduleDelayBuffer, setScheduleDelayBuffer] = useState(0);
+  const [editingScheduleDriver, setEditingScheduleDriver] = useState(null); // Preserves existing historical driver on edit
+
+  const handleNavigateToShiftRoster = () => {
+    if (typeof onNavigateTab === "function") {
+      onNavigateTab("shiftRoster");
+    } else {
+      navigate("/admin/shift-roster");
+    }
+  };
+
+  const getEstimatedShift = (timeStr) => {
+    if (!timeStr) return "Morning Shift (06:00 – 14:00)";
+    const clean = String(timeStr).trim().toUpperCase();
+    const match = clean.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return "Morning Shift (06:00 – 14:00)";
+    let h = parseInt(match[1], 10);
+    if (clean.includes("PM") && h < 12) h += 12;
+    if (clean.includes("AM") && h === 12) h = 0;
+    if (h >= 6 && h < 14) return "Morning Shift (06:00 – 14:00)";
+    if (h >= 14 && h < 22) return "Evening Shift (14:00 – 22:00)";
+    return "Night Shift (22:00 – 06:00 Next Day)";
+  };
 
   // ---------------- SCHEDULE BUS & DRIVER CONFLICT FILTERING ----------------
+  // 1 BUS TO 1 ROUTE RULE:
+  // - A bus assigned to Route A in any schedule belongs to Route A and will NOT appear for any other route.
+  // - For the same route, the bus can be scheduled at any time (unless there's an exact time clash with another schedule).
+  // - Unassigned buses appear for any route.
   const availableBusesForSchedule = useMemo(() => {
-    if (!scheduleStartTime) return buses;
-    const normStart = scheduleStartTime.trim().toLowerCase().replace(/^0/, "");
-
-    // Find all bus IDs already assigned to a schedule at this exact departure time
-    const busyBusIds = new Set(
-      schedules
-        .filter((s) => (s.start_time || "").trim().toLowerCase().replace(/^0/, "") === normStart)
-        .map((s) => {
-          if (typeof s.bus_id === "object" && s.bus_id?._id) return String(s.bus_id._id);
-          return String(s.bus_id || s.busNumber || "");
-        })
-        .filter(Boolean)
-    );
-
-    return buses.filter((b) => {
-      const bId = String(b._id || b.id || "");
-      const bNum = String(b.busNumber || "");
-      return !busyBusIds.has(bId) && !busyBusIds.has(bNum);
-    });
-  }, [buses, schedules, scheduleStartTime]);
-
-  const availableDriversForSchedule = useMemo(() => {
+    const currentRouteId = scheduleRouteId ? String(scheduleRouteId) : "";
     const normStart = scheduleStartTime ? scheduleStartTime.trim().toLowerCase().replace(/^0/, "") : "";
 
-    // Find all driver IDs / names assigned to a schedule at this exact departure time
-    const busyDriverIds = new Set(
-      schedules
-        .filter((s) => normStart && (s.start_time || "").trim().toLowerCase().replace(/^0/, "") === normStart)
-        .map((s) => {
-          if (typeof s.driver_id === "object" && s.driver_id?._id) return String(s.driver_id._id);
-          return String(s.driver_id || s.driverName || "");
-        })
-        .filter(Boolean)
-    );
+    // Track buses assigned to different routes vs buses busy at same time
+    const busesAssignedToOtherRoutes = new Set();
+    const busyAtSameTimeBusIds = new Set();
 
-    // Find all driver IDs / names / emails with APPROVED LEAVE
-    const onLeaveIdentifiers = new Set();
-    driverLeaves.forEach((lv) => {
-      const isApproved = lv.status?.toLowerCase() === "approved" || lv.leaveStatus?.toLowerCase() === "approved";
-      if (isApproved) {
-        if (lv.driverId) onLeaveIdentifiers.add(String(lv.driverId));
-        if (lv.driverName) onLeaveIdentifiers.add(String(lv.driverName).toLowerCase().trim());
-        if (lv.driverEmail) onLeaveIdentifiers.add(String(lv.driverEmail).toLowerCase().trim());
+    schedules.forEach((s) => {
+      // Ignore current schedule if editing
+      if (scheduleEditingId && String(s._id || s.id) === String(scheduleEditingId)) {
+        return;
+      }
+
+      const sRouteId = typeof s.route_id === "object" && s.route_id?._id
+        ? String(s.route_id._id)
+        : String(s.route_id || "");
+
+      const sBusId = typeof s.bus_id === "object" && s.bus_id?._id
+        ? String(s.bus_id._id)
+        : String(s.bus_id || "");
+
+      const sBusNum = String(s.busNumber || "").replace(/[\s\-]+/g, "").toLowerCase();
+
+      // If assigned to a DIFFERENT route, lock out of current route (1 Bus to 1 Route rule)
+      if (currentRouteId && sRouteId && sRouteId !== currentRouteId) {
+        if (sBusId) busesAssignedToOtherRoutes.add(sBusId);
+        if (sBusNum) busesAssignedToOtherRoutes.add(sBusNum);
+      }
+
+      // If scheduled at the exact same start time on any schedule
+      const sStart = (s.start_time || "").trim().toLowerCase().replace(/^0/, "");
+      if (normStart && sStart === normStart) {
+        if (sBusId) busyAtSameTimeBusIds.add(sBusId);
+        if (sBusNum) busyAtSameTimeBusIds.add(sBusNum);
       }
     });
 
-    return driversList.filter((d) => {
-      const dId = String(d._id || d.id || "");
-      const dName = String(d.name || "").toLowerCase().trim();
-      const dEmail = String(d.email || "").toLowerCase().trim();
-
-      const isBusy = busyDriverIds.has(dId) || busyDriverIds.has(dName);
-      const isOnApprovedLeave = onLeaveIdentifiers.has(dId) || onLeaveIdentifiers.has(dName) || onLeaveIdentifiers.has(dEmail);
-
-      return !isBusy && !isOnApprovedLeave;
+    // Also check if bus model has a fixed route_id explicitly tied to another route in buses fleet
+    buses.forEach((b) => {
+      const bRouteId = b.route_id ? String(b.route_id) : "";
+      if (currentRouteId && bRouteId && bRouteId !== currentRouteId) {
+        const bId = String(b._id || b.id || "");
+        const bNum = String(b.busNumber || "").replace(/[\s\-]+/g, "").toLowerCase();
+        if (bId) busesAssignedToOtherRoutes.add(bId);
+        if (bNum) busesAssignedToOtherRoutes.add(bNum);
+      }
     });
-  }, [driversList, schedules, scheduleStartTime, driverLeaves]);
+
+    return buses.filter((b) => {
+      const bId = String(b._id || b.id || "");
+      const bNum = String(b.busNumber || "").replace(/[\s\-]+/g, "").toLowerCase();
+
+      // Hide if assigned to another route
+      const isAssignedToOther = busesAssignedToOtherRoutes.has(bId) || busesAssignedToOtherRoutes.has(bNum);
+      if (isAssignedToOther) return false;
+
+      // Hide if busy at this exact same time
+      const isBusySameTime = busyAtSameTimeBusIds.has(bId) || busyAtSameTimeBusIds.has(bNum);
+      if (isBusySameTime) return false;
+
+      return true;
+    });
+  }, [buses, schedules, scheduleRouteId, scheduleStartTime, scheduleEditingId]);
+
+  // Driver list strictly containing verified/registered driver accounts
+  const combinedDriversList = useMemo(() => {
+    // Only return registered drivers with role === 'driver' (exclude regular passenger users)
+    return driversList.filter((d) => {
+      const role = String(d.role || "").toLowerCase().trim();
+      const name = String(d.name || "").toLowerCase().trim();
+      if (role && role !== "driver") return false;
+      if (isGenericDriverName(name)) return false;
+      return true;
+    });
+  }, [driversList]);
+
+  // Safety auto-reset: If selected bus is not valid for current route, reset scheduleBusId
+  useEffect(() => {
+    if (scheduleBusId && !scheduleEditingId) {
+      const isAvailable = availableBusesForSchedule.some((b) => String(b._id || b.id) === String(scheduleBusId));
+      if (!isAvailable) {
+        setScheduleBusId("");
+      }
+    }
+  }, [scheduleRouteId, availableBusesForSchedule, scheduleBusId, scheduleEditingId]);
 
   // ---------------- BUS FORM STATE ----------------
   const [busEditingId, setBusEditingId] = useState(null);
@@ -402,50 +498,6 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     driverExperience: 0,
     stops: "",
   });
-
-  const isGenericDriverName = (n) => {
-    if (!n) return true;
-    const s = String(n).toLowerCase().trim();
-    return (
-      ["unassigned", "not assigned", "driver assigned", "assigned driver", "driver user", "driver", "n/a", "none"].includes(s) ||
-      s.includes("unassigned") ||
-      s.includes("not assigned") ||
-      s.includes("replacement driver required")
-    );
-  };
-
-  // Combined list of DB drivers + any drivers assigned to existing buses
-  const combinedDriversList = useMemo(() => {
-    const list = [...driversList];
-    const seenIds = new Set(list.map((d) => String(d._id || d.id)));
-    const seenNames = new Set(list.map((d) => String(d.name).toLowerCase().trim()));
-
-    buses.forEach((b) => {
-      const bDrvName = (b.driverName || "").trim();
-      const bDrvId = b.driverId ? String(b.driverId) : null;
-
-      if (!isGenericDriverName(bDrvName) && !seenNames.has(bDrvName.toLowerCase())) {
-        const newId = bDrvId && bDrvId.match(/^[0-9a-fA-F]{24}$/) ? bDrvId : `bus-drv-${b._id || b.id}`;
-        if (!seenIds.has(newId)) {
-          seenIds.add(newId);
-          seenNames.add(bDrvName.toLowerCase());
-          list.push({
-            id: newId,
-            _id: newId,
-            name: bDrvName,
-            phone: b.driverPhone || "N/A",
-            licenseNumber: b.driverLicense || "N/A",
-            experienceYears: b.driverExperience || 0,
-            verificationStatus: b.driverVerified ? "Approved" : "Unverified",
-            profilePic: b.driverPhoto || "",
-            isDbDriver: false,
-          });
-        }
-      }
-    });
-
-    return list;
-  }, [driversList, buses]);
 
   // Unassigned drivers from database (hides drivers already assigned to active fleet buses by ID only)
   const availableUnassignedDrivers = useMemo(() => {
@@ -575,7 +627,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       const res = await axios.get("/api/admin/drivers", { headers, timeout: 8000 });
       if (res.data && res.data.drivers && Array.isArray(res.data.drivers)) {
         const dbDrivers = res.data.drivers
-          // Safety filter: only show users whose role is strictly 'driver'
+          // Strictly filter out any user/passenger/admin who is not a driver
           .filter((d) => String(d.role || "").toLowerCase().trim() === "driver")
           .map((d) => {
             const hasEncoding =
@@ -586,6 +638,8 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
               id: d._id || d.id,
               _id: d._id || d.id,
               name: d.name || "Driver User",
+              email: d.email || "",
+              role: d.role || "driver",
               phone: d.phone || "N/A",
               licenseNumber: d.licenseNumber || "N/A",
               experienceYears: d.experienceYears || 0,
@@ -792,7 +846,11 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       setLoading(true);
       const res = await axios.get("/api/admin/buses");
       if (res.data.success) {
-        setBuses(res.data.buses || []);
+        const busList = res.data.buses || [];
+        setBuses(busList);
+        if (typeof onBusCountUpdate === "function") {
+          onBusCountUpdate(busList.length);
+        }
       }
     } catch (err) {
       console.error("Error fetching buses:", err);
@@ -835,7 +893,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const handleAddStop = () => {
     // Find first unused stop from catalog
     const usedStopNames = new Set(stopBuilderList.map((st) => st.name.toLowerCase()));
-    const nextAvailableStop = KERALA_TRANSIT_STOPS.find((s) => !usedStopNames.has(s.toLowerCase())) || "Intermediate Stop";
+    const nextAvailableStop = INDIA_TRANSIT_STOPS.find((s) => !usedStopNames.has(s.toLowerCase())) || "Intermediate Stop";
 
     setStopBuilderList((prev) => [
       ...prev,
@@ -887,8 +945,8 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const handleAddCustomStopToCatalog = () => {
     if (!newCustomStopName.trim()) return;
     const cleanName = newCustomStopName.trim();
-    if (!KERALA_TRANSIT_STOPS.includes(cleanName)) {
-      KERALA_TRANSIT_STOPS.push(cleanName);
+    if (!INDIA_TRANSIT_STOPS.includes(cleanName)) {
+      INDIA_TRANSIT_STOPS.push(cleanName);
     }
     setNewCustomStopName("");
     setShowCustomStopInput(false);
@@ -1136,20 +1194,49 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
   // ---------------- SCHEDULE DEPARTURES HANDLERS ----------------
 
-  const checkDuplicateTime = (timeStr, excludeId = null) => {
+  const checkDuplicateTime = (timeStr, excludeId = null, targetRouteId = scheduleRouteId, targetBusId = scheduleBusId) => {
     if (!timeStr) return null;
     try {
       const normalizedNew = addMinutesToTime(timeStr, 0);
 
-      const duplicate = schedules.find((s) => {
-        if (excludeId && String(s._id || s.id) === String(excludeId)) {
+      // 1. Check if THIS ROUTE already has a departure at this time (matches backend rule)
+      if (targetRouteId) {
+        const duplicateOnRoute = schedules.find((s) => {
+          if (excludeId && String(s._id || s.id) === String(excludeId)) {
+            return false;
+          }
+          const sRouteId = typeof s.route_id === "object" && s.route_id?._id
+            ? String(s.route_id._id)
+            : String(s.route_id || "");
+          if (sRouteId && sRouteId === String(targetRouteId)) {
+            return addMinutesToTime(s.start_time, 0) === normalizedNew;
+          }
           return false;
-        }
-        return addMinutesToTime(s.start_time, 0) === normalizedNew;
-      });
+        });
 
-      if (duplicate) {
-        return "A route is already scheduled at this time. Please select a different time.";
+        if (duplicateOnRoute) {
+          return "This route is already scheduled at this time. Please select a different time.";
+        }
+      }
+
+      // 2. Check if THIS BUS is already scheduled at this time
+      if (targetBusId) {
+        const duplicateOnBus = schedules.find((s) => {
+          if (excludeId && String(s._id || s.id) === String(excludeId)) {
+            return false;
+          }
+          const sBusId = typeof s.bus_id === "object" && s.bus_id?._id
+            ? String(s.bus_id._id)
+            : String(s.bus_id || "");
+          if (sBusId && sBusId === String(targetBusId)) {
+            return addMinutesToTime(s.start_time, 0) === normalizedNew;
+          }
+          return false;
+        });
+
+        if (duplicateOnBus) {
+          return "This bus is already assigned to a departure at this time. Please select a different time or bus.";
+        }
       }
     } catch (e) {
       // Incomplete or unparseable time format, ignore until it is typed completely
@@ -1168,7 +1255,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     const hasPeriod = cleanStr.includes("AM") || cleanStr.includes("PM");
 
     if (hasCol && hasPeriod) {
-      const dupMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId);
+      const dupMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId, scheduleRouteId, scheduleBusId);
       if (dupMsg) {
         setScheduleErrors((prev) => ({ ...prev, startTime: dupMsg }));
       } else {
@@ -1177,7 +1264,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     } else {
       setScheduleErrors((prev) => ({ ...prev, startTime: "" }));
     }
-  }, [scheduleStartTime, scheduleEditingId, schedules]);
+  }, [scheduleStartTime, scheduleEditingId, scheduleRouteId, scheduleBusId, schedules]);
 
   const handleSwitchToSchedulesTab = () => {
     setActiveTab("schedules");
@@ -1193,7 +1280,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     if (!scheduleStartTime.trim()) {
       errs.startTime = "Departure Start Time is required.";
     } else {
-      const duplicateMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId);
+      const duplicateMsg = checkDuplicateTime(scheduleStartTime, scheduleEditingId, scheduleRouteId, scheduleBusId);
       if (duplicateMsg) {
         errs.startTime = duplicateMsg;
       }
@@ -1208,18 +1295,6 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
     const selectedBusObj = buses.find((b) => String(b._id || b.id) === String(busIdVal));
     if (selectedBusObj) {
-      const linkedDriver = driversList.find(
-        (d) =>
-          (selectedBusObj.driverId && String(d._id || d.id) === String(selectedBusObj.driverId)) ||
-          (selectedBusObj.driverName && String(d.name).toLowerCase().trim() === String(selectedBusObj.driverName).toLowerCase().trim())
-      );
-
-      if (linkedDriver) {
-        setScheduleDriverId(String(linkedDriver._id || linkedDriver.id));
-      } else {
-        setScheduleDriverId("");
-      }
-
       const linkedRoute = routes.find(
         (r) =>
           String(r._id) === String(selectedBusObj.route_id) ||
@@ -1233,10 +1308,8 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
         setScheduleRouteId(String(linkedRoute._id));
       }
 
-      const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
-      const driverNameDisp = linkedDriver?.name || (!isGeneric(selectedBusObj.driverName) ? selectedBusObj.driverName : "Unassigned");
       const routeNameDisp = linkedRoute?.routeName || selectedBusObj.routeName || "Assigned Route";
-      showNotification(`⚡ Bus ${selectedBusObj.busNumber} (${selectedBusObj.busName}) selected! Assigned Driver: "${driverNameDisp}" & Route: "${routeNameDisp}" 🚌`);
+      showNotification(`⚡ Bus ${selectedBusObj.busNumber} (${selectedBusObj.busName}) selected for ${routeNameDisp}! 🚌`);
     }
   };
 
@@ -1257,16 +1330,6 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
       if (linkedBus) {
         setScheduleBusId(String(linkedBus._id || linkedBus.id));
-        const linkedDriver = driversList.find(
-          (d) =>
-            (linkedBus.driverId && String(d._id || d.id) === String(linkedBus.driverId)) ||
-            (linkedBus.driverName && String(d.name).toLowerCase().trim() === String(linkedBus.driverName).toLowerCase().trim())
-        );
-        if (linkedDriver) {
-          setScheduleDriverId(String(linkedDriver._id || linkedDriver.id));
-        } else {
-          setScheduleDriverId("");
-        }
       }
     }
   };
@@ -1276,22 +1339,22 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     if (!validateScheduleForm()) return;
 
     const selectedBus = buses.find((b) => String(b._id || b.id) === String(scheduleBusId));
-    const selectedDriver = driversList.find((d) => String(d._id || d.id) === String(scheduleDriverId));
 
-    const isGeneric = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
-    const driverNameFinal = selectedDriver?.name || (!isGeneric(selectedBus?.driverName) ? selectedBus.driverName : "Not Assigned");
-    const driverIdFinal = selectedDriver?._id || selectedDriver?.id || (selectedBus?.driverId ? selectedBus.driverId : null);
-
+    // For new schedules, do not assign individual drivers (managed via Three-Shift Driver Roster).
+    // When editing historical schedules, preserve their existing driver fields.
     const payload = {
       route_id: scheduleRouteId,
       start_time: scheduleStartTime,
       bus_id: scheduleBusId || null,
       busNumber: selectedBus?.busNumber || "",
-      driver_id: driverIdFinal,
-      driverName: driverNameFinal,
       delay_buffer_minutes: Number(scheduleDelayBuffer) || 0,
       is_active: true,
     };
+
+    if (scheduleEditingId && editingScheduleDriver) {
+      payload.driver_id = editingScheduleDriver.driver_id || null;
+      payload.driverName = editingScheduleDriver.driverName || "Not Assigned";
+    }
 
     try {
       setIsSubmitting(true);
@@ -1299,6 +1362,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
         const res = await axios.put(`/api/admin/schedules/${scheduleEditingId}`, payload);
         showNotification(res.data.message || "Departure schedule updated successfully!");
         setScheduleEditingId(null);
+        setEditingScheduleDriver(null);
       } else {
         const res = await axios.post("/api/admin/schedules", payload);
         showNotification(res.data.message || "Departure schedule created!");
@@ -1323,15 +1387,18 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
     if (sch.bus_id) {
       setScheduleBusId(typeof sch.bus_id === "object" ? sch.bus_id._id : sch.bus_id);
     }
-    if (sch.driver_id) {
-      setScheduleDriverId(typeof sch.driver_id === "object" ? sch.driver_id._id : sch.driver_id);
-    }
+    // Safeguard: Capture and preserve historical schedule driver on edit
+    setEditingScheduleDriver({
+      driver_id: typeof sch.driver_id === "object" ? sch.driver_id?._id : sch.driver_id || null,
+      driverName: sch.driverName || "Not Assigned",
+    });
 
     showNotification(`✏️ Editing schedule at ${sch.start_time}. Update fields above and click Save ✓`);
   };
 
   const handleCancelScheduleEdit = () => {
     setScheduleEditingId(null);
+    setEditingScheduleDriver(null);
     setScheduleStartTime("08:30 AM");
     setScheduleDelayBuffer(0);
     setScheduleErrors({});
@@ -1443,12 +1510,24 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
   const executeBusSubmit = async () => {
     try {
       setIsSubmitting(true);
+      const payload = {
+        ...busForm,
+        busName: busForm.busName?.trim() || "",
+        busNumber: busForm.busNumber?.trim().toUpperCase() || "",
+        totalSeats: Number(busForm.totalSeats) || 32,
+        busType: busForm.busType || "Normal Bus",
+        fromLocation: busForm.fromLocation?.trim() || "Depot",
+        toLocation: busForm.toLocation?.trim() || "Depot",
+        departureTime: busForm.departureTime?.trim() || "06:00 AM",
+        arrivalTime: busForm.arrivalTime?.trim() || "10:00 PM",
+        price: busForm.price !== "" && !isNaN(Number(busForm.price)) && Number(busForm.price) > 0 ? Number(busForm.price) : 100,
+      };
       if (busEditingId) {
-        const res = await axios.put(`/api/admin/buses/${busEditingId}`, busForm);
+        const res = await axios.put(`/api/admin/buses/${busEditingId}`, payload);
         showNotification(res.data.message || "Bus updated successfully!");
         setBusEditingId(null);
       } else {
-        const res = await axios.post("/api/admin/buses", busForm);
+        const res = await axios.post("/api/admin/buses", payload);
         showNotification(res.data.message || "New bus registered in fleet! 🎉");
       }
       resetBusForm();
@@ -1691,7 +1770,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
       <div style={{ display: "flex", gap: "10px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0", paddingBottom: "10px" }}>
         <button
           type="button"
-          onClick={() => setActiveTab("routes")}
+          onClick={() => {
+            setActiveTab("routes");
+            if (typeof onNavigateTab === "function") onNavigateTab("busRoutes");
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1712,7 +1794,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
         <button
           type="button"
-          onClick={handleSwitchToSchedulesTab}
+          onClick={() => {
+            handleSwitchToSchedulesTab();
+            if (typeof onNavigateTab === "function") onNavigateTab("busRoutes");
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1733,7 +1818,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
 
         <button
           type="button"
-          onClick={() => setActiveTab("buses")}
+          onClick={() => {
+            setActiveTab("buses");
+            if (typeof onNavigateTab === "function") onNavigateTab("busFleet");
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1776,6 +1864,35 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
           }}
         >
           <UserCheck size={18} /> 4. Driver Face Enrollment ({driversList.filter((d) => d.isEnrolled).length}/{driversList.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigate("/admin/shift-roster")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "12px 22px",
+            borderRadius: "12px",
+            fontSize: "14px",
+            fontWeight: "800",
+            border: "none",
+            cursor: "pointer",
+            background: "#ffffff",
+            color: "#64748b",
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "#7c3aed";
+            e.currentTarget.style.background = "#f5f3ff";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "#64748b";
+            e.currentTarget.style.background = "#ffffff";
+          }}
+        >
+          <Clock size={18} /> 5. Three-Shift Driver Roster ➔
         </button>
       </div>
 
@@ -2369,6 +2486,57 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
               </p>
             </div>
 
+            {/* INFORMATIONAL CALLOUT & WORKING NAVIGATION LINK TO THREE-SHIFT ROSTER */}
+            <div
+              style={{
+                background: "linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)",
+                border: "1.5px solid #bfdbfe",
+                borderRadius: "14px",
+                padding: "14px 18px",
+                marginBottom: "16px",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: "14px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", flex: 1, minWidth: "260px" }}>
+                <Clock size={18} style={{ color: "#2563eb", marginTop: "2px", flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: "800", color: "#1e3a8a", marginBottom: "3px" }}>
+                    Route Departures vs. Regular Shift Roster
+                  </div>
+                  <p style={{ fontSize: "12px", color: "#334155", margin: 0, lineHeight: 1.5 }}>
+                    Route Departure Schedules define corridor timetables and optional bus assignments. Regular drivers are not assigned per departure — drivers are assigned to buses across <strong>Morning (06:00–14:00)</strong>, <strong>Evening (14:00–22:00)</strong>, and <strong>Night (22:00–06:00)</strong> shifts via the <strong>Three-Shift Driver Roster</strong>.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleNavigateToShiftRoster}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "10px",
+                  background: "linear-gradient(135deg, #4c1d95, #6d28d9)",
+                  color: "#ffffff",
+                  fontSize: "12px",
+                  fontWeight: "800",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  boxShadow: "0 2px 8px rgba(109, 40, 217, 0.25)",
+                  whiteSpace: "nowrap",
+                  alignSelf: "center",
+                }}
+              >
+                <span>Open Driver Shift Roster</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+
             {/* EMPTY STATE GUIDANCE BOX */}
             {routes.length === 0 ? (
               <div style={{ background: "#fffbebf5", padding: "20px", borderRadius: "14px", border: "1px solid #fef3c7", color: "#92400e", textAlign: "center" }}>
@@ -2468,25 +2636,31 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   </select>
                   {buses.length > availableBusesForSchedule.length && (
                     <span style={{ fontSize: "10px", color: "#d97706", display: "block", marginTop: "4px", fontWeight: "600" }}>
-                      🔒 {buses.length - availableBusesForSchedule.length} bus(es) driving another route at {scheduleStartTime} are hidden.
+                      🔒 {buses.length - availableBusesForSchedule.length} bus(es) dedicated to other routes or driving at {scheduleStartTime} are hidden (1 Bus = 1 Route Rule).
                     </span>
                   )}
                 </div>
 
-                {/* ⚡ CLEAR VISUAL AUTO-LINKED SUMMARY BADGE / BANNER */}
-                {scheduleBusId && (
-                  <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)", border: "2px solid #86efac", borderRadius: "14px", padding: "14px 18px", marginTop: "4px", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.12)" }}>
+                {/* ⚡ CLEAR VISUAL DEPARTURE TIMETABLE SUMMARY BADGE */}
+                {(scheduleBusId || scheduleRouteId || scheduleStartTime) && (
+                  <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)", border: "1.5px solid #a7f3d0", borderRadius: "14px", padding: "14px 18px", marginTop: "4px", boxShadow: "0 4px 14px rgba(16, 185, 129, 0.08)" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: "900", color: "#166534", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: "6px" }}>
-                        ⚡ AUTO-LINKED BUS TO ROUTE
+                      <span style={{ fontSize: "12px", fontWeight: "900", color: "#065f46", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: "6px" }}>
+                        ⚡ DEPARTURE TIMETABLE SUMMARY
                       </span>
-                      <span style={{ fontSize: "11px", fontWeight: "800", background: "#ffffff", color: "#15803d", padding: "3px 10px", borderRadius: "10px", border: "1px solid #86efac" }}>
-                        Fixed Route Binding
+                      <span style={{ fontSize: "11px", fontWeight: "800", background: "#ffffff", color: "#047857", padding: "3px 10px", borderRadius: "10px", border: "1px solid #a7f3d0" }}>
+                        Route &amp; Bus Binding
                       </span>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "13px", color: "#14532d", fontWeight: "700" }}>
-                      <div>🚌 <strong>Bus:</strong> {buses.find(b => String(b._id || b.id) === String(scheduleBusId))?.busNumber || "Selected Bus"}</div>
-                      <div>📍 <strong>Route:</strong> {routes.find(r => String(r._id) === String(scheduleRouteId))?.routeName || "Selected Route"}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "13px", color: "#064e3b", fontWeight: "700" }}>
+                      <div>🚌 <strong>Assigned Bus:</strong> {buses.find(b => String(b._id || b.id) === String(scheduleBusId))?.busNumber ? `${buses.find(b => String(b._id || b.id) === String(scheduleBusId))?.busName} (${buses.find(b => String(b._id || b.id) === String(scheduleBusId))?.busNumber})` : "Optional (Unassigned)"}</div>
+                      <div>🕒 <strong>Estimated Operating Shift:</strong> <span style={{ color: "#047857" }}>{getEstimatedShift(scheduleStartTime)} <em style={{ fontSize: "11px", color: "#059669", fontWeight: "600" }}>(Estimated by start time)</em></span></div>
+                      <div style={{ gridColumn: "span 2" }}>📍 <strong>Route:</strong> {routes.find(r => String(r._id) === String(scheduleRouteId))?.routeName || "Selected Route"}</div>
+                      {editingScheduleDriver?.driverName && editingScheduleDriver.driverName !== "Not Assigned" && (
+                        <div style={{ gridColumn: "span 2", fontSize: "12px", color: "#0f766e", background: "#f0fdfa", padding: "6px 10px", borderRadius: "8px", border: "1px solid #99f6e4" }}>
+                          ℹ️ <em>Existing Historical Driver on this Schedule:</em> <strong>{editingScheduleDriver.driverName}</strong> (Preserved from legacy record)
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2604,9 +2778,13 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                               {matchedRoute?.routeName || sch.routeName}
                             </span>
                           </div>
-                          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
-                            Bus: <strong>{displayBusNumber}</strong>
-                            {sch.delay_buffer_minutes > 0 && <span style={{ color: "#eab308", fontWeight: "700", marginLeft: "8px" }}>+{sch.delay_buffer_minutes}m Traffic Buffer</span>}
+                          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+                            <span>Bus: <strong>{displayBusNumber}</strong></span>
+                            {sch.delay_buffer_minutes > 0 && <span style={{ color: "#eab308", fontWeight: "700" }}>+{sch.delay_buffer_minutes}m Traffic Buffer</span>}
+                            <span style={{ color: "#4f46e5", fontWeight: "700" }}>• Shift: {getEstimatedShift(sch.start_time)} <em style={{ fontSize: "10px", opacity: 0.8 }}>(Estimated)</em></span>
+                            {!isGeneric(sch.driverName) && (
+                              <span style={{ color: "#64748b" }}>• Legacy Driver: <strong>{sch.driverName}</strong></span>
+                            )}
                           </div>
                         </div>
 
@@ -2733,7 +2911,7 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   {busEditingId ? "Edit Bus Specifications" : "Register Fleet Bus"}
                 </h2>
                 <p style={{ fontSize: "12px", color: "#64748b", margin: "4px 0 0 0" }}>
-                  Set bus name, vehicle number plate &amp; assigned driver.
+                  Set bus name, vehicle number plate &amp; seating capacity.
                 </p>
               </div>
               {busEditingId && (
@@ -2825,47 +3003,6 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                     <option value="AC Bus">AC Bus</option>
                   </select>
                 </div>
-              </div>
-
-              {/* Driver Selection Dropdown (Only Displays Unassigned Drivers from DB) */}
-              <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "6px" }}>
-                  <User size={14} style={{ color: "#0ea5e9" }} /> Assigned Driver *
-                </label>
-                <select
-                  value={selectedDriverOption}
-                  onChange={(e) => handleDriverSelectChange(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "700", background: "#ffffff" }}
-                >
-                  <option value="unassigned">Select Driver / Unassigned</option>
-                  {dropdownDriverOptions.map((d) => (
-                    <option key={String(d._id || d.id)} value={String(d._id || d.id)}>
-                      {d.isAssigned
-                        ? `⚠️ ${d.name} (Assigned to: ${d.assignedBusName || "another bus"}) · ${d.phone}`
-                        : `✅ ${d.name} (${d.phone} · License: ${d.licenseNumber})`}
-                    </option>
-                  ))}
-                </select>
-
-                {dropdownDriverOptions.filter((d) => !d.isAssigned).length === 0 ? (
-                  <div style={{ marginTop: "6px", fontSize: "11px", color: "#d97706", fontWeight: "700" }}>
-                    ⚠️ All verified drivers are currently assigned to buses. You can still re-assign one by selecting them above (marked with ⚠️).
-                  </div>
-                ) : (
-                  <div style={{ marginTop: "6px", fontSize: "11px", color: "#059669", fontWeight: "700" }}>
-                    ✅ {dropdownDriverOptions.filter((d) => !d.isAssigned).length} free driver(s) available · {dropdownDriverOptions.filter((d) => d.isAssigned).length} already assigned (selectable).
-                  </div>
-                )}
-
-                {/* Driver Details Preview */}
-                {busForm.driverName && (
-                  <div style={{ marginTop: "10px", fontSize: "12px", color: "#475569", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-                    <div>Driver Name: <strong style={{ color: "#0f172a" }}>{busForm.driverName}</strong></div>
-                    <div>Phone: <strong style={{ color: "#0f172a" }}>{busForm.driverPhone}</strong></div>
-                    <div>License: <strong style={{ color: "#0f172a" }}>{busForm.driverLicense}</strong></div>
-                    <div>Experience: <strong style={{ color: "#16a34a" }}>{busForm.driverExperience} Years</strong></div>
-                  </div>
-                )}
               </div>
 
               <button
@@ -2968,6 +3105,26 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                           }}
                         >
                           {b.is_active !== false ? "⏸ Disable" : "▶ Enable"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate("/admin/shift-roster")}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            background: "#f5f3ff",
+                            color: "#7c3aed",
+                            fontSize: "11px",
+                            fontWeight: "800",
+                            border: "1px solid #ddd6fe",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "3px",
+                          }}
+                          title="Open 3-Shift Driver Roster"
+                        >
+                          <Clock size={11} /> 3-Shift Roster
                         </button>
                       </div>
                     </div>
@@ -3833,8 +3990,10 @@ export default function AdminAddBusRoute({ isEmbedded = false }) {
                   <div>Bus Service Name: <strong>{confirmationModal.data.busName}</strong></div>
                   <div>Bus Type: <strong>{confirmationModal.data.busType}</strong></div>
                   <div>Seat Capacity: <strong>{confirmationModal.data.totalSeats} Seats</strong></div>
-                  <div>Driver: <strong>{confirmationModal.data.driverName} ({confirmationModal.data.driverPhone})</strong></div>
-                  <div>License: <strong>{confirmationModal.data.driverLicense}</strong></div>
+                  <div>Driver: <strong>{confirmationModal.data.driverName || "Not Assigned"} {confirmationModal.data.driverPhone && confirmationModal.data.driverPhone !== "N/A" ? `(${confirmationModal.data.driverPhone})` : ""}</strong></div>
+                  {confirmationModal.data.driverLicense && confirmationModal.data.driverLicense !== "N/A" && (
+                    <div>License: <strong>{confirmationModal.data.driverLicense}</strong></div>
+                  )}
                 </div>
               </div>
             )}

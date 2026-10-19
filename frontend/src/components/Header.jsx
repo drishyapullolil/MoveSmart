@@ -62,20 +62,54 @@ export default function Header() {
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
         borderBottom: "1px solid rgba(0, 0, 0, 0.07)",
-        boxShadow: "0 2px 14px rgba(0, 0, 0, 0.04)",
+        boxShadow: "0 2px 10px rgba(0, 0, 0, 0.03)",
         width: "100%",
       }}
     >
+      <style>{`
+        .desktop-nav-group {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          flex: 1;
+          justifyContent: center;
+          margin: 0 8px;
+          min-width: 0;
+          overflow-x: auto;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
+        .desktop-nav-group::-webkit-scrollbar {
+          display: none;
+        }
+        .mobile-toggle-btn {
+          display: none;
+        }
+        @media (max-width: 1080px) {
+          .desktop-nav-group {
+            display: none !important;
+          }
+          .mobile-toggle-btn {
+            display: flex !important;
+          }
+        }
+        @media (min-width: 1081px) {
+          .mobile-toggle-btn {
+            display: none !important;
+          }
+        }
+      `}</style>
+
       <div
         style={{
-          maxWidth: "1440px",
+          maxWidth: "1320px",
           margin: "0 auto",
-          padding: "0 20px",
-          height: "68px",
+          padding: "0 16px",
+          height: "56px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: "12px",
+          gap: "8px",
           boxSizing: "border-box",
         }}
       >
@@ -87,7 +121,7 @@ export default function Header() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "10px",
+            gap: "8px",
             textDecoration: "none",
             flexShrink: 0,
             userSelect: "none",
@@ -95,15 +129,15 @@ export default function Header() {
         >
           <div
             style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "10px",
+              width: "32px",
+              height: "32px",
+              borderRadius: "8px",
               background: "#ffffff",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               border: "1px solid rgba(56, 161, 105, 0.25)",
-              boxShadow: "0 2px 8px rgba(56, 161, 105, 0.15)",
+              boxShadow: "0 2px 6px rgba(56, 161, 105, 0.12)",
               overflow: "hidden",
               flexShrink: 0,
             }}
@@ -124,7 +158,7 @@ export default function Header() {
             <span
               style={{
                 fontFamily: "var(--font-display)",
-                fontSize: "19px",
+                fontSize: "17px",
                 fontWeight: "900",
                 background: "linear-gradient(135deg, #15803d 0%, #7c3aed 100%)",
                 WebkitBackgroundClip: "text",
@@ -136,10 +170,10 @@ export default function Header() {
             </span>
             <span
               style={{
-                fontSize: "9px",
+                fontSize: "8.5px",
                 fontWeight: "800",
                 color: "#7c3aed",
-                letterSpacing: "0.6px",
+                letterSpacing: "0.5px",
                 textTransform: "uppercase",
               }}
             >
@@ -151,17 +185,7 @@ export default function Header() {
         {/* ========================================================= */}
         {/* 2. CENTER: Clean Horizontal Navigation Menu */}
         {/* ========================================================= */}
-        <nav
-          className="desktop-nav-group"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-            flex: 1,
-            justifyContent: "center",
-            margin: "0 8px",
-          }}
-        >
+        <nav className="desktop-nav-group">
           {/* DRIVER NAVIGATION */}
           {isRole("driver") ? (
             <>
@@ -170,10 +194,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -183,11 +207,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/dashboard/driver") || isActive("/driver") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/dashboard/driver") || isActive("/driver")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <Navigation size={14} />
+                <Navigation size={13} />
                 <span>Console</span>
               </Link>
 
@@ -196,10 +220,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -209,12 +233,12 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/driver/live-drive") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/driver/live-drive")
-                    ? "0 2px 10px rgba(16, 185, 129, 0.25)"
+                    ? "0 2px 8px rgba(16, 185, 129, 0.2)"
                     : "none",
                 }}
               >
-                <MapPin size={14} />
-                <span>Live Drive 📍</span>
+                <MapPin size={13} />
+                <span>Live Drive</span>
               </Link>
 
               <Link
@@ -222,10 +246,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -235,38 +259,12 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/driver/rfid-device") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/driver/rfid-device")
-                    ? "0 2px 10px rgba(22, 163, 74, 0.25)"
+                    ? "0 2px 8px rgba(22, 163, 74, 0.2)"
                     : "none",
                 }}
               >
-                <Radio size={14} />
+                <Radio size={13} />
                 <span>RFID Reader</span>
-              </Link>
-
-              <Link
-                to="/driver/location-simulator"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  textDecoration: "none",
-                  transition: "all 0.2s ease",
-                  whiteSpace: "nowrap",
-                  background: isActive("/driver/location-simulator") || isActive("/driver/location-control")
-                    ? "linear-gradient(135deg, #2563eb, #1d4ed8)"
-                    : "transparent",
-                  color: isActive("/driver/location-simulator") || isActive("/driver/location-control") ? "#ffffff" : "#475569",
-                  boxShadow: isActive("/driver/location-simulator") || isActive("/driver/location-control")
-                    ? "0 2px 10px rgba(37, 99, 235, 0.25)"
-                    : "none",
-                }}
-              >
-                <MapPin size={14} />
-                <span>Route Simulator</span>
               </Link>
 
               <Link
@@ -274,10 +272,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -287,11 +285,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/driver/notifications") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/driver/notifications")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <Bell size={14} />
+                <Bell size={13} />
                 <span>Notifications</span>
               </Link>
             </>
@@ -304,10 +302,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -317,11 +315,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/dashboard") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/dashboard")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <LayoutDashboard size={14} />
+                <LayoutDashboard size={13} />
                 <span>Dashboard</span>
               </Link>
 
@@ -331,10 +329,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -344,11 +342,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/my-rfid-card") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/my-rfid-card")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <CreditCard size={14} />
+                <CreditCard size={13} />
                 <span>My RFID Card</span>
               </Link>
 
@@ -358,10 +356,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -371,11 +369,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/book-bus") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/book-bus")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <Bus size={14} />
+                <Bus size={13} />
                 <span>Bus Schedules</span>
               </Link>
 
@@ -385,10 +383,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -398,11 +396,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/bus-gallery") || isActive("/gallery") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/bus-gallery") || isActive("/gallery")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <ImageIcon size={14} />
+                <ImageIcon size={13} />
                 <span>Bus Gallery</span>
               </Link>
 
@@ -412,10 +410,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -425,11 +423,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/dashboard/card-application") || isActive("/card-application") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/dashboard/card-application") || isActive("/card-application")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <CreditCard size={14} />
+                <CreditCard size={13} />
                 <span>Apply Pass</span>
               </Link>
 
@@ -439,10 +437,10 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 13px",
-                  borderRadius: "9px",
-                  fontSize: "13px",
+                  gap: "5px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
@@ -452,11 +450,11 @@ export default function Header() {
                     : "transparent",
                   color: isActive("/wallet") ? "#ffffff" : "#475569",
                   boxShadow: isActive("/wallet")
-                    ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                    ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                     : "none",
                 }}
               >
-                <Wallet size={14} />
+                <Wallet size={13} />
                 <span>Wallet</span>
               </Link>
 
@@ -467,10 +465,10 @@ export default function Header() {
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "6px",
-                    padding: "7px 13px",
-                    borderRadius: "9px",
-                    fontSize: "13px",
+                    gap: "5px",
+                    padding: "5px 10px",
+                    borderRadius: "7px",
+                    fontSize: "12px",
                     fontWeight: "700",
                     textDecoration: "none",
                     transition: "all 0.2s ease",
@@ -480,26 +478,26 @@ export default function Header() {
                       : "transparent",
                     color: isActive("/apply-driver") ? "#ffffff" : "#475569",
                     boxShadow: isActive("/apply-driver")
-                      ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                      ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                       : "none",
                   }}
                 >
-                  <UserCheck size={14} />
+                  <UserCheck size={13} />
                   <span>Apply Driver</span>
                 </Link>
               )}
 
-              {/* Lost & Found (Standalone Route /lost-found) */}
+              {/* Lost & Found */}
               {!isRole("driver") && !isRole("admin") && (
                 <Link
                   to="/lost-found"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "6px",
-                    padding: "7px 13px",
-                    borderRadius: "9px",
-                    fontSize: "13px",
+                    gap: "5px",
+                    padding: "5px 10px",
+                    borderRadius: "7px",
+                    fontSize: "12px",
                     fontWeight: "700",
                     textDecoration: "none",
                     transition: "all 0.2s ease",
@@ -507,30 +505,28 @@ export default function Header() {
                     background: isActive("/lost-found")
                       ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
                       : "transparent",
-                    color: isActive("/lost-found")
-                      ? "#ffffff"
-                      : "#475569",
+                    color: isActive("/lost-found") ? "#ffffff" : "#475569",
                     boxShadow: isActive("/lost-found")
-                      ? "0 2px 10px rgba(124, 58, 237, 0.25)"
+                      ? "0 2px 8px rgba(124, 58, 237, 0.2)"
                       : "none",
                   }}
                 >
-                  <Package size={14} />
+                  <Package size={13} />
                   <span>Lost &amp; Found</span>
                 </Link>
               )}
 
-              {/* Admin Panel Quick Link (if admin) */}
+              {/* Admin Quick Link */}
               {isRole("admin") && (
                 <Link
                   to="/admin"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "6px",
-                    padding: "7px 13px",
-                    borderRadius: "9px",
-                    fontSize: "13px",
+                    gap: "5px",
+                    padding: "5px 10px",
+                    borderRadius: "7px",
+                    fontSize: "12px",
                     fontWeight: "700",
                     textDecoration: "none",
                     transition: "all 0.2s ease",
@@ -541,7 +537,7 @@ export default function Header() {
                     color: isActive("/admin") ? "#ffffff" : "#0369a1",
                   }}
                 >
-                  <Shield size={14} />
+                  <Shield size={13} />
                   <span>Admin</span>
                 </Link>
               )}
@@ -558,35 +554,11 @@ export default function Header() {
             alignItems: "center",
             gap: "8px",
             flexShrink: 0,
+            marginLeft: "auto",
           }}
         >
           {user ? (
             <>
-              {/* Right-Side Wallet Pill */}
-              <Link
-                to="/wallet"
-                title="View Wallet Balance"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  padding: "6px 11px",
-                  borderRadius: "8px",
-                  background: "rgba(34, 197, 94, 0.08)",
-                  border: "1px solid rgba(34, 197, 94, 0.25)",
-                  color: "#15803d",
-                  fontWeight: "700",
-                  fontSize: "12.5px",
-                  textDecoration: "none",
-                  transition: "all 0.2s ease",
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span>💰</span>
-                <span>Wallet</span>
-              </Link>
-
               {/* User Profile Pill */}
               <Link
                 to="/profile"
@@ -594,11 +566,11 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "7px",
-                  padding: "4px 10px 4px 4px",
-                  borderRadius: "20px",
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
+                  gap: "6px",
+                  padding: "3px 8px 3px 3px",
+                  borderRadius: "16px",
+                  background: "#F8FAFC",
+                  border: "1px solid #E2E8F0",
                   textDecoration: "none",
                   transition: "all 0.2s ease",
                   flexShrink: 0,
@@ -606,17 +578,17 @@ export default function Header() {
               >
                 <div
                   style={{
-                    width: "26px",
-                    height: "26px",
+                    width: "24px",
+                    height: "24px",
                     borderRadius: "50%",
                     background: "linear-gradient(135deg, #15803d, #7c3aed)",
                     color: "#ffffff",
                     fontWeight: "800",
-                    fontSize: "11px",
+                    fontSize: "10.5px",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                     flexShrink: 0,
                   }}
                 >
@@ -624,10 +596,10 @@ export default function Header() {
                 </div>
                 <span
                   style={{
-                    fontSize: "12.5px",
+                    fontSize: "12px",
                     fontWeight: "700",
-                    color: "#1e293b",
-                    maxWidth: "85px",
+                    color: "#0F172A",
+                    maxWidth: "75px",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -637,7 +609,7 @@ export default function Header() {
                 </span>
               </Link>
 
-              {/* Sign Out Button (Guaranteed fully visible) */}
+              {/* Sign Out Button (Always clearly visible & accessible) */}
               <button
                 type="button"
                 onClick={handleLogout}
@@ -645,41 +617,41 @@ export default function Header() {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "5px",
-                  padding: "6px 11px",
-                  borderRadius: "8px",
-                  border: "1px solid rgba(239, 68, 68, 0.22)",
-                  background: "rgba(239, 68, 68, 0.05)",
-                  color: "#dc2626",
-                  fontSize: "12px",
-                  fontWeight: "700",
+                  gap: "4px",
+                  padding: "5px 10px",
+                  borderRadius: "7px",
+                  border: "1px solid #FECACA",
+                  background: "#FEF2F2",
+                  color: "#DC2626",
+                  fontSize: "11.5px",
+                  fontWeight: "800",
                   cursor: "pointer",
                   transition: "all 0.2s ease",
                   flexShrink: 0,
                   whiteSpace: "nowrap",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)";
-                  e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.4)";
+                  e.currentTarget.style.background = "#FEE2E2";
+                  e.currentTarget.style.borderColor = "#FCA5A5";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(239, 68, 68, 0.05)";
-                  e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.22)";
+                  e.currentTarget.style.background = "#FEF2F2";
+                  e.currentTarget.style.borderColor = "#FECACA";
                 }}
               >
-                <LogOut size={13} />
+                <LogOut size={12} />
                 <span>Sign Out</span>
               </button>
             </>
           ) : (
             /* GUEST AUTH BUTTONS */
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <Link
                 to="/login"
                 style={{
-                  padding: "6px 14px",
-                  borderRadius: "8px",
-                  fontSize: "13px",
+                  padding: "5px 12px",
+                  borderRadius: "7px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   color: "#334155",
                   textDecoration: "none",
@@ -691,14 +663,14 @@ export default function Header() {
               <Link
                 to="/signup"
                 style={{
-                  padding: "7px 16px",
-                  borderRadius: "8px",
+                  padding: "5px 14px",
+                  borderRadius: "7px",
                   background: "linear-gradient(135deg, #15803d, #7c3aed)",
                   color: "#ffffff",
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: "700",
                   textDecoration: "none",
-                  boxShadow: "0 2px 8px rgba(124, 58, 237, 0.25)",
+                  boxShadow: "0 2px 6px rgba(124, 58, 237, 0.2)",
                   transition: "all 0.2s ease",
                 }}
               >

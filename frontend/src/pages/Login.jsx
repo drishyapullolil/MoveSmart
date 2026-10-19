@@ -19,6 +19,12 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [alertInfo, setAlertInfo] = useState(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("expired") === "1") {
+        return { message: "Your session has expired. Please log in again to continue.", type: "error" };
+      }
+    }
     const warning = localStorage.getItem("moveSmart_loginWarning");
     if (warning) {
       localStorage.removeItem("moveSmart_loginWarning");

@@ -12,6 +12,10 @@ const protect = async (req, res, next) => {
         try {
             token = req.headers.authorization.split(" ")[1];
 
+            if (!token || token === "null" || token === "undefined") {
+                return res.status(401).json({ message: "Not authorized, no token provided", code: "NO_TOKEN" });
+            }
+
             const decoded = jwt.verify(
                 token,
                 process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026"
@@ -20,16 +24,33 @@ const protect = async (req, res, next) => {
             req.user = await User.findById(decoded.id).select("-password");
 
             if (!req.user) {
-                return res.status(401).json({ message: "Not authorized, user not found" });
+                return res.status(401).json({ message: "Not authorized, user not found", code: "USER_NOT_FOUND" });
             }
 
             next();
         } catch (error) {
-            console.error(error);
-            return res.status(401).json({ message: "Not authorized, token failed" });
+            if (error.name === "TokenExpiredError") {
+                console.warn(`⚠️ [Auth] Expired token received for ${req.method} ${req.originalUrl || req.url} (expired at ${error.expiredAt?.toISOString?.() || error.expiredAt})`);
+                return res.status(401).json({
+                    message: "Session expired. Please log in again.",
+                    code: "TOKEN_EXPIRED",
+                    expiredAt: error.expiredAt
+                });
+            }
+
+            if (error.name === "JsonWebTokenError") {
+                console.warn(`⚠️ [Auth] Invalid token received for ${req.method} ${req.originalUrl || req.url}: ${error.message}`);
+                return res.status(401).json({
+                    message: "Invalid authentication token. Please log in again.",
+                    code: "INVALID_TOKEN"
+                });
+            }
+
+            console.error("Auth Middleware Error:", error.message || error);
+            return res.status(401).json({ message: "Not authorized, token failed", code: "TOKEN_FAILED" });
         }
     } else {
-        return res.status(401).json({ message: "Not authorized, no token" });
+        return res.status(401).json({ message: "Not authorized, no token", code: "NO_TOKEN" });
     }
 };
 

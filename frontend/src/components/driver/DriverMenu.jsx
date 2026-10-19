@@ -1,5 +1,19 @@
 import React, { useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
+import {
+  LayoutDashboard,
+  Compass,
+  Radio,
+  Bus,
+  Clock,
+  Calendar,
+  User,
+  Wallet,
+  Package,
+  Bell,
+  Check,
+  ChevronRight
+} from "lucide-react";
 import { getStoredUser } from "../../utils/session";
 
 export default function DriverMenu({
@@ -111,21 +125,21 @@ export default function DriverMenu({
         {
           key: "dashboard",
           label: "Dashboard",
-          icon: "📊",
+          icon: <LayoutDashboard size={18} />,
           path: "/driver",
           description: "Live overview & daily summary",
         },
         {
           key: "live-drive",
           label: "Live Drive",
-          icon: "🚍",
+          icon: <Compass size={18} />,
           path: "/driver/live-drive",
           description: "Live cockpit, route & stop control",
         },
         {
           key: "rfid",
           label: "RFID Reader",
-          icon: "📡",
+          icon: <Radio size={18} />,
           path: "/driver/rfid-device",
           description: "Hardware telemetry & card sync",
         },
@@ -138,14 +152,14 @@ export default function DriverMenu({
         {
           key: "buses",
           label: "My Bus",
-          icon: "🚌",
+          icon: <Bus size={18} />,
           path: "/driver?tab=buses",
           description: "Assigned vehicle & details",
         },
         {
           key: "trips",
           label: "Trips",
-          icon: "⏰",
+          icon: <Clock size={18} />,
           path: "/driver?tab=trips",
           description: "Scheduled transit shifts",
         },
@@ -158,14 +172,14 @@ export default function DriverMenu({
         {
           key: "leave",
           label: "Leave",
-          icon: "📅",
+          icon: <Calendar size={18} />,
           path: "/driver?tab=leave",
           description: "Apply & track time off",
         },
         {
           key: "profile",
           label: "Profile & License",
-          icon: "👤",
+          icon: <User size={18} />,
           path: "/driver?tab=verification",
           description: "Credentials & KYC status",
         },
@@ -178,21 +192,21 @@ export default function DriverMenu({
         {
           key: "collections",
           label: "Collections",
-          icon: "💰",
+          icon: <Wallet size={18} />,
           path: "/driver?tab=payments",
           description: "Fares & cash revenue logs",
         },
         {
           key: "lostfound",
           label: "Lost & Found",
-          icon: "📦",
+          icon: <Package size={18} />,
           path: "/driver?tab=lostfound",
           description: "Passenger baggage logs",
         },
         {
           key: "notifications",
           label: "Notifications",
-          icon: "🔔",
+          icon: <Bell size={18} />,
           path: "/driver/notifications",
           badge: unreadNotifs > 0 ? unreadNotifs : null,
           description: "Alerts & fleet bulletins",
@@ -286,10 +300,12 @@ export default function DriverMenu({
                         )}
                         {active ? (
                           <span className="driver-menu-item-active-check" title="Active Page">
-                            ✓
+                            <Check size={14} />
                           </span>
                         ) : (
-                          <span className="driver-menu-item-arrow">›</span>
+                          <span className="driver-menu-item-arrow">
+                            <ChevronRight size={14} />
+                          </span>
                         )}
                       </div>
                     </Link>

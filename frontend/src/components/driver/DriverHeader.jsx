@@ -1,5 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import {
+  Bell,
+  Globe,
+  Menu,
+  ChevronDown,
+  Compass,
+  Radio,
+  Bus,
+  Clock,
+  Calendar,
+  Wallet,
+  User,
+  Package,
+  LayoutDashboard
+} from "lucide-react";
 import { getStoredUser, clearStoredSession } from "../../utils/session";
 import DriverMenu from "./DriverMenu";
 
@@ -114,16 +129,16 @@ export default function DriverHeader({
   const currentTabParam = searchParams.get("tab");
 
   const getActivePageLabel = () => {
-    if (activeNav === "live-drive" || currentPath.includes("/live-drive")) return { icon: "🚍", label: "Live Drive" };
-    if (activeNav === "rfid" || currentPath.includes("/rfid-device")) return { icon: "📡", label: "RFID Reader" };
-    if (activeNav === "buses" || currentTabParam === "buses" || currentPath === "/driver/my-bus") return { icon: "🚌", label: "My Bus" };
-    if (activeNav === "trips" || currentTabParam === "trips" || currentPath === "/driver/trips") return { icon: "⏰", label: "Trips" };
-    if (activeNav === "leave" || currentTabParam === "leave" || currentPath === "/driver/leave") return { icon: "📅", label: "Leave" };
-    if (activeNav === "payments" || activeNav === "collections" || currentTabParam === "payments" || currentPath === "/driver/collections") return { icon: "💰", label: "Collections" };
-    if (activeNav === "verification" || activeNav === "profile" || currentTabParam === "verification" || currentPath === "/driver/profile") return { icon: "👤", label: "Profile" };
-    if (activeNav === "lostfound" || currentTabParam === "lostfound" || currentPath === "/driver/lost-found") return { icon: "📦", label: "Lost & Found" };
-    if (activeNav === "notifications" || currentTabParam === "notifications" || currentPath.includes("/notifications")) return { icon: "🔔", label: "Notifications" };
-    return { icon: "📊", label: "Dashboard" };
+    if (activeNav === "live-drive" || currentPath.includes("/live-drive")) return { icon: <Compass size={14} />, label: "Live Drive" };
+    if (activeNav === "rfid" || currentPath.includes("/rfid-device")) return { icon: <Radio size={14} />, label: "RFID Reader" };
+    if (activeNav === "buses" || currentTabParam === "buses" || currentPath === "/driver/my-bus") return { icon: <Bus size={14} />, label: "My Bus" };
+    if (activeNav === "trips" || currentTabParam === "trips" || currentPath === "/driver/trips") return { icon: <Clock size={14} />, label: "Trips" };
+    if (activeNav === "leave" || currentTabParam === "leave" || currentPath === "/driver/leave") return { icon: <Calendar size={14} />, label: "Leave" };
+    if (activeNav === "payments" || activeNav === "collections" || currentTabParam === "payments" || currentPath === "/driver/collections") return { icon: <Wallet size={14} />, label: "Collections" };
+    if (activeNav === "verification" || activeNav === "profile" || currentTabParam === "verification" || currentPath === "/driver/profile") return { icon: <User size={14} />, label: "Profile" };
+    if (activeNav === "lostfound" || currentTabParam === "lostfound" || currentPath === "/driver/lost-found") return { icon: <Package size={14} />, label: "Lost & Found" };
+    if (activeNav === "notifications" || currentTabParam === "notifications" || currentPath.includes("/notifications")) return { icon: <Bell size={14} />, label: "Notifications" };
+    return { icon: <LayoutDashboard size={14} />, label: "Dashboard" };
   };
 
   const activeInfo = getActivePageLabel();
@@ -159,14 +174,14 @@ export default function DriverHeader({
               aria-expanded={isMenuOpen}
               title="Open all driver navigation and services"
             >
-              <span className="driver-menu-btn-icon">☰</span>
-              <span className="driver-menu-active-chip">
+              <span className="driver-menu-btn-icon" style={{ display: "inline-flex", alignItems: "center" }}><Menu size={15} /></span>
+              <span className="driver-menu-active-chip" style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
                 <span>{activeInfo.icon}</span>
                 <span>{activeInfo.label}</span>
               </span>
               <span className="driver-menu-divider">|</span>
               <span className="driver-menu-btn-label">Driver Menu</span>
-              <span className={`driver-menu-chevron ${isMenuOpen ? "rotated" : ""}`}>▾</span>
+              <span className={`driver-menu-chevron ${isMenuOpen ? "rotated" : ""}`} style={{ display: "inline-flex", alignItems: "center" }}><ChevronDown size={14} /></span>
             </button>
 
             {/* Complete All-in-One Driver Menu Popover */}
@@ -192,8 +207,9 @@ export default function DriverHeader({
               onClick={() => setShowNotifDropdown(!showNotifDropdown)}
               title="Notifications & Fleet Alerts"
               aria-label="View notifications"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
             >
-              <span>🔔</span>
+              <Bell size={18} />
               {unreadNotifs > 0 && (
                 <span className="driver-header-notif-badge">{unreadNotifs}</span>
               )}
@@ -251,7 +267,7 @@ export default function DriverHeader({
                           >
                             {n.title || "Notification"}
                           </span>
-                          <span style={{ fontSize: "10.5px", color: "#667085" }}>
+                          <span style={{ fontSize: "10.5px", color: "#64748b" }}>
                             {n.createdAt
                               ? new Date(n.createdAt).toLocaleTimeString([], {
                                   hour: "2-digit",
@@ -264,7 +280,7 @@ export default function DriverHeader({
                           style={{
                             margin: 0,
                             fontSize: "12px",
-                            color: "#667085",
+                            color: "#64748b",
                             lineHeight: "1.4",
                           }}
                         >
@@ -294,8 +310,9 @@ export default function DriverHeader({
             className="driver-lang-btn"
             onClick={toggleGoogleTranslate}
             title="Toggle Malayalam / English Language"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
           >
-            <span>🌐</span>
+            <Globe size={14} />
             <span>{isMalayalam ? "English" : "മലയാളം (ML)"}</span>
           </button>
 

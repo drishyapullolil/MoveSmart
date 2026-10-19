@@ -65,6 +65,20 @@ const journeySchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  isReplacementDriver: {
+    type: Boolean,
+    default: false
+  },
+  shift: {
+    type: String,
+    enum: ["Morning", "Evening", "Night"],
+    default: "Morning"
+  },
+  replacementDutyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "DriverReplacement",
+    default: null
+  },
   tripSessionId: {
     type: String,
     default: "",

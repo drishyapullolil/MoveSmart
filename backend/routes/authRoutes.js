@@ -239,7 +239,7 @@ router.post("/login", async (req, res) => {
         const token = jwt.sign(
             { id: user._id, role: user.role, email: user.email },
             process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026",
-            { expiresIn: "7d" }
+            { expiresIn: "30d" }
         );
 
         res.json({
@@ -318,7 +318,7 @@ router.post("/google-login", async (req, res) => {
         const token = jwt.sign(
             { id: user._id, role: user.role, email: user.email },
             process.env.JWT_SECRET || "movesmart_jwt_secret_key_2026",
-            { expiresIn: "7d" }
+            { expiresIn: "30d" }
         );
 
         // Return user authentication data

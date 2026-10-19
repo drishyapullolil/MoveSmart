@@ -962,7 +962,10 @@ router.post("/tap", async (req, res) => {
           busName: busDetails.busName,
           busId: assignedBusRecord._id,
           driverId: busDetails.driverId,
-          driverEmail: busDetails.driverEmail
+          driverEmail: busDetails.driverEmail,
+          isReplacementDriver: Boolean(activeTrip.isReplacementDriver),
+          shift: activeTrip.shift || "Morning",
+          replacementDutyId: activeTrip.replacementDutyId || null
         });
         await newJourney.save();
 
@@ -1170,7 +1173,10 @@ router.post("/tap", async (req, res) => {
         busName: busDetails.busName,
         busId: assignedBusRecord._id,
         driverId: busDetails.driverId,
-        driverEmail: busDetails.driverEmail
+        driverEmail: busDetails.driverEmail,
+        isReplacementDriver: Boolean(activeTrip.isReplacementDriver),
+        shift: activeTrip.shift || "Morning",
+        replacementDutyId: activeTrip.replacementDutyId || null
       });
 
       await newJourney.save();

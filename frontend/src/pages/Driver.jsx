@@ -15,10 +15,54 @@
  * ============================================================================
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { io } from "socket.io-client";
+import {
+  Bell,
+  Globe,
+  Bus,
+  Compass,
+  Radio,
+  LayoutDashboard,
+  Clock,
+  Calendar,
+  Wallet,
+  User,
+  Package,
+  Mail,
+  Phone,
+  CreditCard,
+  ShieldCheck,
+  Users,
+  Check,
+  AlertTriangle,
+  Play,
+  Square,
+  RotateCw,
+  ArrowRight,
+  ChevronRight,
+  MapPin,
+  Activity,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  Scan,
+  Shield,
+  Search,
+  Zap,
+  Gauge,
+  CircleAlert,
+  Volume2,
+  VolumeX,
+  Upload,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Navigation
+} from "lucide-react";
 import { getStoredUser, setStoredUser, clearStoredSession, getStoredToken } from "../utils/session";
 import DriverNotifications from "./DriverNotifications";
 
@@ -104,16 +148,20 @@ function Driver({ defaultTab = "dashboard" }) {
   useEffect(() => {
     if (!document.getElementById("google-translate-script")) {
       window.googleTranslateElementInit = () => {
-        if (window.google && window.google.translate) {
-          new window.google.translate.TranslateElement(
-            {
-              pageLanguage: "en",
-              includedLanguages: "en,ml,hi,ta",
-              layout: window.google.translate.TranslateElement.InlineLayout.SIMPLE,
-              autoDisplay: false,
-            },
-            "google_translate_element"
-          );
+        try {
+          if (window.google && window.google.translate && typeof window.google.translate.TranslateElement === "function") {
+            new window.google.translate.TranslateElement(
+              {
+                pageLanguage: "en",
+                includedLanguages: "en,ml,hi,ta",
+                layout: window.google.translate.TranslateElement?.InlineLayout?.SIMPLE || 0,
+                autoDisplay: false,
+              },
+              "google_translate_element"
+            );
+          }
+        } catch (e) {
+          console.warn("Google translate element init notice:", e);
         }
       };
 
@@ -123,8 +171,12 @@ function Driver({ defaultTab = "dashboard" }) {
       script.async = true;
       script.src = "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit";
       document.body.appendChild(script);
-    } else if (window.google && window.google.translate && window.googleTranslateElementInit) {
-      window.googleTranslateElementInit();
+    } else if (window.google && window.google.translate && typeof window.googleTranslateElementInit === "function") {
+      try {
+        window.googleTranslateElementInit();
+      } catch (e) {
+        console.warn("Google translate element init notice:", e);
+      }
     }
 
     const cookies = document.cookie.split("; ");
@@ -247,6 +299,8 @@ function Driver({ defaultTab = "dashboard" }) {
   const [dbBuses, setDbBuses] = useState([]);
   const [busSearchQuery, setBusSearchQuery] = useState("");
   const [loadingBuses, setLoadingBuses] = useState(false);
+  const [driverDuty, setDriverDuty] = useState(null);
+  const [loadingDriverDuty, setLoadingDriverDuty] = useState(false);
 
   // 6. Driver Leave Management State
   const [driverLeaves, setDriverLeaves] = useState([]);
@@ -254,6 +308,7 @@ function Driver({ defaultTab = "dashboard" }) {
   const [leaveForm, setLeaveForm] = useState({
     leaveDate: "",
     leaveType: "Full Day",
+    shiftSlot: "Full Day",
     halfDaySlot: "Forenoon (AM)",
     reason: "",
   });
@@ -430,6 +485,7 @@ function Driver({ defaultTab = "dashboard" }) {
     const busDriverLicense = (b.driverLicense || "").toLowerCase().trim();
 
     const isAssignedToMe = Boolean(
+      b.isReplacementDuty ||
       (driverIdStr && busDriverId && busDriverId === driverIdStr) ||
       (driverEmailStr && busDriverEmail && busDriverEmail === driverEmailStr) ||
       (driverNameStr && busDriverName && busDriverName === driverNameStr) ||
@@ -452,20 +508,53 @@ function Driver({ defaultTab = "dashboard" }) {
   const totalCapacity = assignedBus?.totalSeats || user?.assignedBus?.totalSeats || 32;
   const dailyEarnings = paymentsLog.reduce((acc, p) => acc + (parseFloat(p.numericAmount) || 0), 0) + (passengersOnboard * (assignedBus?.price || 35));
 
-  const dynamicSchedules = filteredBuses.map((bus, idx) => {
-    const bookedCount = bus.bookedSeats ? bus.bookedSeats.length : Math.max(0, (bus.totalSeats || 32) - (bus.availableSeats ?? 32));
-    const fareTotal = bookedCount * (bus.price || 35);
-    return {
-      id: bus._id || `TRIP-${idx + 1}`,
-      departure: bus.departureTime || "08:00 AM",
-      arrival: bus.arrivalTime || "10:00 AM",
-      routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
-      stops: bus.stops && bus.stops.length > 0 ? bus.stops : [bus.fromLocation, bus.toLocation].filter(Boolean),
-      status: tripStatus === "in_progress" && idx === activeTripIndex ? "InProgress" : "Upcoming",
-      passengers: bookedCount,
-      fareEarned: fareTotal,
-    };
-  });
+  // Aggregate all scheduled trips across all assigned bus slots
+  const dynamicSchedules = useMemo(() => {
+    const list = [];
+    filteredBuses.forEach((bus, busIdx) => {
+      const trips = (bus.assignedTrips && bus.assignedTrips.length > 0)
+        ? bus.assignedTrips
+        : [{
+            id: bus._id || `TRIP-${busIdx + 1}`,
+            departureTime: bus.departureTime || "08:00 AM",
+            arrivalTime: bus.arrivalTime || "10:00 AM",
+            routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+            fromLocation: bus.fromLocation,
+            toLocation: bus.toLocation,
+            stops: bus.stops || [],
+            shift: bus.assignedShift || bus.shift || "Morning",
+            price: bus.price || 35,
+          }];
+
+      trips.forEach((tr, tripIdx) => {
+        const bookedCount = bus.bookedSeats ? bus.bookedSeats.length : Math.max(0, (bus.totalSeats || 32) - (bus.availableSeats ?? 32));
+        const fareTotal = bookedCount * (tr.price || bus.price || 35);
+        list.push({
+          id: tr.id || tr._id || `${bus.busNumber}-${tripIdx}`,
+          scheduleId: tr.scheduleId || null,
+          departure: tr.departureTime || tr.start_time || "08:00 AM",
+          arrival: tr.arrivalTime || "10:00 AM",
+          routeName: tr.routeName || `${tr.fromLocation} ➔ ${tr.toLocation}`,
+          fromLocation: tr.fromLocation || bus.fromLocation,
+          toLocation: tr.toLocation || bus.toLocation,
+          stops: tr.stops && tr.stops.length > 0 ? tr.stops : (bus.stops || []),
+          shift: tr.shift || bus.assignedShift || bus.shift || "Morning",
+          busId: bus._id,
+          busNumber: bus.busNumber,
+          busName: bus.busName,
+          busType: bus.busType,
+          totalSeats: bus.totalSeats || 32,
+          isReplacementDuty: Boolean(bus.isReplacementDuty),
+          status: tripStatus === "in_progress" && busIdx === activeTripIndex ? "InProgress" : "Upcoming",
+          passengers: bookedCount,
+          fareEarned: fareTotal,
+          rawBus: bus,
+          busIndex: busIdx,
+        });
+      });
+    });
+    return list;
+  }, [filteredBuses, activeTripIndex, tripStatus]);
 
   const occupancyPercent = totalCapacity > 0 ? Math.round((passengersOnboard / totalCapacity) * 100) : 0;
 
@@ -2110,11 +2199,26 @@ function Driver({ defaultTab = "dashboard" }) {
   // ----------------------------------------------------
   // FETCH DATA FROM BACKEND API
   // ----------------------------------------------------
+  const fetchDriverDuty = async () => {
+    setLoadingDriverDuty(true);
+    try {
+      const res = await axios.get("/api/driver/duty");
+      if (res.data?.duty) {
+        setDriverDuty(res.data.duty);
+      }
+    } catch (err) {
+      console.warn("Could not load driver duty:", err.message);
+    } finally {
+      setLoadingDriverDuty(false);
+    }
+  };
+
   const fetchDbBuses = async () => {
     setLoadingBuses(true);
     try {
       const res = await axios.get("/api/driver/buses");
       setDbBuses(res.data.buses || []);
+      fetchDriverDuty();
     } catch (err) {
       console.error("Error fetching buses database:", err);
     } finally {
@@ -2177,6 +2281,7 @@ function Driver({ defaultTab = "dashboard" }) {
     if (user && authStatus !== "loading") {
       Promise.allSettled([
         fetchDbBuses(),
+        fetchDriverDuty(),
         fetchDriverLeaves(),
         fetchProfileStatus(),
         fetchRecentRfidTaps(),
@@ -2293,18 +2398,23 @@ function Driver({ defaultTab = "dashboard" }) {
 
     setSubmittingLeave(true);
     try {
+      const shiftSlotToSend = leaveForm.leaveType === "Half Day"
+        ? (leaveForm.halfDaySlot === "Afternoon (PM)" ? "Evening" : "Morning")
+        : (leaveForm.shiftSlot || "ALL");
+
       const res = await axios.post("/api/driver/leave", {
         driverId: user?.id || user?._id || "drv-01",
         driverName: user?.name || "Driver",
         driverEmail: user?.email || "driver@movesmart.in",
         leaveDate: leaveForm.leaveDate,
         leaveType: leaveForm.leaveType,
+        shiftSlot: shiftSlotToSend,
         halfDaySlot: leaveForm.leaveType === "Half Day" ? leaveForm.halfDaySlot : "N/A",
         reason: leaveForm.reason,
       });
 
-      showToast(`✓ Leave application (${leaveForm.leaveType}) for ${leaveForm.leaveDate} submitted for admin review!`);
-      setLeaveForm({ leaveDate: "", leaveType: "Full Day", halfDaySlot: "Forenoon (AM)", reason: "" });
+      showToast(`✓ Leave application (${leaveForm.leaveType} - ${shiftSlotToSend}) for ${leaveForm.leaveDate} submitted for admin review!`);
+      setLeaveForm({ leaveDate: "", leaveType: "Full Day", shiftSlot: "ALL", halfDaySlot: "Forenoon (AM)", reason: "" });
       fetchDriverLeaves();
     } catch (err) {
       openAlert("Apply for Driver Leave", err.response?.data?.message || "Failed to submit leave application");
@@ -2681,38 +2791,38 @@ function Driver({ defaultTab = "dashboard" }) {
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Manjari:wght@400;700&display=swap');
         
         * { box-sizing: border-box; }
-        body { font-family: 'Plus Jakarta Sans', 'Manjari', sans-serif; background: #F8F7FC; color: #182033; margin: 0; font-size: 14px; top: 0px !important; }
+        body { font-family: 'Plus Jakarta Sans', 'Manjari', sans-serif; background: #F8F9FD; color: #0F172A; margin: 0; font-size: 13.5px; top: 0px !important; }
 
         /* Smooth Page Entry Keyframe Animations */
         @keyframes driverFadeIn {
-          from { opacity: 0; transform: translateY(14px); }
+          from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
         }
 
-        .anim-entry-1 { animation: driverFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        .anim-entry-2 { animation: driverFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.06s forwards; opacity: 0; }
-        .anim-entry-3 { animation: driverFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.12s forwards; opacity: 0; }
-        .anim-entry-4 { animation: driverFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.18s forwards; opacity: 0; }
-        .anim-entry-5 { animation: driverFadeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) 0.24s forwards; opacity: 0; }
+        .anim-entry-1 { animation: driverFadeIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .anim-entry-2 { animation: driverFadeIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.04s forwards; opacity: 0; }
+        .anim-entry-3 { animation: driverFadeIn 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.08s forwards; opacity: 0; }
+        .anim-entry-4 { animation: driverFadeIn 0.40s cubic-bezier(0.16, 1, 0.3, 1) 0.12s forwards; opacity: 0; }
+        .anim-entry-5 { animation: driverFadeIn 0.44s cubic-bezier(0.16, 1, 0.3, 1) 0.16s forwards; opacity: 0; }
 
-        /* Soft Pulsing Green Duty Dot (Every 2.4s) */
+        /* Soft Pulsing Green Duty Dot */
         @keyframes dotPulse {
-          0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(21, 148, 71, 0.5); }
-          50% { transform: scale(1.25); opacity: 0.85; box-shadow: 0 0 0 6px rgba(21, 148, 71, 0); }
+          0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+          50% { transform: scale(1.25); opacity: 0.85; box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
         }
         .duty-dot {
-          width: 8px;
-          height: 8px;
+          width: 7px;
+          height: 7px;
           border-radius: 50%;
-          background: #159447;
+          background: #10b981;
           display: inline-block;
           animation: dotPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
         .duty-dot-off {
-          width: 8px;
-          height: 8px;
+          width: 7px;
+          height: 7px;
           border-radius: 50%;
-          background: #dc2626;
+          background: #ef4444;
           display: inline-block;
         }
 
@@ -2738,21 +2848,21 @@ function Driver({ defaultTab = "dashboard" }) {
           font-size: 0px !important;
         }
         .goog-te-gadget .goog-te-combo {
-          background: #F0EBFF;
-          color: #6337D9;
-          border: 1.5px solid #ddd6fe;
-          padding: 8px 12px;
-          border-radius: 12px;
+          background: #F1F5F9;
+          color: #4F46E5;
+          border: 1px solid #CBD5E1;
+          padding: 5px 10px;
+          border-radius: 8px;
           font-weight: 700;
-          font-size: 13.5px;
+          font-size: 12px;
           outline: none;
           cursor: pointer;
           margin: 0;
           transition: all 0.2s ease;
         }
         .goog-te-gadget .goog-te-combo:hover {
-          background: #ede9fe;
-          border-color: #c4b5fd;
+          background: #E2E8F0;
+          border-color: #94A3B8;
         }
         .goog-te-gadget span {
           display: none !important;
@@ -2767,48 +2877,239 @@ function Driver({ defaultTab = "dashboard" }) {
           box-shadow: none;
         }
 
-        /* Responsive Grid Layout (<768px Mobile Breakpoint) */
+        /* Responsive Grid Layout */
         .driver-grid-layout {
           display: grid;
-          grid-template-columns: 1.8fr 1fr;
-          gap: 24px;
+          grid-template-columns: 1.75fr 1fr;
+          gap: 16px;
         }
 
         .driver-two-col-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 24px;
+          gap: 16px;
         }
 
         .driver-leave-grid {
           display: grid;
           grid-template-columns: 1fr 1.2fr;
-          gap: 24px;
+          gap: 16px;
         }
 
         .dashboard-metrics-grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          gap: 16px;
+          gap: 12px;
         }
 
-        @media (max-width: 768px) {
+        /* Modern 2-Column Workspace (Left Sidebar Nav + Right Main View) */
+        .driver-workspace-layout {
+          display: flex;
+          align-items: flex-start;
+          gap: 18px;
+          width: 100%;
+          min-width: 0;
+        }
+
+        .driver-sidebar-nav {
+          width: 250px;
+          flex-shrink: 0;
+          background: #FFFFFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 16px;
+          padding: 14px 10px;
+          box-shadow: 0 4px 16px rgba(15, 23, 42, 0.03);
+          position: sticky;
+          top: 72px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          box-sizing: border-box;
+          max-height: calc(100vh - 90px);
+          overflow-y: auto;
+          scrollbar-width: thin;
+        }
+
+        .driver-sidebar-nav::-webkit-scrollbar {
+          width: 4px;
+        }
+        .driver-sidebar-nav::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
+
+        .driver-nav-profile-card {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 12px;
+          padding: 10px;
+          margin-bottom: 6px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .driver-duty-toggle-btn {
+          border: 1px solid #CBD5E1;
+          background: #FFFFFF;
+          padding: 5px 10px;
+          border-radius: 8px;
+          font-size: 11px;
+          font-weight: 800;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          transition: all 0.15s ease;
+          width: 100%;
+          color: #334155;
+        }
+        .driver-duty-toggle-btn:hover {
+          background: #F1F5F9;
+          border-color: #94A3B8;
+        }
+
+        .driver-nav-section-label {
+          font-size: 9.5px;
+          font-weight: 800;
+          color: #94A3B8;
+          letter-spacing: 0.6px;
+          padding: 4px 8px 2px 8px;
+          text-transform: uppercase;
+        }
+
+        .driver-nav-list {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .driver-nav-item {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 9px 12px;
+          border-radius: 10px;
+          border: none;
+          background: transparent;
+          color: #475569;
+          font-weight: 700;
+          font-size: 12.5px;
+          cursor: pointer;
+          transition: all 0.16s ease;
+          text-decoration: none;
+          box-sizing: border-box;
+          text-align: left;
+        }
+        .driver-nav-item:hover {
+          background: #F1F5F9;
+          color: #0F172A;
+          transform: translateX(2px);
+        }
+        .driver-nav-item.active {
+          background: linear-gradient(135deg, #1E293B, #0F172A);
+          color: #FFFFFF;
+          font-weight: 800;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
+        }
+        .driver-nav-item.active .driver-nav-item-left svg {
+          color: #FFFFFF !important;
+        }
+        .driver-nav-item.active .driver-nav-badge {
+          background: #38BDF8;
+          color: #0F172A;
+        }
+
+        .driver-nav-item-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .driver-nav-badge {
+          font-size: 10.5px;
+          font-weight: 800;
+          padding: 1px 7px;
+          border-radius: 999px;
+          background: #E2E8F0;
+          color: #334155;
+          flex-shrink: 0;
+        }
+        .driver-nav-badge.approved {
+          background: #DCFCE7;
+          color: #15803D;
+        }
+        .driver-nav-badge.notif {
+          background: #EF4444;
+          color: #FFFFFF;
+        }
+        .driver-nav-badge.cockpit {
+          background: #D1FAE5;
+          color: #065F46;
+          font-size: 9px;
+          letter-spacing: 0.5px;
+        }
+        .driver-nav-badge.esp {
+          background: #DBEAFE;
+          color: #1E40AF;
+          font-size: 9px;
+          letter-spacing: 0.5px;
+        }
+
+        .driver-main-view {
+          flex: 1;
+          min-width: 0;
+        }
+
+        @media (max-width: 992px) {
+          .driver-workspace-layout {
+            flex-direction: column;
+            gap: 14px;
+          }
+          .driver-sidebar-nav {
+            width: 100%;
+            position: static;
+            max-height: none;
+            overflow-x: auto;
+            flex-direction: row;
+            flex-wrap: wrap;
+            padding: 10px;
+          }
+          .driver-nav-list {
+            flex-direction: row;
+            flex-wrap: wrap;
+            width: 100%;
+          }
+          .driver-nav-item {
+            width: auto;
+            flex: 1 1 auto;
+          }
+          .driver-nav-profile-card,
+          .driver-nav-section-label {
+            display: none;
+          }
+        }
+
+        @media (max-width: 900px) {
           .driver-grid-layout,
           .driver-two-col-grid,
           .driver-leave-grid {
             grid-template-columns: 1fr !important;
-            gap: 16px !important;
+            gap: 14px !important;
           }
 
           .dashboard-metrics-grid {
             grid-template-columns: 1fr !important;
-            gap: 12px !important;
+            gap: 10px !important;
           }
 
           .top-navbar-container {
             flex-direction: column !important;
             align-items: stretch !important;
-            gap: 12px !important;
+            gap: 10px !important;
           }
 
           .top-navbar-actions {
@@ -2819,58 +3120,45 @@ function Driver({ defaultTab = "dashboard" }) {
           .driver-hero-inner {
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 16px !important;
+            gap: 12px !important;
           }
 
           .driver-hero-actions {
             width: 100% !important;
-            flex-direction: column !important;
-            align-items: stretch !important;
-          }
-
-          .driver-hero-actions > * {
-            width: 100% !important;
-            text-align: center !important;
-            justify-content: center !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
           }
         }
 
-        /* Minimum 44x44px Touch Targets */
-        .touch-target {
-          min-height: 44px;
-          min-width: 44px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-        }
-
+        /* Compact Header Brand */
         .header-logo-badge {
-          width: 48px;
-          height: 48px;
-          border-radius: 14px;
+          width: 34px;
+          height: 34px;
+          border-radius: 9px;
           background: #ffffff;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 6px;
-          box-shadow: 0 4px 14px rgba(99, 55, 217, 0.12);
-          border: 1px solid #e9d5ff;
+          padding: 4px;
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+          border: 1px solid #E2E8F0;
           transition: transform 0.2s ease;
+          flex-shrink: 0;
         }
         .header-logo-badge:hover {
-          transform: scale(1.04);
+          transform: scale(1.05);
         }
 
         /* Header Notification Button */
         .header-notif-btn {
           position: relative;
-          min-height: 44px;
-          min-width: 44px;
-          background: #F0EBFF;
-          border: 1.5px solid #ddd6fe;
-          border-radius: 12px;
-          color: #6337D9;
-          font-size: 18px;
+          height: 34px;
+          width: 34px;
+          background: #F1F5F9;
+          border: 1px solid #CBD5E1;
+          border-radius: 9px;
+          color: #475569;
+          font-size: 15px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -2878,85 +3166,92 @@ function Driver({ defaultTab = "dashboard" }) {
           transition: all 0.2s ease;
         }
         .header-notif-btn:hover {
-          background: #ede9fe;
-          border-color: #c4b5fd;
-          transform: translateY(-1px);
+          background: #E2E8F0;
+          color: #0F172A;
+          border-color: #94A3B8;
         }
         .header-notif-btn.active {
-          background: #6337D9;
+          background: #4F46E5;
           color: #ffffff;
-          border-color: #6337D9;
-          box-shadow: 0 4px 14px rgba(99, 55, 217, 0.3);
+          border-color: #4F46E5;
+          box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
         }
 
         .header-notif-badge {
           position: absolute;
-          top: -4px;
-          right: -4px;
-          background: #ef4444;
+          top: -3px;
+          right: -3px;
+          background: #EF4444;
           color: #ffffff;
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 800;
-          padding: 2px 6px;
-          border-radius: 10px;
-          border: 2px solid #ffffff;
-          box-shadow: 0 2px 6px rgba(239, 68, 68, 0.4);
-          line-height: 1;
+          padding: 1px 5px;
+          border-radius: 8px;
+          border: 1.5px solid #ffffff;
+          line-height: 1.2;
         }
 
         /* Notification Dropdown Popover */
         .notif-popover {
           position: absolute;
-          top: calc(100% + 12px);
+          top: calc(100% + 8px);
           right: 0;
-          width: 360px;
+          width: 340px;
           max-width: 90vw;
           background: rgba(255, 255, 255, 0.98);
           backdrop-filter: blur(16px);
           -webkit-backdrop-filter: blur(16px);
-          border-radius: 18px;
-          border: 1.5px solid #E6E8F0;
-          box-shadow: 0 16px 36px rgba(24, 32, 51, 0.12);
+          border-radius: 14px;
+          border: 1px solid #E2E8F0;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
           z-index: 1000;
           overflow: hidden;
-          animation: popoverFadeIn 0.2s ease;
+          animation: popoverFadeIn 0.18s ease;
         }
 
         @keyframes popoverFadeIn {
-          from { opacity: 0; transform: translateY(-8px); }
+          from { opacity: 0; transform: translateY(-6px); }
           to { opacity: 1; transform: translateY(0); }
         }
 
         /* Secondary Language Switcher */
         .lang-toggle-btn {
-          min-height: 44px;
-          background: #F0EBFF;
-          color: #6337D9;
-          border: 1.5px solid #ddd6fe;
-          padding: 8px 16px;
-          border-radius: 999px;
+          height: 34px;
+          background: #F1F5F9;
+          color: #475569;
+          border: 1px solid #CBD5E1;
+          padding: 0 12px;
+          border-radius: 8px;
           font-weight: 700;
-          font-size: 14px;
+          font-size: 12px;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
+          gap: 6px;
           transition: all 0.2s ease;
         }
         .lang-toggle-btn:hover {
-          background: #ede9fe;
-          border-color: #c4b5fd;
+          background: #E2E8F0;
+          color: #0F172A;
+          border-color: #94A3B8;
         }
 
-        /* Horizontal Scrollable Tabs */
+        /* Segmented Horizontal Scrollable Tabs */
+        .driver-tabs-container {
+          background: #FFFFFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 12px;
+          padding: 4px;
+          box-shadow: 0 1px 4px rgba(15, 23, 42, 0.03);
+          margin-bottom: 16px;
+        }
         .driver-tabs-scroller {
           display: flex;
-          gap: 10px;
+          gap: 4px;
           overflow-x: auto;
           scrollbar-width: none;
           -ms-overflow-style: none;
-          padding: 4px 2px 8px 2px;
           align-items: center;
           width: 100%;
         }
@@ -2965,263 +3260,339 @@ function Driver({ defaultTab = "dashboard" }) {
         }
 
         .driver-nav-tab {
-          min-height: 44px;
+          height: 34px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
-          padding: 10px 18px;
-          border-radius: 14px;
-          border: 1.5px solid #E6E8F0;
-          background: #ffffff;
-          color: #182033;
+          gap: 6px;
+          padding: 0 14px;
+          border-radius: 8px;
+          border: none;
+          background: transparent;
+          color: #64748B;
           font-weight: 700;
-          font-size: 13.5px;
+          font-size: 12.5px;
           cursor: pointer;
-          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: all 0.16s ease;
           white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.02);
           flex-shrink: 0;
         }
         .driver-nav-tab:hover {
-          color: #159447;
-          background: #F0EBFF;
-          border-color: #c4b5fd;
-          transform: translateY(-2px);
+          color: #0F172A;
+          background: #F1F5F9;
         }
         .driver-nav-tab.active {
-          background: linear-gradient(135deg, #6337D9 0%, #159447 100%);
-          color: #ffffff;
-          border-color: transparent;
-          box-shadow: 0 6px 18px rgba(99, 55, 217, 0.28);
+          background: #0F172A;
+          color: #FFFFFF;
+          box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
         }
 
-        /* Glassmorphism Card System */
+        /* Modern Card System */
         .card-shadow {
-          background: #ffffff;
-          border-radius: 20px;
-          padding: 24px;
-          border: 1.5px solid #E6E8F0;
-          box-shadow: 0 4px 20px rgba(24, 32, 51, 0.03);
-          transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+          background: #FFFFFF;
+          border-radius: 14px;
+          padding: 18px;
+          border: 1px solid #E2E8F0;
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
         }
         .card-shadow:hover {
-          box-shadow: 0 12px 32px rgba(24, 32, 51, 0.06);
+          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
         }
 
-        /* Quick Action Feature Cards (Live Drive & RFID) */
-        .quick-action-card {
-          position: relative;
-          overflow: hidden;
-          border-radius: 20px;
-          padding: 24px;
-          color: #ffffff;
-          cursor: pointer;
+        /* 8-Tile Quick Action Launch Hub */
+        .quick-actions-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 10px;
+          margin-bottom: 16px;
+        }
+        @media (max-width: 960px) {
+          .quick-actions-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 480px) {
+          .quick-actions-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .quick-action-tile {
+          background: #FFFFFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 12px;
+          padding: 12px 14px;
           display: flex;
-          justifyContent: space-between;
           align-items: center;
-          transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          gap: 12px;
+          cursor: pointer;
+          transition: all 0.18s ease;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
         }
-        .quick-action-card:hover {
-          transform: translateY(-4px);
+        .quick-action-tile:hover {
+          transform: translateY(-2px);
+          border-color: #CBD5E1;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+          background: #FAFAFC;
         }
-        .quick-action-green {
-          background: linear-gradient(135deg, #159447 0%, #087A3D 100%);
-          box-shadow: 0 8px 24px rgba(21, 148, 71, 0.28);
+        .quick-action-tile:active {
+          transform: scale(0.99);
         }
-        .quick-action-green:hover {
-          box-shadow: 0 14px 34px rgba(21, 148, 71, 0.4);
-        }
-        .quick-action-blue {
-          background: linear-gradient(135deg, #2864D7 0%, #1e40af 100%);
-          box-shadow: 0 8px 24px rgba(40, 100, 215, 0.28);
-        }
-        .quick-action-blue:hover {
-          box-shadow: 0 14px 34px rgba(40, 100, 215, 0.4);
-        }
-
-        .quick-action-arrow {
-          width: 44px;
-          height: 44px;
-          border-radius: 14px;
-          background: rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(8px);
+        .quick-action-icon-box {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 20px;
           flex-shrink: 0;
-          transition: transform 0.25s ease, background 0.2s ease;
-        }
-        .quick-action-card:hover .quick-action-arrow {
-          transform: translateX(4px);
-          background: rgba(255, 255, 255, 0.3);
+          font-size: 16px;
         }
 
-        /* Structured Driver Info Chips */
+        /* Cockpit Today's Duty Showcase Card */
+        .duty-cockpit-card {
+          background: #FFFFFF;
+          border: 1.5px solid #E2E8F0;
+          border-radius: 16px;
+          padding: 20px;
+          box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+          position: relative;
+          overflow: hidden;
+        }
+        .duty-cockpit-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 12px;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #F1F5F9;
+        }
+        .duty-badge-bus {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: #F8FAFC;
+          border: 1.5px solid #E2E8F0;
+          color: #0F172A;
+          font-weight: 800;
+          font-size: 13.5px;
+          padding: 4px 12px;
+          border-radius: 8px;
+          font-family: monospace;
+          letter-spacing: 0.5px;
+        }
+
+        /* Route Corridor Stepper */
+        .route-corridor-box {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 14px;
+          padding: 16px 20px;
+          margin: 16px 0;
+        }
+        .route-point-label {
+          font-size: 10.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #64748B;
+        }
+        .route-point-city {
+          font-size: 16px;
+          font-weight: 800;
+          color: #0F172A;
+          margin-top: 2px;
+          letter-spacing: -0.2px;
+        }
+
+        /* Driver Info Chips */
         .driver-info-chip {
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          background: #F8F7FC;
-          padding: 6px 12px;
-          border-radius: 10px;
-          border: 1px solid #E6E8F0;
-          font-size: 12.5px;
-          color: #182033;
+          background: #F8FAFC;
+          padding: 4px 10px;
+          border-radius: 8px;
+          border: 1px solid #E2E8F0;
+          font-size: 12px;
+          color: #475569;
           font-weight: 600;
-          transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+          transition: all 0.15s ease;
         }
         .driver-info-chip:hover {
-          transform: translateY(-2px);
-          background: #ffffff;
-          border-color: #6337D9;
-          box-shadow: 0 4px 12px rgba(99, 55, 217, 0.08);
+          background: #FFFFFF;
+          border-color: #CBD5E1;
+          color: #0F172A;
         }
 
         /* KPI Mini Stat Card */
         .kpi-mini-card {
-          background: #ffffff;
-          border-radius: 18px;
-          padding: 18px 20px;
-          border: 1.5px solid #E6E8F0;
-          box-shadow: 0 4px 16px rgba(24, 32, 51, 0.03);
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          background: #FFFFFF;
+          border-radius: 12px;
+          padding: 14px 16px;
+          border: 1px solid #E2E8F0;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
+          transition: transform 0.18s ease, box-shadow 0.18s ease;
         }
         .kpi-mini-card:hover {
-          transform: translateY(-3px);
-          box-shadow: 0 10px 24px rgba(24, 32, 51, 0.07);
+          transform: translateY(-2px);
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
         }
         .kpi-mini-label {
-          font-size: 11px;
+          font-size: 10.5px;
           font-weight: 800;
-          color: #667085;
-          letter-spacing: 0.6px;
+          color: #64748B;
+          letter-spacing: 0.5px;
           text-transform: uppercase;
         }
         .kpi-mini-val {
-          font-size: 26px;
-          font-weight: 900;
-          margin-top: 6px;
-          letter-spacing: -0.5px;
-          line-height: 1.1;
+          font-size: 22px;
+          font-weight: 800;
+          margin-top: 4px;
+          letter-spacing: -0.4px;
+          line-height: 1.15;
         }
 
-        /* Action: Confirm / Positive */
+        /* Action Buttons */
         .btn-green-gradient {
-          min-height: 48px;
-          background: linear-gradient(135deg, #159447 0%, #087A3D 100%);
-          color: #ffffff;
+          height: 38px;
+          background: #059669;
+          color: #FFFFFF;
           border: none;
-          padding: 14px 24px;
-          border-radius: 14px;
-          font-weight: 800;
-          font-size: 15px;
+          padding: 0 16px;
+          border-radius: 10px;
+          font-weight: 700;
+          font-size: 13px;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 10px;
-          box-shadow: 0 4px 14px rgba(21, 148, 71, 0.3);
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          gap: 6px;
+          box-shadow: 0 2px 6px rgba(5, 150, 105, 0.2);
+          transition: all 0.18s ease;
         }
         .btn-green-gradient:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(21, 148, 71, 0.42);
+          background: #047857;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
         }
         .btn-green-gradient:active {
           transform: scale(0.98);
         }
 
-        /* Action: Secondary / Selection / Navigate */
         .btn-purple-gradient {
-          min-height: 48px;
-          background: linear-gradient(135deg, #6337D9 0%, #4f28b0 100%);
-          color: #ffffff;
+          height: 38px;
+          background: #4F46E5;
+          color: #FFFFFF;
           border: none;
-          padding: 14px 24px;
-          border-radius: 14px;
-          font-weight: 800;
-          font-size: 15px;
+          padding: 0 16px;
+          border-radius: 10px;
+          font-weight: 700;
+          font-size: 13px;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 10px;
-          box-shadow: 0 4px 14px rgba(99, 55, 217, 0.28);
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          gap: 6px;
+          box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2);
+          transition: all 0.18s ease;
         }
         .btn-purple-gradient:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(99, 55, 217, 0.38);
+          background: #4338CA;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
         }
 
-        /* Action: Danger / Stop / Signout */
         .btn-red-outline {
-          min-height: 44px;
-          background: #fff1f2;
-          color: #be123c;
-          border: 1.5px solid #fecdd3;
-          padding: 10px 18px;
-          border-radius: 12px;
+          height: 36px;
+          background: #FEF2F2;
+          color: #DC2626;
+          border: 1px solid #FECACA;
+          padding: 0 14px;
+          border-radius: 9px;
           font-weight: 700;
-          font-size: 14px;
+          font-size: 12.5px;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
-          transition: all 0.2s ease;
+          gap: 6px;
+          transition: all 0.18s ease;
         }
         .btn-red-outline:hover {
-          background: #ffe4e6;
-          border-color: #fda4af;
+          background: #FEE2E2;
+          border-color: #FCA5A5;
           transform: translateY(-1px);
         }
 
-        .status-badge-pending { background: #fffbeb; color: #92400e; border: 1.5px solid #fde68a; padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
-        .status-badge-approved { background: #f0fdf4; color: #15803d; border: 1.5px solid #bbf7d0; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
-        .status-badge-rejected { background: #fff1f2; color: #be123c; border: 1.5px solid #fecdd3; padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-subtle-outline {
+          height: 38px;
+          background: #FFFFFF;
+          color: #0F172A;
+          border: 1.5px solid #E2E8F0;
+          padding: 0 16px;
+          border-radius: 10px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
+          transition: all 0.18s ease;
+        }
+        .btn-subtle-outline:hover {
+          background: #F8FAFC;
+          border-color: #CBD5E1;
+          transform: translateY(-1px);
+        }
+
+        .status-badge-pending { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 11.5px; display: inline-flex; align-items: center; gap: 4px; }
+        .status-badge-approved { background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; padding: 3px 10px; border-radius: 12px; font-weight: 800; font-size: 11.5px; display: inline-flex; align-items: center; gap: 4px; }
+        .status-badge-rejected { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 11.5px; display: inline-flex; align-items: center; gap: 4px; }
 
         .glowing-bell {
           display: inline-block;
         }
 
         @keyframes pulseBorder {
-          0% { border-color: #f59e0b; box-shadow: 0 4px 16px rgba(245, 158, 11, 0.12); }
-          100% { border-color: #d97706; box-shadow: 0 4px 20px rgba(217, 119, 6, 0.22); }
+          0% { border-color: #F59E0B; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.1); }
+          100% { border-color: #D97706; box-shadow: 0 4px 14px rgba(217, 119, 6, 0.18); }
         }
       `}</style>
 
-      {/* HEADER WITH MOVESMART LOGO, NOTIFICATION CENTER & GOOGLE TRANSLATOR */}
+      {/* COMPACT STICKY HEADER */}
       <header style={styles.topNavbar}>
         <div className="top-navbar-container" style={styles.navContainer}>
           {/* Left: MoveSmart Logo & Brand Title */}
-          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <Link to="/driver" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <Link to="/driver" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px" }}>
               <div className="header-logo-badge">
                 <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               </div>
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "22px", fontWeight: "900", background: "linear-gradient(135deg, #182033 0%, #6337D9 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "-0.5px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span style={{ fontSize: "16px", fontWeight: "900", color: "#0F172A", letterSpacing: "-0.4px" }}>
                     MoveSmart
                   </span>
-                  <span style={{ fontSize: "11px", background: "linear-gradient(135deg, #6337D9, #159447)", color: "#ffffff", padding: "3px 9px", borderRadius: "8px", fontWeight: "800", letterSpacing: "0.4px" }}>
-                    DRIVER PORTAL
+                  <span style={{ fontSize: "9.5px", background: "#0F172A", color: "#FFFFFF", padding: "2px 6px", borderRadius: "5px", fontWeight: "800", letterSpacing: "0.3px" }}>
+                    DRIVER
                   </span>
                 </div>
-                <div style={{ fontSize: "12px", color: "#667085", fontWeight: "600", marginTop: "1px" }}>
-                  Kerala Private Transit Portal
+                <div style={{ fontSize: "10.5px", color: "#64748B", fontWeight: "600", marginTop: "0px" }}>
+                  Kerala Transit Console
                 </div>
               </div>
             </Link>
           </div>
 
-          {/* Right: Notification Popover Button, Language Switcher, Duty Status Badge, & Logout */}
-          <div className="top-navbar-actions" style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", position: "relative" }}>
+          {/* Right: Notifications, Language, Duty Switch, Logout */}
+          <div className="top-navbar-actions" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", position: "relative" }}>
 
-            {/* Interactive Header Notification Bell & Dropdown */}
+            {/* Notification Bell */}
             <div ref={notifDropdownRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -3230,7 +3601,7 @@ function Driver({ defaultTab = "dashboard" }) {
                 title="Notifications"
                 aria-label="View notifications"
               >
-                <span>🔔</span>
+                <Bell size={15} />
                 {unreadNotifCount > 0 && (
                   <span className="header-notif-badge">{unreadNotifCount}</span>
                 )}
@@ -3239,11 +3610,11 @@ function Driver({ defaultTab = "dashboard" }) {
               {/* Notification Popover Dropdown */}
               {showNotifDropdown && (
                 <div className="notif-popover">
-                  <div style={{ padding: "14px 16px", borderBottom: "1.5px solid #E6E8F0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{ fontWeight: "800", fontSize: "15px", color: "#182033" }}>Notifications</span>
+                  <div style={{ padding: "10px 14px", borderBottom: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F8FAFC" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontWeight: "800", fontSize: "13px", color: "#0F172A" }}>Notifications</span>
                       {unreadNotifCount > 0 && (
-                        <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "800" }}>
+                        <span style={{ background: "#EF4444", color: "#FFFFFF", padding: "1px 6px", borderRadius: "8px", fontSize: "10px", fontWeight: "800" }}>
                           {unreadNotifCount} New
                         </span>
                       )}
@@ -3252,16 +3623,16 @@ function Driver({ defaultTab = "dashboard" }) {
                       <button
                         type="button"
                         onClick={handleMarkAllNotifsRead}
-                        style={{ background: "none", border: "none", color: "#6337D9", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
+                        style={{ background: "none", border: "none", color: "#4F46E5", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}
                       >
-                        Mark all as read
+                        Mark read
                       </button>
                     )}
                   </div>
 
-                  <div style={{ maxHeight: "320px", overflowY: "auto", padding: "8px 0" }}>
+                  <div style={{ maxHeight: "260px", overflowY: "auto", padding: "4px 0" }}>
                     {notificationsList.length === 0 ? (
-                      <div style={{ padding: "24px 16px", textAlign: "center", color: "#667085", fontSize: "13px", fontWeight: "600" }}>
+                      <div style={{ padding: "18px 14px", textAlign: "center", color: "#64748B", fontSize: "12px", fontWeight: "600" }}>
                         No notifications or fleet alerts.
                       </div>
                     ) : (
@@ -3273,27 +3644,27 @@ function Driver({ defaultTab = "dashboard" }) {
                             key={n.id}
                             onClick={() => handleNotificationClick(n)}
                             style={{
-                              padding: "12px 16px",
-                              borderBottom: "1px solid #f1f5f9",
+                              padding: "9px 14px",
+                              borderBottom: "1px solid #F1F5F9",
                               cursor: "pointer",
-                              background: isRead ? "transparent" : "rgba(99, 55, 217, 0.04)",
-                              transition: "background 0.2s ease",
+                              background: isRead ? "transparent" : "rgba(79, 70, 229, 0.04)",
+                              transition: "background 0.15s ease",
                             }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = isRead ? "transparent" : "rgba(99, 55, 217, 0.04)")}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "#F8FAFC")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = isRead ? "transparent" : "rgba(79, 70, 229, 0.04)")}
                           >
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                              <span style={{ fontWeight: isRead ? "700" : "800", fontSize: "13.5px", color: isRead ? "#334155" : "#182033" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                              <span style={{ fontWeight: isRead ? "600" : "800", fontSize: "12.5px", color: isRead ? "#334155" : "#0F172A" }}>
                                 {n.title}
                               </span>
                               {!isRead && (
-                                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#6337D9" }}></span>
+                                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#4F46E5" }}></span>
                               )}
                             </div>
-                            <div style={{ fontSize: "12.5px", color: "#667085", fontWeight: "500", lineHeight: "1.4" }}>
+                            <div style={{ fontSize: "11.5px", color: "#64748B", fontWeight: "500", lineHeight: "1.35" }}>
                               {n.message}
                             </div>
-                            <div style={{ fontSize: "11px", color: "#8F9BB3", marginTop: "4px", fontWeight: "600" }}>
+                            <div style={{ fontSize: "10px", color: "#94A3B8", marginTop: "3px", fontWeight: "600" }}>
                               {n.createdAt ? new Date(n.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now"}
                             </div>
                           </div>
@@ -3302,7 +3673,7 @@ function Driver({ defaultTab = "dashboard" }) {
                     )}
                   </div>
 
-                  <div style={{ padding: "10px 16px", borderTop: "1.5px solid #E6E8F0", background: "#f8fafc", textAlign: "center" }}>
+                  <div style={{ padding: "8px 14px", borderTop: "1px solid #E2E8F0", background: "#F8FAFC", textAlign: "center" }}>
                     <button
                       type="button"
                       onClick={() => {
@@ -3312,14 +3683,19 @@ function Driver({ defaultTab = "dashboard" }) {
                       style={{
                         background: "none",
                         border: "none",
-                        color: "#6337D9",
-                        fontSize: "13px",
+                        color: "#4F46E5",
+                        fontSize: "12px",
                         fontWeight: "800",
                         cursor: "pointer",
                         width: "100%",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px"
                       }}
                     >
-                      View All Notifications →
+                      <span>View All Notifications</span>
+                      <ArrowRight size={13} />
                     </button>
                   </div>
                 </div>
@@ -3329,35 +3705,36 @@ function Driver({ defaultTab = "dashboard" }) {
             {/* Language Switcher */}
             <button
               type="button"
-              className="lang-toggle-btn touch-target"
+              className="lang-toggle-btn"
               onClick={toggleGoogleTranslate}
               title="Switch Language"
             >
-              <span>🌐</span> {isMalayalam ? "English" : "മലയാളം (ML)"}
+              <Globe size={13} />
+              <span>{isMalayalam ? "EN" : "മലയാളം (ML)"}</span>
             </button>
 
             <div id="google_translate_element"></div>
 
-            {/* Subtle Pulsing ON DUTY Badge */}
+            {/* Duty Status Switch */}
             <button
               type="button"
-              className="touch-target"
               onClick={() => {
                 const nextState = !isOnline;
                 setIsOnline(nextState);
                 showToast(nextState ? "Duty Status: Active (On Duty)" : "Duty Status: Inactive (Off Duty)");
               }}
               style={{
+                height: "34px",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "8px",
-                background: isOnline ? "#f0fdf4" : "#fff1f2",
-                padding: "8px 16px",
-                borderRadius: "999px",
-                border: `1.5px solid ${isOnline ? "#bbf7d0" : "#fecdd3"}`,
+                gap: "6px",
+                background: isOnline ? "#ECFDF5" : "#FEF2F2",
+                padding: "0 12px",
+                borderRadius: "8px",
+                border: `1px solid ${isOnline ? "#A7F3D0" : "#FECACA"}`,
                 fontWeight: "800",
-                fontSize: "13.5px",
-                color: isOnline ? "#159447" : "#be123c",
+                fontSize: "12px",
+                color: isOnline ? "#065F46" : "#991B1B",
                 cursor: "pointer",
                 transition: "all 0.2s ease",
               }}
@@ -3366,7 +3743,7 @@ function Driver({ defaultTab = "dashboard" }) {
               <span>{isOnline ? "ON DUTY" : "OFF DUTY"}</span>
             </button>
 
-            <button onClick={handleLogout} className="btn-red-outline touch-target" style={{ padding: "8px 16px" }}>
+            <button onClick={handleLogout} className="btn-red-outline" style={{ height: "34px" }}>
               Sign Out
             </button>
           </div>
@@ -3376,226 +3753,519 @@ function Driver({ defaultTab = "dashboard" }) {
       {/* Main Content Area */}
       <main style={styles.mainContainer}>
         {/* Toast Notification Banner */}
-        {toastMessage && <div style={styles.toastBanner}>✓ {toastMessage}</div>}
+        {toastMessage && <div style={styles.toastBanner}>{toastMessage}</div>}
 
         {/* Departure Reminder Banner */}
         {journeyReminder && (
           <div style={styles.journeyReminderBanner}>
-            <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1 }}>
-              <div className="glowing-bell" style={styles.glowingBell}>🔔</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
+              <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "rgba(245, 158, 11, 0.2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#B45309" }}>
+                <Bell size={16} />
+              </div>
               <div>
-                <div style={{ fontWeight: "800", fontSize: "15px", color: "#78350f" }}>
+                <div style={{ fontWeight: "800", fontSize: "13px", color: "#78350f" }}>
                   Departure Reminder: Trip Starts in {Math.ceil(journeyReminder.minutesUntil)} Minutes
                 </div>
-                <div style={{ fontSize: "13px", color: "#92400e", fontWeight: "600", marginTop: "2px" }}>
+                <div style={{ fontSize: "11.5px", color: "#92400e", fontWeight: "600", marginTop: "1px" }}>
                   Route: {journeyReminder.routeName} | Scheduled Departure: {journeyReminder.departureTime}
                 </div>
               </div>
             </div>
             <button
               onClick={() => handleStartJourneyFromReminder(journeyReminder)}
-              className="btn-green-gradient touch-target"
-              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "10px", border: "none", cursor: "pointer" }}
+              className="btn-green-gradient"
+              style={{ height: "30px", padding: "0 12px", fontSize: "11.5px" }}
             >
               Start Trip
             </button>
           </div>
         )}
 
-        {/* Driver Profile Header Card */}
-        <section className="anim-entry-1" style={styles.heroDriverCard}>
-          <div className="driver-hero-inner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "20px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap" }}>
-              {/* Driver Avatar with Online Glow Ring */}
-              <div style={{ position: "relative" }}>
-                <div style={styles.avatarWrapper}>
-                  {verificationData?.profilePic || user?.profilePic ? (
-                    <img src={verificationData?.profilePic || user?.profilePic} alt={user?.name || "Driver"} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                  ) : (
-                    <div style={styles.avatarInitials}>
-                      {typeof user?.name === "string" && user.name.trim() ? user.name.split(" ").filter(Boolean).map((n) => n[0]).join("").slice(0, 2) : "DR"}
-                    </div>
-                  )}
-                </div>
-                {/* Real-time Duty Online Indicator Badge */}
-                <span
-                  style={{
-                    position: "absolute",
-                    bottom: "2px",
-                    right: "2px",
-                    width: "16px",
-                    height: "16px",
-                    borderRadius: "50%",
-                    background: isOnline ? "#159447" : "#64748b",
-                    border: "2.5px solid #ffffff",
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
-                  }}
-                  title={isOnline ? "Driver Online & Active" : "Driver Offline"}
-                />
-              </div>
+        {/* DRIVER TWO-COLUMN WORKSPACE (LEFT NAV + RIGHT VIEW) */}
+        <div className="driver-workspace-layout">
 
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <h1 style={{ fontSize: "24px", fontWeight: "900", color: "#182033", margin: 0, letterSpacing: "-0.3px" }}>
+          {/* LEFT SIDEBAR NAVIGATION */}
+          <aside className="driver-sidebar-nav">
+            {/* Sidebar Driver Summary Mini-Card */}
+            <div className="driver-nav-profile-card">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ position: "relative" }}>
+                  <div style={{ ...styles.avatarWrapper, width: "38px", height: "38px" }}>
+                    {verificationData?.profilePic || user?.profilePic ? (
+                      <img src={verificationData?.profilePic || user?.profilePic} alt={user?.name || "Driver"} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ ...styles.avatarInitials, fontSize: "13px" }}>
+                        {typeof user?.name === "string" && user.name.trim() ? user.name.split(" ").filter(Boolean).map((n) => n[0]).join("").slice(0, 2) : "DR"}
+                      </div>
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      position: "absolute",
+                      bottom: "0px",
+                      right: "0px",
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "50%",
+                      background: isOnline ? "#10B981" : "#94A3B8",
+                      border: "2px solid #FFFFFF",
+                    }}
+                  />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: "13px", fontWeight: "800", color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {user?.name || "Driver"}
-                  </h1>
-                  <span style={styles.driverIdBadge}>
-                    {user?.driverId || (user?._id ? `ID: DRV-${user._id.slice(-5).toUpperCase()}` : "ID: DRV-AUTHORIZED")}
-                  </span>
-
-                  {verificationData?.verificationStatus === "Approved" ? (
-                    <span className="status-badge-approved">✓ Verified Driver</span>
-                  ) : verificationData?.verificationStatus === "Pending" ? (
-                    <span className="status-badge-pending">Pending Review</span>
-                  ) : (
-                    <span className="status-badge-rejected">Unverified Driver</span>
-                  )}
-                </div>
-
-                {/* Structured Info Pill Badges */}
-                <div style={{ fontSize: "13px", color: "#667085", marginTop: "10px", display: "flex", gap: "10px", flexWrap: "wrap", fontWeight: "600" }}>
-                  <div className="driver-info-chip">
-                    <span style={{ color: "#6337D9" }}>✉</span>
-                    <span>{user?.email || "driver@movesmart.in"}</span>
                   </div>
-                  <div className="driver-info-chip">
-                    <span style={{ color: "#159447" }}>☎</span>
-                    <span>{verificationData?.phone || user?.phone || "Not Provided"}</span>
-                  </div>
-                  <div className="driver-info-chip">
-                    <span style={{ color: "#2864D7" }}>▣</span>
-                    <span>License: <strong style={{ color: "#182033" }}>{verificationData?.licenseNumber || user?.licenseNumber || "Not Provided"}</strong></span>
+                  <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "700" }}>
+                    {assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}
                   </div>
                 </div>
               </div>
+
+              {/* Duty Status Switch Button */}
+              <button
+                type="button"
+                onClick={() => setIsOnline(!isOnline)}
+                className="driver-duty-toggle-btn"
+                title="Click to toggle On/Off Duty state"
+              >
+                <span className={isOnline ? "duty-dot" : "duty-dot-off"}></span>
+                <span>{isOnline ? "ON DUTY (ACTIVE)" : "OFF DUTY (STANDBY)"}</span>
+              </button>
             </div>
 
-            <div className="driver-hero-actions" style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            {/* Sidebar Navigation Section Heading */}
+            <div className="driver-nav-section-label">NAVIGATION &amp; TABS</div>
+
+            {/* Vertical Nav List */}
+            <div className="driver-nav-list">
+              {authStatus !== "Unverified" && (
+                <>
+                  <button
+                    className={`driver-nav-item ${activeTab === "dashboard" ? "active" : ""}`}
+                    onClick={() => setActiveTab("dashboard")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <LayoutDashboard size={16} />
+                      <span>Dashboard</span>
+                    </div>
+                  </button>
+
+                  <button
+                    className={`driver-nav-item ${activeTab === "buses" ? "active" : ""}`}
+                    onClick={() => setActiveTab("buses")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Bus size={16} />
+                      <span>My Bus Slots</span>
+                    </div>
+                    <span className="driver-nav-badge">{filteredBuses.length}</span>
+                  </button>
+
+                  <button
+                    className={`driver-nav-item ${activeTab === "trips" ? "active" : ""}`}
+                    onClick={() => setActiveTab("trips")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Clock size={16} />
+                      <span>Scheduled Trips</span>
+                    </div>
+                    <span className="driver-nav-badge">{dynamicSchedules.length}</span>
+                  </button>
+
+                  <button
+                    className={`driver-nav-item ${activeTab === "leave" ? "active" : ""}`}
+                    onClick={() => setActiveTab("leave")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Calendar size={16} />
+                      <span>Leave</span>
+                    </div>
+                    <span className="driver-nav-badge">{driverLeaves.length}</span>
+                  </button>
+
+                  <button
+                    className={`driver-nav-item ${activeTab === "payments" ? "active" : ""}`}
+                    onClick={() => setActiveTab("payments")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Wallet size={16} />
+                      <span>Collections</span>
+                    </div>
+                  </button>
+                </>
+              )}
+
+              <button
+                className={`driver-nav-item ${activeTab === "verification" ? "active" : ""}`}
+                onClick={() => setActiveTab("verification")}
+              >
+                <div className="driver-nav-item-left">
+                  <User size={16} />
+                  <span>Profile &amp; License</span>
+                </div>
+                {verificationData?.verificationStatus === "Approved" && (
+                  <span className="driver-nav-badge approved">✓</span>
+                )}
+              </button>
+
+              {authStatus !== "Unverified" && (
+                <>
+                  <button
+                    className={`driver-nav-item ${activeTab === "lostfound" ? "active" : ""}`}
+                    onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Package size={16} />
+                      <span>Lost &amp; Found</span>
+                    </div>
+                  </button>
+
+                  <button
+                    className={`driver-nav-item ${activeTab === "notifications" ? "active" : ""}`}
+                    onClick={() => setActiveTab("notifications")}
+                  >
+                    <div className="driver-nav-item-left">
+                      <Bell size={16} />
+                      <span>Notifications</span>
+                    </div>
+                    {unreadNotifCount > 0 && (
+                      <span className="driver-nav-badge notif">{unreadNotifCount}</span>
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Quick Cockpit Launchers Group */}
+            <div className="driver-nav-section-label" style={{ marginTop: "12px" }}>HARDWARE &amp; COCKPIT</div>
+            <div className="driver-nav-list">
+              <Link to="/driver/live-drive" className="driver-nav-item direct-link">
+                <div className="driver-nav-item-left">
+                  <Compass size={16} color="#059669" />
+                  <span>Live Drive GPS</span>
+                </div>
+                <span className="driver-nav-badge cockpit">COCKPIT</span>
+              </Link>
+              <Link to="/driver/rfid-device" className="driver-nav-item direct-link">
+                <div className="driver-nav-item-left">
+                  <Radio size={16} color="#2563EB" />
+                  <span>RFID Telemetry</span>
+                </div>
+                <span className="driver-nav-badge esp">{rfidDevice?.status === "Connected" ? "ONLINE" : "SYNC"}</span>
+              </Link>
+            </div>
+
+            {/* Attendance & Issue Buttons at Bottom of Sidebar */}
+            <div style={{ marginTop: "auto", paddingTop: "12px", borderTop: "1px solid #E2E8F0", display: "flex", flexDirection: "column", gap: "8px" }}>
               {!attendanceMarked ? (
-                <button className="btn-green-gradient touch-target" onClick={handleMarkAttendance} style={{ boxShadow: "0 6px 20px rgba(21, 148, 71, 0.35)" }}>
-                  ✓ Mark Today's Attendance
+                <button className="btn-green-gradient" onClick={handleMarkAttendance} style={{ width: "100%", justifyContent: "center", fontSize: "11.5px", height: "32px" }}>
+                  <Check size={13} />
+                  <span>Mark Attendance</span>
                 </button>
               ) : (
-                <div className="touch-target" style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", padding: "10px 18px", borderRadius: "14px", color: "#15803d", fontSize: "14px", fontWeight: "800", display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 2px 10px rgba(21, 148, 71, 0.12)" }}>
-                  <span>✓ Attendance Recorded:</span> <strong>{attendanceTime || "Today"}</strong>
+                <div style={{ background: "#D1FAE5", border: "1px solid #A7F3D0", padding: "6px 8px", borderRadius: "8px", color: "#065F46", fontSize: "11px", fontWeight: "800", display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}>
+                  <CheckCircle2 size={12} color="#059669" />
+                  <span>In: <strong>{attendanceTime || "Today"}</strong></span>
                 </div>
               )}
 
-              <button className="btn-red-outline touch-target" onClick={() => setShowIssueModal(true)}>
-                Report Issue
+              <button className="btn-red-outline" onClick={() => setShowIssueModal(true)} style={{ width: "100%", justifyContent: "center", fontSize: "11.5px", height: "30px" }}>
+                <AlertTriangle size={12} />
+                <span>Report Issue</span>
               </button>
             </div>
-          </div>
-        </section>
+          </aside>
 
-        {/* QUICK LAUNCH ACTIONS (2 Feature Cards: Live Drive & RFID) */}
-        {authStatus !== "Unverified" && (
-          <div className="anim-entry-2" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", marginBottom: "24px" }}>
-            <div
-              onClick={() => navigate("/driver/live-drive")}
-              className="quick-action-card quick-action-green"
-            >
-              <div style={{ position: "relative", zIndex: 2 }}>
-                <div style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#bbf7d0" }}>
-                  LIVE NAVIGATION
-                </div>
-                <div style={{ fontSize: "19px", fontWeight: "900", marginTop: "4px", letterSpacing: "-0.2px" }}>
-                  🚍 Live Drive Cockpit
-                </div>
-                <div style={{ fontSize: "12.5px", color: "#dcfce7", marginTop: "4px", fontWeight: "600", maxWidth: "90%" }}>
-                  Start active trip, live route map &amp; next stop control
-                </div>
-              </div>
-              <div className="quick-action-arrow">
-                ➔
-              </div>
-            </div>
+          {/* RIGHT MAIN VIEW */}
+          <div className="driver-main-view">
+            {/* COMPACT DRIVER IDENTITY & CONTEXT STRIP */}
+            <section className="anim-entry-1" style={styles.heroDriverCard}>
+              <div className="driver-hero-inner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+                  {/* Driver Avatar with Online Glow Ring */}
+                  <div style={{ position: "relative" }}>
+                    <div style={styles.avatarWrapper}>
+                      {verificationData?.profilePic || user?.profilePic ? (
+                        <img src={verificationData?.profilePic || user?.profilePic} alt={user?.name || "Driver"} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                      ) : (
+                        <div style={styles.avatarInitials}>
+                          {typeof user?.name === "string" && user.name.trim() ? user.name.split(" ").filter(Boolean).map((n) => n[0]).join("").slice(0, 2) : "DR"}
+                        </div>
+                      )}
+                    </div>
+                    {/* Duty Indicator Dot */}
+                    <span
+                      style={{
+                        position: "absolute",
+                        bottom: "0px",
+                        right: "0px",
+                        width: "12px",
+                        height: "12px",
+                        borderRadius: "50%",
+                        background: isOnline ? "#10B981" : "#94A3B8",
+                        border: "2px solid #FFFFFF",
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                      }}
+                      title={isOnline ? "Driver Online & Active" : "Driver Offline"}
+                    />
+                  </div>
 
-            <div
-              onClick={() => navigate("/driver/rfid-device")}
-              className="quick-action-card quick-action-blue"
-            >
-              <div style={{ position: "relative", zIndex: 2 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#bfdbfe" }}>
-                    HARDWARE TELEMETRY
-                  </span>
-                  {rfidDevice?.status === "Connected" && (
-                    <span style={{ fontSize: "10.5px", fontWeight: "900", background: "rgba(34, 197, 94, 0.25)", color: "#86efac", padding: "2px 8px", borderRadius: "10px", border: "1px solid rgba(134, 239, 172, 0.4)" }}>
-                      ● RFID ONLINE
-                    </span>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <h1 style={{ fontSize: "17px", fontWeight: "800", color: "#0F172A", margin: 0, letterSpacing: "-0.3px" }}>
+                        {user?.name || "Driver"}
+                      </h1>
+                      <span style={styles.driverIdBadge}>
+                        {user?.driverId || (user?._id ? `ID: DRV-${user._id.slice(-5).toUpperCase()}` : "ID: DRV-AUTHORIZED")}
+                      </span>
+
+                      {verificationData?.verificationStatus === "Approved" ? (
+                        <span className="status-badge-approved"><Check size={12} /> Verified</span>
+                      ) : verificationData?.verificationStatus === "Pending" ? (
+                        <span className="status-badge-pending"><Clock size={12} /> Pending Review</span>
+                      ) : (
+                        <span className="status-badge-rejected"><AlertCircle size={12} /> Unverified</span>
+                      )}
+
+                      {/* Interactive Duty Status Switch */}
+                      <button
+                        type="button"
+                        onClick={() => setIsOnline(!isOnline)}
+                        style={{
+                          border: "none",
+                          background: isOnline ? "#ECFDF5" : "#F1F5F9",
+                          color: isOnline ? "#059669" : "#64748B",
+                          border: `1px solid ${isOnline ? "#A7F3D0" : "#CBD5E1"}`,
+                          padding: "2px 8px",
+                          borderRadius: "12px",
+                          fontSize: "11px",
+                          fontWeight: "800",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          transition: "all 0.15s ease"
+                        }}
+                        title="Click to toggle On/Off Duty state"
+                      >
+                        <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isOnline ? "#10B981" : "#94A3B8" }}></span>
+                        {isOnline ? "ON DUTY" : "OFF DUTY"}
+                      </button>
+                    </div>
+
+                    {/* Structured Info Badges */}
+                    <div style={{ fontSize: "11.5px", color: "#64748B", marginTop: "6px", display: "flex", gap: "6px", flexWrap: "wrap", fontWeight: "600" }}>
+                      <div className="driver-info-chip" title="Assigned Bus">
+                        <Bus size={12} color="#059669" />
+                        <span>Bus: <strong style={{ color: "#0F172A" }}>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</strong></span>
+                      </div>
+                      <div className="driver-info-chip" title="Assigned Route">
+                        <MapPin size={12} color="#6337D9" />
+                        <span>Route: <strong style={{ color: "#0F172A" }}>{assignedBus?.routeName || "Vyttila ⇄ Kakkanad"}</strong></span>
+                      </div>
+                      <div className="driver-info-chip" title="Driving License">
+                        <CreditCard size={12} color="#2563EB" />
+                        <span>Lic: <strong style={{ color: "#0F172A" }}>{verificationData?.licenseNumber || user?.licenseNumber || "Not Provided"}</strong></span>
+                      </div>
+                      <div className="driver-info-chip" title="Driver Phone">
+                        <Phone size={12} color="#059669" />
+                        <span>{verificationData?.phone || user?.phone || "+91 98470 12345"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="driver-hero-actions" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  {!attendanceMarked ? (
+                    <button className="btn-green-gradient" onClick={handleMarkAttendance}>
+                      <Check size={13} />
+                      <span>Mark Attendance</span>
+                    </button>
+                  ) : (
+                    <div style={{ background: "#D1FAE5", border: "1px solid #A7F3D0", padding: "0 12px", height: "34px", borderRadius: "8px", color: "#065F46", fontSize: "12px", fontWeight: "800", display: "flex", alignItems: "center", gap: "6px" }}>
+                      <CheckCircle2 size={13} color="#059669" />
+                      <span>Attendance: <strong>{attendanceTime || "Checked In"}</strong></span>
+                    </div>
                   )}
-                </div>
-                <div style={{ fontSize: "19px", fontWeight: "900", marginTop: "4px", letterSpacing: "-0.2px" }}>
-                  📡 RFID Reader Device
-                </div>
-                <div style={{ fontSize: "12.5px", color: "#dbeafe", marginTop: "4px", fontWeight: "600", maxWidth: "90%" }}>
-                  ESP32 hardware sync, connection status &amp; tap test
-                </div>
-              </div>
-              <div className="quick-action-arrow">
-                ➔
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Segmented Navigation Tabs */}
-        <div className="anim-entry-3" style={styles.tabsContainer}>
-          <div className="driver-tabs-scroller">
-            {authStatus !== "Unverified" && (
-              <>
-                <button className={`driver-nav-tab touch-target ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
-                  📊 Dashboard
-                </button>
-                <button className={`driver-nav-tab touch-target ${activeTab === "buses" ? "active" : ""}`} onClick={() => setActiveTab("buses")}>
-                  🚌 My Bus ({filteredBuses.length})
-                </button>
-                <button className={`driver-nav-tab touch-target ${activeTab === "trips" ? "active" : ""}`} onClick={() => setActiveTab("trips")}>
-                  ⏰ Trips ({dynamicSchedules.length})
-                </button>
-                <button className={`driver-nav-tab touch-target ${activeTab === "leave" ? "active" : ""}`} onClick={() => setActiveTab("leave")}>
-                  📅 Leave ({driverLeaves.length})
-                </button>
-                <button className={`driver-nav-tab touch-target ${activeTab === "payments" ? "active" : ""}`} onClick={() => setActiveTab("payments")}>
-                  💰 Collections
-                </button>
-              </>
+                  <button className="btn-red-outline" onClick={() => setShowIssueModal(true)}>
+                    <AlertTriangle size={13} />
+                    <span>Report Issue</span>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* 8-TILE QUICK ACTION LAUNCH HUB (ONLY ON DASHBOARD TAB) */}
+            {activeTab === "dashboard" && authStatus !== "Unverified" && (
+              <div className="anim-entry-2 quick-actions-grid">
+                <div
+                  onClick={() => navigate("/driver/live-drive")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="Open Live Drive GPS Cockpit"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#ECFDF5", color: "#059669" }}>
+                    <Compass size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Live Drive</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>GPS &amp; Telemetry</div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => navigate("/driver/rfid-device")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="Open RFID Reader Device"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#EFF6FF", color: "#2563EB" }}>
+                    <Radio size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>RFID Reader</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {rfidDevice?.status === "Connected" ? "● ESP32 Online" : "Hardware Sync"}
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => setActiveTab("buses")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="View Assigned Bus Details"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#F1F5F9", color: "#0F172A" }}>
+                    <Bus size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Bus Slots</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {filteredBuses.length} Slot{filteredBuses.length !== 1 ? "s" : ""} Assigned
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => setActiveTab("trips")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="View Scheduled Trips"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#EEF2FF", color: "#4F46E5" }}>
+                    <Clock size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Scheduled Trips</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {dynamicSchedules.length} Departure{dynamicSchedules.length !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => setActiveTab("leave")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="Apply for Driver Leave"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#FFFBEB", color: "#D97706" }}>
+                    <Calendar size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Leave</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {driverLeaves.length} Requests
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => setShowIssueModal(true)}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="Report Route or Bus Issue"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#FEF2F2", color: "#DC2626" }}>
+                    <AlertTriangle size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Report Issue</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Fleet Emergency</div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="Report Found Passenger Items"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#FAF5FF", color: "#9333EA" }}>
+                    <Package size={18} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Lost &amp; Found</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Passenger Items</div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+
+                <div
+                  onClick={() => setActiveTab("notifications")}
+                  className="quick-action-tile"
+                  role="button"
+                  tabIndex={0}
+                  title="View Fleet Notifications"
+                >
+                  <div className="quick-action-icon-box" style={{ background: "#F0FDF4", color: "#16A34A", position: "relative" }}>
+                    <Bell size={18} />
+                    {unreadNotifCount > 0 && (
+                      <span style={{ position: "absolute", top: "4px", right: "4px", width: "7px", height: "7px", borderRadius: "50%", background: "#EF4444" }}></span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", lineHeight: 1.2 }}>Notifications</div>
+                    <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {unreadNotifCount > 0 ? `${unreadNotifCount} unread` : "Fleet Bulletins"}
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="#94A3B8" />
+                </div>
+              </div>
             )}
-            <button className={`driver-nav-tab touch-target ${activeTab === "verification" ? "active" : ""}`} onClick={() => setActiveTab("verification")}>
-              👤 Profile &amp; License
-            </button>
-            {authStatus !== "Unverified" && (
-              <>
-                <button className={`driver-nav-tab touch-target ${activeTab === "lostfound" ? "active" : ""}`} onClick={() => { setActiveTab("lostfound"); if (drvLfSubTab === "myFound") fetchDrvMyFound(); }}>
-                  📦 Lost &amp; Found
-                </button>
-                <button className={`driver-nav-tab touch-target ${activeTab === "notifications" ? "active" : ""}`} onClick={() => setActiveTab("notifications")}>
-                  🔔 Notifications
-                  {unreadNotifCount > 0 && (
-                    <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 7px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", marginLeft: "6px" }}>
-                      {unreadNotifCount}
-                    </span>
-                  )}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
 
         {/* LIVE STATUS / KPI MINI-STATS SUMMARY ROW */}
-        {currentTab === "dashboard" && authStatus !== "Unverified" && (
-          <div className="anim-entry-4" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+        {activeTab === "dashboard" && authStatus !== "Unverified" && (
+          <div className="anim-entry-4" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "16px" }}>
             {/* 1. Today's Trips */}
             <div className="kpi-mini-card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span className="kpi-mini-label">SCHEDULED TRIPS</span>
-                <span style={{ fontSize: "20px" }}>🚌</span>
+                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569" }}>
+                  <Bus size={14} />
+                </div>
               </div>
-              <div className="kpi-mini-val" style={{ color: "#182033" }}>
+              <div className="kpi-mini-val" style={{ color: "#0F172A" }}>
                 {dynamicSchedules.length || (assignedBus ? 1 : 0)}
               </div>
-              <div style={{ fontSize: "12px", color: "#667085", fontWeight: "600", marginTop: "2px" }}>
+              <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
                 {assignedBus ? `Assigned to ${assignedBus.busNumber}` : "No bus assigned"}
               </div>
             </div>
@@ -3604,12 +4274,14 @@ function Driver({ defaultTab = "dashboard" }) {
             <div className="kpi-mini-card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span className="kpi-mini-label">PASSENGERS ONBOARD</span>
-                <span style={{ fontSize: "20px" }}>👥</span>
+                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#ECFDF5", display: "flex", alignItems: "center", justifyContent: "center", color: "#059669" }}>
+                  <Users size={14} />
+                </div>
               </div>
-              <div className="kpi-mini-val" style={{ color: "#159447" }}>
-                {passengersOnboard || 0} <span style={{ fontSize: "14px", fontWeight: "600", color: "#667085" }}>/ {totalCapacity}</span>
+              <div className="kpi-mini-val" style={{ color: "#059669" }}>
+                {passengersOnboard || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>/ {totalCapacity}</span>
               </div>
-              <div style={{ fontSize: "12px", color: "#159447", fontWeight: "700", marginTop: "2px" }}>
+              <div style={{ fontSize: "11px", color: "#059669", fontWeight: "700", marginTop: "2px" }}>
                 {totalCapacity > 0 ? `${Math.round(((passengersOnboard || 0) / totalCapacity) * 100)}% Occupancy` : "Live Count"}
               </div>
             </div>
@@ -3618,12 +4290,14 @@ function Driver({ defaultTab = "dashboard" }) {
             <div className="kpi-mini-card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span className="kpi-mini-label">RFID TAP ACTIVITY</span>
-                <span style={{ fontSize: "20px" }}>📡</span>
+                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563EB" }}>
+                  <Radio size={14} />
+                </div>
               </div>
-              <div className="kpi-mini-val" style={{ color: "#2864D7" }}>
-                {paymentsLog.length || 0} <span style={{ fontSize: "14px", fontWeight: "600", color: "#667085" }}>taps</span>
+              <div className="kpi-mini-val" style={{ color: "#2563EB" }}>
+                {paymentsLog.length || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>taps</span>
               </div>
-              <div style={{ fontSize: "12px", color: "#2864D7", fontWeight: "700", marginTop: "2px" }}>
+              <div style={{ fontSize: "11px", color: "#2563EB", fontWeight: "700", marginTop: "2px" }}>
                 {rfidDevice?.status === "Connected" ? "● ESP32 Online" : "Ready for Taps"}
               </div>
             </div>
@@ -3632,12 +4306,14 @@ function Driver({ defaultTab = "dashboard" }) {
             <div className="kpi-mini-card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span className="kpi-mini-label">TODAY'S COLLECTIONS</span>
-                <span style={{ fontSize: "20px" }}>💰</span>
+                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EEF2FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#4F46E5" }}>
+                  <Wallet size={14} />
+                </div>
               </div>
-              <div className="kpi-mini-val" style={{ color: "#6337D9" }}>
+              <div className="kpi-mini-val" style={{ color: "#4F46E5" }}>
                 ₹{Number(dailyEarnings || 0).toFixed(2)}
               </div>
-              <div style={{ fontSize: "12px", color: "#667085", fontWeight: "600", marginTop: "2px" }}>
+              <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
                 RFID Pass + Cash Tickets
               </div>
             </div>
@@ -3653,33 +4329,75 @@ function Driver({ defaultTab = "dashboard" }) {
         {currentTab === "dashboard" && (
           <div className="driver-grid-layout anim-entry-5">
             <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {/* PRIMARY FLEET STATUS CARD */}
-              <div className="card-shadow" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.98) 65%, rgba(240,235,255,0.75) 100%)", border: "1.5px solid #E6E8F0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <div>
-                    <span style={{ fontSize: "12px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#6337D9" }}>
-                      Active Bus &amp; Route
+              {/* PRIMARY TODAY'S DUTY COCKPIT SHOWCASE CARD */}
+              <div className="duty-cockpit-card">
+                <div className="duty-cockpit-header">
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#059669", background: "#ECFDF5", border: "1px solid #A7F3D0", padding: "3px 8px", borderRadius: "6px" }}>
+                      TODAY'S DUTY
                     </span>
-                    <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#182033", margin: "4px 0 0", letterSpacing: "-0.3px" }}>
-                      {assignedBus?.routeName || (assignedBus ? `${assignedBus.fromLocation} ➔ ${assignedBus.toLocation}` : "No Bus Assigned Yet")}
-                    </h2>
+                    <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#6366F1", background: "#EEF2FF", border: "1px solid #C7D2FE", padding: "3px 8px", borderRadius: "6px" }}>
+                      {assignedBus?.shift || driverDuty?.shift || "Morning"} SHIFT
+                    </span>
+                    {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
+                      <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", padding: "3px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                        ⚡ TEMPORARY REPLACEMENT
+                      </span>
+                    )}
+                    <span className="duty-badge-bus">
+                      <Bus size={15} color="#059669" />
+                      <span>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</span>
+                    </span>
                   </div>
 
-                  <span style={{ padding: "6px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: "800", background: tripStatus === "in_progress" ? "#f0fdf4" : "#f1f5f9", color: tripStatus === "in_progress" ? "#159447" : "#667085", border: `1.5px solid ${tripStatus === "in_progress" ? "#bbf7d0" : "#E6E8F0"}` }}>
-                    {tripStatus === "in_progress" ? "● TRIP ACTIVE" : "READY FOR DEPARTURE"}
+                  <span
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: "12px",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      background: tripStatus === "in_progress" ? "#ECFDF5" : "#F1F5F9",
+                      color: tripStatus === "in_progress" ? "#065F46" : "#475569",
+                      border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`,
+                    }}
+                  >
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: tripStatus === "in_progress" ? "#10B981" : "#94A3B8" }}></span>
+                    <span>{tripStatus === "in_progress" ? "TRIP IN PROGRESS" : "READY FOR DEPARTURE"}</span>
                   </span>
                 </div>
 
-                {/* Visual Fleet Route Stepper Line */}
-                <div style={{ margin: "16px 0 20px", padding: "16px 20px", background: "#F8F7FC", borderRadius: "16px", border: "1.5px solid #E6E8F0" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", fontSize: "11px", fontWeight: "800", color: "#667085" }}>
-                    <span>ORIGIN TERMINAL</span>
-                    <span style={{ color: "#6337D9" }}>TRANSIT CORRIDOR</span>
-                    <span>DESTINATION TERMINAL</span>
+                {/* Replacement Notification Banner */}
+                {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
+                  <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#6d28d9", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>🔄</span>
+                    <span>
+                      You are operating this duty as a temporary replacement for <strong>{assignedBus?.originalDriverName || driverDuty?.originalDriverName || "Regular Driver"}</strong> (Date: {assignedBus?.dutyDate || driverDuty?.date || "Today"}, Shift: {assignedBus?.shift || driverDuty?.shift || "N/A"}).
+                    </span>
                   </div>
-                  <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    {/* Route Background Line */}
-                    <div style={{ position: "absolute", left: "16px", right: "16px", height: "4px", background: tripStatus === "in_progress" ? "linear-gradient(90deg, #159447, #6337D9, #2864D7)" : "#e2e8f0", borderRadius: "4px", zIndex: 1, overflow: "hidden" }}>
+                )}
+
+                {/* Approved Leave Safety Notice */}
+                {(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave) && (
+                  <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#fef2f2", border: "1.5px solid #fecaca", color: "#dc2626", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <AlertCircle size={16} />
+                    <span>You are currently on approved leave for this shift. Trip departure is disabled by system policy.</span>
+                  </div>
+                )}
+
+                {/* Visual Route Corridor Stepper */}
+                <div className="route-corridor-box">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <span className="route-point-label">ORIGIN TERMINAL</span>
+                    <span style={{ fontSize: "10.5px", fontWeight: "800", color: "#6366F1", letterSpacing: "0.5px" }}>TRANSIT CORRIDOR</span>
+                    <span className="route-point-label">DESTINATION TERMINAL</span>
+                  </div>
+
+                  <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0" }}>
+                    {/* Background Connecting Line */}
+                    <div style={{ position: "absolute", left: "20px", right: "20px", height: "3px", background: tripStatus === "in_progress" ? "linear-gradient(90deg, #059669, #6366F1, #2563EB)" : "#E2E8F0", borderRadius: "3px", zIndex: 1, overflow: "hidden" }}>
                       {tripStatus === "in_progress" && (
                         <div style={{
                           position: "absolute",
@@ -3692,82 +4410,102 @@ function Driver({ defaultTab = "dashboard" }) {
                       )}
                     </div>
 
-                    {/* Origin Dot & Label */}
-                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
-                      <div style={{ width: "22px", height: "22px", borderRadius: "50%", background: "#159447", border: "3px solid #ffffff", boxShadow: "0 2px 8px rgba(21, 148, 71, 0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#ffffff" }}></div>
+                    {/* Origin Stop */}
+                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                      <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#059669", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(5, 150, 105, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
                       </div>
-                      <span style={{ fontSize: "13px", fontWeight: "800", color: "#182033" }}>
-                        {assignedBus?.fromLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[0]?.trim() : "Origin")}
-                      </span>
+                      <div className="route-point-city">
+                        {assignedBus?.fromLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[0]?.trim() : "Origin Terminal")}
+                      </div>
                     </div>
 
                     {/* Center Transit Badge */}
-                    <div style={{ position: "relative", zIndex: 2, background: tripStatus === "in_progress" ? "#f0fdf4" : "#ffffff", border: `1.5px solid ${tripStatus === "in_progress" ? "#bbf7d0" : "#E6E8F0"}`, padding: "4px 12px", borderRadius: "20px", fontSize: "11px", fontWeight: "800", color: tripStatus === "in_progress" ? "#159447" : "#667085", boxShadow: "0 2px 6px rgba(0,0,0,0.03)" }}>
-                      {tripStatus === "in_progress" ? "🚌 IN TRANSIT" : "SCHEDULED ROUTE"}
+                    <div style={{ position: "relative", zIndex: 2, background: tripStatus === "in_progress" ? "#ECFDF5" : "#FFFFFF", border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`, padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: "800", color: tripStatus === "in_progress" ? "#065F46" : "#64748B", boxShadow: "0 1px 3px rgba(0,0,0,0.03)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      {tripStatus === "in_progress" ? (
+                        <>
+                          <Bus size={12} color="#059669" />
+                          <span>IN TRANSIT</span>
+                        </>
+                      ) : (
+                        <span>SCHEDULED CORRIDOR</span>
+                      )}
                     </div>
 
-                    {/* Destination Dot & Label */}
-                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
-                      <div style={{ width: "22px", height: "22px", borderRadius: "50%", background: "#6337D9", border: "3px solid #ffffff", boxShadow: "0 2px 8px rgba(99, 55, 217, 0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#ffffff" }}></div>
+                    {/* Destination Stop */}
+                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                      <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#4F46E5", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(79, 70, 229, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
                       </div>
-                      <span style={{ fontSize: "13px", fontWeight: "800", color: "#182033" }}>
-                        {assignedBus?.toLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[1]?.trim() : "Destination")}
-                      </span>
+                      <div className="route-point-city" style={{ textAlign: "right" }}>
+                        {assignedBus?.toLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[1]?.trim() : "Destination Terminal")}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="dashboard-metrics-grid" style={{ background: "#F8F7FC", padding: "16px", borderRadius: "16px", border: "1.5px solid #E6E8F0", marginBottom: "20px" }}>
-                  <div style={{ padding: "8px", borderRadius: "10px", transition: "background 0.2s ease" }}>
-                    <div style={styles.metricLabel}>Assigned Bus No</div>
-                    <div style={styles.metricVal}>{assignedBus?.busNumber || user?.busNumber || "Not Assigned"}</div>
+                {/* Duty Specifications Matrix */}
+                <div className="dashboard-metrics-grid" style={{ background: "#F8FAFC", padding: "12px 14px", borderRadius: "12px", border: "1px solid #E2E8F0", marginBottom: "16px" }}>
+                  <div>
+                    <div style={styles.metricLabel}>Assigned Bus</div>
+                    <div style={styles.metricVal}>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</div>
                   </div>
-                  <div style={{ padding: "8px", borderRadius: "10px", transition: "background 0.2s ease" }}>
-                    <div style={styles.metricLabel}>Departure Time</div>
+                  <div>
+                    <div style={styles.metricLabel}>Shift Window</div>
+                    <div style={styles.metricVal}>
+                      {assignedBus?.shift || driverDuty?.shift || "Morning"} ({assignedBus?.shiftStartTime || "06:00"} - {assignedBus?.shiftEndTime || "14:00"})
+                    </div>
+                  </div>
+                  <div>
+                    <div style={styles.metricLabel}>Scheduled Departure</div>
                     <div style={styles.metricVal}>{assignedBus?.departureTime || "08:00 AM"}</div>
                   </div>
-                  <div style={{ padding: "8px", borderRadius: "10px", transition: "background 0.2s ease" }}>
-                    <div style={styles.metricLabel}>Bus Capacity</div>
-                    <div style={styles.metricVal}>{totalCapacity} Passengers</div>
+                  <div>
+                    <div style={styles.metricLabel}>Duty Mode</div>
+                    <div style={{ ...styles.metricVal, color: (assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "#7c3aed" : "#059669" }}>
+                      {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "⚡ Replacement Duty" : "Regular Schedule"}
+                    </div>
                   </div>
                 </div>
 
-                {/* Primary Actions */}
-                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                {/* Primary Action Controls */}
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                   <button
                     className="btn-green-gradient touch-target"
                     onClick={() => navigate("/driver/live-drive")}
-                    style={{
-                      flex: 1.2,
-                      minWidth: "220px",
-                      justifyContent: "center",
-                      padding: "16px 20px",
-                      fontSize: "15.5px",
-                      background: "linear-gradient(135deg, #159447 0%, #087A3D 100%)",
-                      boxShadow: "0 6px 20px rgba(21, 148, 71, 0.35)",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px"
-                    }}
+                    style={{ flex: 1.2, minWidth: "200px" }}
+                    title="Launch Live GPS Drive cockpit"
                   >
-                    <span>🚍</span>
-                    <span>Start Live Drive (Map &amp; Sim) ➔</span>
+                    <Bus size={16} />
+                    <span>Open Live Drive</span>
+                    <ArrowRight size={14} />
                   </button>
 
                   {tripStatus !== "in_progress" ? (
-                    <button className="btn-purple-gradient touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "160px", justifyContent: "center", padding: "16px", fontSize: "15px" }}>
-                      ▶ Start Trip
+                    <button
+                      className="btn-purple-gradient touch-target"
+                      onClick={handleToggleTrip}
+                      disabled={Boolean(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty))}
+                      style={{
+                        flex: 1,
+                        minWidth: "140px",
+                        opacity: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? 0.6 : 1,
+                        cursor: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <Play size={14} style={{ fill: "currentColor" }} />
+                      <span>Start Trip</span>
                     </button>
                   ) : (
-                    <button className="btn-red-outline touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "160px", justifyContent: "center", padding: "16px", fontSize: "15px" }}>
-                      ⏹ End Trip
+                    <button className="btn-red-outline touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "140px", height: "38px" }}>
+                      <Square size={14} style={{ fill: "currentColor" }} />
+                      <span>End Trip</span>
                     </button>
                   )}
 
-                  <button className="touch-target" onClick={handleSimulateTap} style={{ padding: "14px 20px", borderRadius: "14px", border: "1.5px solid #E6E8F0", background: "#ffffff", fontWeight: "800", fontSize: "14px", color: "#182033", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px", boxShadow: "0 2px 6px rgba(0,0,0,0.02)" }}>
-                    Simulate RFID Tap
+                  <button className="btn-subtle-outline touch-target" onClick={handleSimulateTap} style={{ flex: 0.8, minWidth: "150px" }}>
+                    <Zap size={14} color="#6366F1" />
+                    <span>Simulate Tap</span>
                   </button>
                 </div>
               </div>
@@ -3778,8 +4516,8 @@ function Driver({ defaultTab = "dashboard" }) {
                 {/* 1. RFID DEVICE STATUS HEADER */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                      📡
+                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Radio size={20} />
                     </div>
                     <div>
                       <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
@@ -3843,12 +4581,12 @@ function Driver({ defaultTab = "dashboard" }) {
                         }}
                       ></span>
                       {rfidDevice.status === "Connected"
-                        ? "● CONNECTED (ONLINE)"
+                        ? "CONNECTED (ONLINE)"
                         : rfidDevice.status === "Connecting"
-                          ? "● CONNECTING..."
+                          ? "CONNECTING..."
                           : rfidDevice.status === "Connection Failed"
-                            ? "● CONNECTION FAILED"
-                            : "○ NOT CONNECTED"}
+                            ? "CONNECTION FAILED"
+                            : "NOT CONNECTED"}
                     </span>
                   </div>
                 </div>
@@ -3873,7 +4611,7 @@ function Driver({ defaultTab = "dashboard" }) {
                   <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
                     <span style={{ color: "#64748b", fontWeight: "600" }}>Reader Sensor: </span>
                     <strong style={{ color: rfidDevice.status === "Connected" ? "#15803d" : "#64748b" }}>
-                      {rfidDevice.status === "Connected" ? "RC522 Scanning Active ✓" : "Sensor Inactive"}
+                      {rfidDevice.status === "Connected" ? "RC522 Scanning Active" : "Sensor Inactive"}
                     </strong>
                   </div>
                   <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
@@ -3889,8 +4627,8 @@ function Driver({ defaultTab = "dashboard" }) {
                 {/* 2. LATEST RFID TAP SECTION */}
                 <div style={{ marginBottom: "20px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>
-                      ⚡ Latest RFID Tap
+                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                      <Zap size={15} color="#6337D9" /> Latest RFID Tap
                     </h4>
                     {latestRfidTap && (
                       <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
@@ -3980,7 +4718,7 @@ function Driver({ defaultTab = "dashboard" }) {
                         <div>
                           <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Status</div>
                           <div style={{ fontSize: "13px", fontWeight: "800", color: latestRfidTap.status === "Rejected" ? "#dc2626" : "#15803d", marginTop: "2px" }}>
-                            {latestRfidTap.status === "Rejected" ? (latestRfidTap.reason || "Rejected") : "✓ Tap accepted"}
+                            {latestRfidTap.status === "Rejected" ? (latestRfidTap.reason || "Rejected") : "Tap Accepted"}
                           </div>
                         </div>
                       </div>
@@ -3996,15 +4734,19 @@ function Driver({ defaultTab = "dashboard" }) {
                 {/* 3. RECENT RFID TAPS TABLE */}
                 <div style={{ marginBottom: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>
-                      📋 Recent RFID Taps ({recentRfidTaps.length})
+                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                      <FileText size={15} color="#6337D9" /> Recent RFID Taps ({recentRfidTaps.length})
                     </h4>
                     <button
                       type="button"
                       onClick={fetchRecentRfidTaps}
-                      style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
+                      style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
                     >
-                      {loadingRecentTaps ? "Refreshing..." : "↻ Refresh Feed"}
+                      {loadingRecentTaps ? "Refreshing..." : (
+                        <>
+                          <RotateCw size={12} /> Refresh Feed
+                        </>
+                      )}
                     </button>
                   </div>
 
@@ -4085,8 +4827,8 @@ function Driver({ defaultTab = "dashboard" }) {
                                   {tap.balance !== undefined ? `₹${Number(tap.balance).toFixed(2)}` : (tap.card?.balance ? `₹${Number(tap.card.balance).toFixed(2)}` : "—")}
                                 </td>
                                 <td style={{ padding: "10px 14px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: "700", color: tap.status === "Rejected" ? "#dc2626" : "#15803d" }}>
-                                    {tap.status === "Rejected" ? "Rejected" : "Accepted ✓"}
+                                  <span style={{ fontSize: "12px", fontWeight: "700", color: tap.status === "Rejected" ? "#dc2626" : "#15803d", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                                    {tap.status === "Rejected" ? "Rejected" : <>Accepted <Check size={13} /></>}
                                   </span>
                                 </td>
                               </tr>
@@ -4114,7 +4856,7 @@ function Driver({ defaultTab = "dashboard" }) {
                     className="btn-green-gradient touch-target"
                     style={{ padding: "10px 18px", fontSize: "13.5px", borderRadius: "12px", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}
                   >
-                    <span>📶</span>
+                    <Radio size={15} />
                     {rfidDevice.status === "Connected" ? "Reconfigure RFID Device" : "Connect RFID Device"}
                   </button>
 
@@ -4122,9 +4864,9 @@ function Driver({ defaultTab = "dashboard" }) {
                     type="button"
                     onClick={handleSimulateTap}
                     className="touch-target"
-                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#334155", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#334155", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
                   >
-                    ⚡ Test Tap (53262A56)
+                    <Zap size={14} color="#6337D9" /> Test Tap (53262A56)
                   </button>
 
                   {rfidDevice.status !== "Not Connected" && (
@@ -4132,418 +4874,88 @@ function Driver({ defaultTab = "dashboard" }) {
                       type="button"
                       onClick={handleUnlinkRfidDevice}
                       className="touch-target"
-                      style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                      style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
                     >
-                      🔌 Unlink Device
+                      <XCircle size={14} /> Unlink Device
                     </button>
                   )}
-                </div>
-              </div>
-
-              {/* 🛡️ DRIVER SAFETY & REAL-TIME MONITORING HUD CARD */}
-              <div className="card-shadow" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,243,255,0.85) 100%)", border: "1.5px solid rgba(124, 58, 237, 0.3)", position: "relative", overflow: "hidden" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{ width: "38px", height: "38px", borderRadius: "12px", background: "linear-gradient(135deg, #6d28d9, #8b5cf6)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                      🛡️
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
-                        Driver Safety &amp; Real-Time AI Camera Assistant
-                      </h3>
-                      <p style={{ margin: "2px 0 0", fontSize: "12.5px", color: "#64748b", fontWeight: "600" }}>
-                        Live camera vision tracking driver presence, eye closures (EAR) &amp; voice alerts
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                    {!cameraActive ? (
-                      <button
-                        type="button"
-                        onClick={startWebcam}
-                        className="touch-target"
-                        style={{
-                          padding: "6px 14px",
-                          borderRadius: "10px",
-                          border: "1.5px solid #16a34a",
-                          background: "#f0fdf4",
-                          color: "#166534",
-                          fontSize: "13px",
-                          fontWeight: "800",
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "6px",
-                        }}
-                      >
-                        📷 Start Live Camera
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={stopWebcam}
-                        className="touch-target"
-                        style={{
-                          padding: "6px 14px",
-                          borderRadius: "10px",
-                          border: "1.5px solid #ef4444",
-                          background: "#fef2f2",
-                          color: "#dc2626",
-                          fontSize: "13px",
-                          fontWeight: "800",
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "6px",
-                        }}
-                      >
-                        ⏹ Stop Camera
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setVoiceAlertsEnabled(!voiceAlertsEnabled)}
-                      className="touch-target"
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: "10px",
-                        border: `1.5px solid ${voiceAlertsEnabled ? "#c4b5fd" : "#cbd5e1"}`,
-                        background: voiceAlertsEnabled ? "#ede9fe" : "#ffffff",
-                        color: voiceAlertsEnabled ? "#6d28d9" : "#64748b",
-                        fontSize: "12.5px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {voiceAlertsEnabled ? "🔊 Voice ON" : "🔇 Voice OFF"}
-                    </button>
-
-                    <span style={{ padding: "6px 12px", borderRadius: "10px", fontSize: "12px", fontWeight: "800", background: tripStatus === "in_progress" ? "rgba(34, 197, 94, 0.15)" : "rgba(148, 163, 184, 0.15)", color: tripStatus === "in_progress" ? "#16a34a" : "#64748b" }}>
-                      {tripStatus === "in_progress" ? "● MONITORING ACTIVE" : "STANDBY"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* LIVE CAMERA PREVIEW & AI HUD */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", marginBottom: "16px" }}>
-                  {/* Real Video Box */}
-                  {/* Real Video Box with Live AI HUD Overlay */}
-                  <div
-                    style={{
-                      position: "relative",
-                      height: "220px",
-                      borderRadius: "14px",
-                      background: "#0f172a",
-                      overflow: "hidden",
-                      border: `2.5px solid ${monitoringState.alertness === "CRITICAL_DROWSINESS" || monitoringState.driverStatus === "DRIVER_ABSENT"
-                        ? "#ef4444"
-                        : monitoringState.alertness === "DROWSINESS_WARNING" || monitoringState.driverStatus === "DRIVER_NOT_DETECTED"
-                          ? "#f97316"
-                          : monitoringState.alertness === "EARLY_WARNING"
-                            ? "#eab308"
-                            : cameraActive
-                              ? "#22c55e"
-                              : "#334155"
-                        }`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: cameraActive ? (monitoringState.alertness !== "NORMAL" ? "0 0 20px rgba(239, 68, 68, 0.4)" : "0 0 15px rgba(34, 197, 94, 0.25)") : "none",
-                    }}
-                  >
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        display: cameraActive ? "block" : "none",
-                        transform: "scaleX(-1)",
-                      }}
-                    />
-
-                    {/* Live AI HUD Canvas Overlay */}
-                    <canvas
-                      ref={canvasRef}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        display: cameraActive ? "block" : "none",
-                        pointerEvents: "none",
-                      }}
-                    />
-
-                    {!cameraActive && (
-                      <div style={{ textAlign: "center", color: "#94a3b8", padding: "16px" }}>
-                        <div style={{ fontSize: "36px", marginBottom: "8px" }}>📷</div>
-                        <strong style={{ display: "block", color: "#f8fafc", fontSize: "14px", marginBottom: "4px" }}>Driver Edge Camera Standby</strong>
-                        <span style={{ fontSize: "12px", color: "#94a3b8" }}>Click <strong>"Start Live Camera"</strong> to activate real-time face &amp; eye tracking</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Driver AI Safety Status Card */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "14px", justifyContent: "center" }}>
-                    <div style={{ background: "#ffffff", padding: "16px 18px", borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                        <span style={{ fontSize: "12px", fontWeight: "800", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                          Driver Identity
-                        </span>
-                        <strong style={{
-                          fontSize: "13px",
-                          fontWeight: "800",
-                          color: !cameraActive ? "#64748b" : "#16a34a",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px",
-                        }}>
-                          {!cameraActive ? "⚪ Camera Inactive" : "🟢 Verified Driver ✓"}
-                        </strong>
-                      </div>
-
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#475569", fontWeight: "600", paddingTop: "6px", borderTop: "1px solid #f1f5f9" }}>
-                        <span>
-                          Driver: <strong style={{ color: "#0f172a" }}>{autoVerificationResult.driverName || user?.name || "Driver"}</strong>
-                        </span>
-                        <span style={{
-                          padding: "2px 8px",
-                          borderRadius: "6px",
-                          fontSize: "11px",
-                          fontWeight: "700",
-                          background: "#dcfce7",
-                          color: "#15803d",
-                        }}>
-                          Approved License ✓
-                        </span>
-                      </div>
-                    </div>
-
-                    <div style={{ background: "#ffffff", padding: "16px 18px", borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontSize: "12px", fontWeight: "800", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                          AI Safety Status
-                        </span>
-                        <strong style={{
-                          fontSize: "13.5px",
-                          fontWeight: "800",
-                          color: monitoringState.alertness === "NORMAL"
-                            ? "#16a34a"
-                            : monitoringState.alertness === "EARLY_WARNING"
-                              ? "#d97706"
-                              : "#dc2626",
-                        }}>
-                          {monitoringState.alertness === "NORMAL"
-                            ? "🟢 Normal & Active"
-                            : monitoringState.alertness === "EARLY_WARNING"
-                              ? "🟡 Stay Alert"
-                              : "🔴 Drowsiness Warning"}
-                        </strong>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* REAL-TIME GPS TRACKER CARD */}
-              <div className="card-shadow" style={{ position: "relative", overflow: "hidden", border: "1.5px solid rgba(139, 92, 246, 0.25)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <div>
-                    <h3 style={styles.cardTitle}>Real-Time Bus Location & Telemetry</h3>
-                    <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b", fontWeight: "600" }}>Live coordinates broadcasted to passenger trip planner and tracking</p>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="touch-target"
-                    onClick={() => setShowAdvancedGps(!showAdvancedGps)}
-                    style={{
-                      padding: "6px 14px",
-                      borderRadius: "12px",
-                      border: "1.5px solid #cbd5e1",
-                      background: showAdvancedGps ? "#ede9fe" : "#ffffff",
-                      color: showAdvancedGps ? "#6d28d9" : "#475569",
-                      fontWeight: "700",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {showAdvancedGps ? "Hide Controls ▲" : "GPS & Map Controls ▼"}
-                  </button>
-                </div>
-
-                {showAdvancedGps && (
-                  <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "14px", border: "1px solid #e2e8f0", marginBottom: "16px", display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
-                    <button
-                      type="button"
-                      className="touch-target"
-                      onClick={() => {
-                        const nextState = !useRealDeviceGps;
-                        setUseRealDeviceGps(nextState);
-                        showToast(nextState ? "Live device GPS active" : "Route simulation active");
-                      }}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: "10px",
-                        border: "1.5px solid #cbd5e1",
-                        background: useRealDeviceGps ? "#f0fdf4" : "#ffffff",
-                        color: useRealDeviceGps ? "#166534" : "#475569",
-                        fontWeight: "700",
-                        fontSize: "13px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {useRealDeviceGps ? "Device GPS Active" : "Route Simulation"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="touch-target"
-                      onClick={() => setGpsActive(!gpsActive)}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: "10px",
-                        border: "none",
-                        fontSize: "13px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                        background: gpsActive ? "#f0fdf4" : "#fff1f2",
-                        color: gpsActive ? "#15803d" : "#be123c",
-                      }}
-                    >
-                      {gpsActive ? "GPS Active" : "GPS Inactive"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="touch-target"
-                      onClick={handleCenterMap}
-                      style={{
-                        background: "#ffffff",
-                        color: "#6d28d9",
-                        border: "1.5px solid #c4b5fd",
-                        padding: "8px 14px",
-                        borderRadius: "10px",
-                        fontWeight: "700",
-                        fontSize: "13px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Center Map
-                    </button>
-                  </div>
-                )}
-
-                {/* MAP CONTAINER WITH HUD */}
-                <div style={{ position: "relative", width: "100%", height: "min(380px, 60vh)", minHeight: "280px", borderRadius: "16px", overflow: "hidden", border: "1.5px solid #cbd5e1", background: "#0f172a", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.15)" }}>
-                  <div ref={mapContainerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, zIndex: 1 }}></div>
-
-                  {!isLeafletReady && (
-                    <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0 }} viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="mapBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#0f172a" />
-                          <stop offset="100%" stopColor="#1e293b" />
-                        </linearGradient>
-                        <linearGradient id="routePathGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#16a34a" />
-                          <stop offset="50%" stopColor="#7c3aed" />
-                          <stop offset="100%" stopColor="#4ade80" />
-                        </linearGradient>
-                      </defs>
-
-                      <rect width="100" height="100" fill="url(#mapBgGrad)" />
-                      <pattern id="gridPattern" width="10" height="10" patternUnits="userSpaceOnUse">
-                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#334155" strokeWidth="0.3" strokeDasharray="1,1" />
-                      </pattern>
-                      <rect width="100" height="100" fill="url(#gridPattern)" />
-
-                      <path d="M 12 75 L 30 55 L 50 40 L 72 30 L 90 15" fill="none" stroke="url(#routePathGrad)" strokeWidth="2.5" strokeDasharray="2,1" strokeLinecap="round" />
-
-                      {KERALA_ROUTE_WAYPOINTS.map((wp, i) => (
-                        <g key={wp.name}>
-                          <circle cx={wp.x} cy={wp.y} r="2" fill={i === 0 || i === KERALA_ROUTE_WAYPOINTS.length - 1 ? "#7c3aed" : "#16a34a"} stroke="#ffffff" strokeWidth="0.8" />
-                          <text x={wp.x} y={wp.y + 4} fill="#cbd5e1" fontSize="2.8" fontWeight="700" textAnchor="middle">{wp.name.split(" ")[0]}</text>
-                        </g>
-                      ))}
-
-                      {currentWp && (
-                        <g transform={`translate(${currentWp.x}, ${currentWp.y})`}>
-                          <circle r="4" fill="rgba(22, 163, 74, 0.4)" stroke="#4ade80" strokeWidth="0.5">
-                            <animate attributeName="r" values="3;7;3" dur="2s" repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" repeatCount="indefinite" />
-                          </circle>
-                          <circle r="2.5" fill="#16a34a" stroke="#ffffff" strokeWidth="0.6" />
-                          <text y="-4" fill="#4ade80" fontSize="3.2" fontWeight="800" textAnchor="middle">Bus {assignedBus?.busNumber || user?.busNumber || "KL"}</text>
-                        </g>
-                      )}
-                    </svg>
-                  )}
-
-                  {/* HUD Overlay */}
-                  <div style={{ position: "absolute", top: "12px", left: "12px", zIndex: 1000, background: "rgba(15, 23, 42, 0.85)", backdropFilter: "blur(8px)", color: "#ffffff", padding: "12px 18px", borderRadius: "14px", display: "flex", flexDirection: "column", gap: "6px", border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 8px 24px rgba(0,0,0,0.3)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 8px #4ade80" }}></span>
-                      <span style={{ fontSize: "11px", fontWeight: "700", color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.5px" }}>LIVE TELEMETRY BROADCAST</span>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
-                      <div style={{ fontSize: "32px", fontWeight: "800", color: "#ffffff", letterSpacing: "-0.5px" }}>
-                        {currentGps.speed} <span style={{ fontSize: "14px", fontWeight: "600", color: "#94a3b8" }}>km/h</span>
-                      </div>
-                    </div>
-
-                    <div style={{ fontSize: "12px", fontWeight: "600", color: "#a78bfa" }}>
-                      Accuracy: ± {currentGps.accuracy} m
-                    </div>
-                  </div>
-                </div>
-
-                {/* Location Strip */}
-                <div style={{ marginTop: "16px", background: "rgba(248, 250, 252, 0.9)", padding: "12px 16px", borderRadius: "14px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-                  <div>
-                    <div style={{ fontSize: "11px", fontWeight: "700", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.4px" }}>Current Position</div>
-                    <div style={{ fontSize: "14px", fontWeight: "700", color: "#0f172a" }}>{currentGps.address}</div>
-                  </div>
-
-                  <span style={{ fontSize: "12px", fontWeight: "700", color: "#6d28d9", background: "rgba(109, 40, 217, 0.08)", padding: "4px 10px", borderRadius: "10px" }}>
-                    Lat: {currentGps.lat.toFixed(4)}, Lng: {currentGps.lng.toFixed(4)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Onboard Capacity */}
-              <div className="card-shadow">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-                  <h3 style={styles.cardTitle}>Passengers Onboard</h3>
-                  <span style={{ fontSize: "16px", fontWeight: "800", color: occupancyPercent > 90 ? "#dc2626" : "#16a34a" }}>
-                    {passengersOnboard} / {totalCapacity} Seats ({occupancyPercent}%)
-                  </span>
-                </div>
-
-                <div style={{ width: "100%", height: "14px", borderRadius: "7px", background: "#e2e8f0", overflow: "hidden" }}>
-                  <div style={{ width: `${occupancyPercent}%`, height: "100%", background: occupancyPercent > 90 ? "linear-gradient(90deg, #f59e0b, #ef4444)" : "linear-gradient(90deg, #16a34a, #7c3aed)", borderRadius: "7px", transition: "width 0.4s ease" }} />
                 </div>
               </div>
             </div>
 
-            {/* Right Column (Hero Collections & Live Alerts) */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              <div style={styles.earningsCard}>
-                <span style={{ fontSize: "12px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", opacity: 0.9 }}>Today's Collections</span>
-                <div style={{ fontSize: "36px", fontWeight: "800", margin: "8px 0 14px", letterSpacing: "-0.5px" }}>₹ {dailyEarnings.toFixed(2)}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", opacity: 0.95, borderTop: "1px solid rgba(255,255,255,0.25)", paddingTop: "12px", fontWeight: "600" }}>
-                  <span>Payment Channels:</span>
-                  <strong style={{ fontWeight: "700" }}>RFID Pass + Cash Tickets</strong>
+            {/* Right Column (Today's Trips Schedule & Live Alerts) */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+              {/* TODAY'S TRIPS SCHEDULE TIMELINE */}
+              <div className="card-shadow">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Clock size={16} color="#4F46E5" />
+                    <h3 style={{ ...styles.cardTitle, fontSize: "15px" }}>Today's Trips</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("trips")}
+                    style={{ background: "none", border: "none", color: "#4F46E5", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" }}
+                  >
+                    <span>View all</span>
+                    <ArrowRight size={12} />
+                  </button>
                 </div>
+
+                {dynamicSchedules.length === 0 ? (
+                  <div style={{ padding: "18px 14px", background: "#F8FAFC", borderRadius: "12px", border: "1px solid #E2E8F0", textAlign: "center", color: "#64748B", fontSize: "12.5px", fontWeight: "600" }}>
+                    No additional scheduled trips for today.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {dynamicSchedules.map((tr, idx) => {
+                      const isSelected = idx === activeTripIndex;
+                      return (
+                        <div
+                          key={tr.id || idx}
+                          onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: "10px",
+                            background: isSelected ? "#EEF2FF" : "#F8FAFC",
+                            border: `1px solid ${isSelected ? "#C7D2FE" : "#E2E8F0"}`,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "8px"
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", display: "flex", alignItems: "center", gap: "6px" }}>
+                              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isSelected ? "#4F46E5" : "#94A3B8" }}></span>
+                              <span>{tr.routeName}</span>
+                            </div>
+                            <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
+                              {tr.departure} ➔ {tr.arrival} • <span style={{ color: "#059669", fontWeight: "700" }}>{tr.passengers || 0} pax</span>
+                            </div>
+                          </div>
+
+                          <span
+                            style={{
+                              fontSize: "10.5px",
+                              fontWeight: "800",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              background: isSelected ? "#4F46E5" : "#FFFFFF",
+                              color: isSelected ? "#FFFFFF" : "#475569",
+                              border: `1px solid ${isSelected ? "#4F46E5" : "#CBD5E1"}`,
+                              whiteSpace: "nowrap"
+                            }}
+                          >
+                            {isSelected ? "Active" : "Select"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="card-shadow">
@@ -4568,76 +4980,230 @@ function Driver({ defaultTab = "dashboard" }) {
           </div>
         )}
 
-        {/* TAB 2: MY ASSIGNED BUS & VEHICLE */}
+        {/* TAB 2: MY ASSIGNED BUS & VEHICLE SLOTS */}
         {currentTab === "buses" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            <div className="card-shadow">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {/* Header with Stats Strip */}
+            <div className="card-shadow" style={{ padding: "22px 26px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "16px" }}>
                 <div>
-                  <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: 0 }}>My Assigned Bus & Vehicle</h2>
+                  <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>🚌</span> My Assigned Bus Slots &amp; Scheduled Trips
+                  </h2>
                   <p style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
-                    Bus vehicle and route trips assigned to you by MoveSmart Fleet Operations.
+                    Below are your assigned vehicle slots (bus &amp; shift) and the specific route departures scheduled on each bus.
                   </p>
                 </div>
 
                 {filteredBuses.length > 0 && (
                   <input
                     type="text"
-                    placeholder="Search by name, number, or route..."
+                    placeholder="Search by bus number, name, or route..."
                     value={busSearchQuery}
                     onChange={(e) => setBusSearchQuery(e.target.value)}
-                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", fontSize: "14px", minWidth: "240px", outline: "none", fontWeight: "600" }}
+                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", fontSize: "13.5px", minWidth: "260px", outline: "none", fontWeight: "600" }}
                   />
                 )}
               </div>
 
-              {loadingBuses ? (
-                <div style={{ textAlign: "center", padding: "32px", fontSize: "15px", fontWeight: "700", color: "#64748b" }}>Loading assigned bus details...</div>
-              ) : filteredBuses.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px 24px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
-                  <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 6px" }}>
-                    No bus trip is currently assigned to you.
-                  </div>
-                  <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
-                    Once assigned by Admin in Fleet Management, your vehicle schedule will appear here.
+              {/* Quick Roster Metrics Banner */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", background: "#f8fafc", padding: "14px 18px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Assigned Bus Slots</span>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#10b981", marginTop: "2px" }}>
+                    {filteredBuses.length} Vehicle Slot{filteredBuses.length !== 1 ? "s" : ""}
                   </div>
                 </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
-                  {filteredBuses.map((bus) => (
-                    <div key={bus._id} style={{ background: "#ffffff", borderRadius: "16px", padding: "20px", border: "1.5px solid #bbf7d0", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.06)", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-                          <span style={{ fontSize: "13.5px", fontFamily: "monospace", fontWeight: "800", background: "#f0fdf4", padding: "4px 10px", borderRadius: "8px", border: "1px solid #86efac", color: "#15803d" }}>
-                            {bus.busNumber}
-                          </span>
 
-                          <span style={{ fontSize: "12.5px", fontWeight: "700", color: "#15803d", background: "#f0fdf4", padding: "4px 10px", borderRadius: "12px", border: "1px solid #bbf7d0" }}>
-                            Assigned to You ✓
-                          </span>
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Total Scheduled Trips</span>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#6366f1", marginTop: "2px" }}>
+                    {dynamicSchedules.length} Departure{dynamicSchedules.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Driver On Duty</span>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", marginTop: "2px" }}>
+                    {user?.name || "Silpa"} (You)
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {loadingBuses ? (
+              <div style={{ textAlign: "center", padding: "40px", fontSize: "15px", fontWeight: "700", color: "#64748b" }}>Loading assigned bus slots...</div>
+            ) : filteredBuses.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "50px 24px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
+                <div style={{ fontSize: "16px", fontWeight: "800", color: "#334155", maxWidth: "460px", margin: "0 auto 6px" }}>
+                  No bus slots currently assigned to your roster.
+                </div>
+                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
+                  When Admin assigns your shift in the 3-Shift Driver Roster, your vehicle slot and trips will appear here.
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {filteredBuses.map((bus, busIdx) => {
+                  const driverShift = bus.assignedShift || bus.shift || "Morning";
+                  const shiftDisplay = driverShift === "Morning" ? "🌅 Morning Shift (06:00 AM – 02:00 PM)"
+                    : driverShift === "Evening" ? "🌆 Evening Shift (02:00 PM – 10:00 PM)"
+                    : "🌙 Night Shift (10:00 PM – 06:00 AM)";
+
+                  const tripsForThisBus = (bus.assignedTrips && bus.assignedTrips.length > 0)
+                    ? bus.assignedTrips
+                    : [{
+                        id: `BASE-${bus._id}`,
+                        scheduleId: null,
+                        departureTime: bus.departureTime || "08:00 AM",
+                        arrivalTime: bus.arrivalTime || "10:00 AM",
+                        routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+                        fromLocation: bus.fromLocation,
+                        toLocation: bus.toLocation,
+                        stops: bus.stops || [],
+                        shift: driverShift,
+                        price: bus.price || 35,
+                      }];
+
+                  return (
+                    <div
+                      key={bus._id}
+                      style={{
+                        background: "#ffffff",
+                        borderRadius: "20px",
+                        padding: "24px",
+                        border: bus.isReplacementDuty ? "2px solid #c4b5fd" : "2px solid #bbf7d0",
+                        boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "18px",
+                      }}
+                    >
+                      {/* LEVEL 1: BUS SLOT & SHIFT SPECIFICATIONS */}
+                      <div style={{ borderBottom: "1.5px solid #f1f5f9", paddingBottom: "16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "8px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: "15px", fontFamily: "monospace", fontWeight: "900", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "6px 14px", borderRadius: "10px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#86efac"}`, color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", letterSpacing: "0.5px" }}>
+                              🚌 {bus.busNumber}
+                            </span>
+                            <h3 style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", margin: 0 }}>
+                              {bus.busName}
+                            </h3>
+                          </div>
+
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: "12px", fontWeight: "800", color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "5px 12px", borderRadius: "20px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#bbf7d0"}` }}>
+                              {bus.isReplacementDuty ? "⚡ Temporary Replacement" : "● Assigned to You ✓"}
+                            </span>
+
+                            <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "5px 12px", borderRadius: "20px", border: "1.5px solid #c7d2fe" }}>
+                              {shiftDisplay}
+                            </span>
+                          </div>
                         </div>
 
-                        <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: "6px 0" }}>{bus.busName}</h3>
-                        <div style={{ fontSize: "14px", fontWeight: "700", color: "#2563eb", marginBottom: "12px" }}>
-                          {bus.fromLocation} ➔ {bus.toLocation} (<strong>{bus.departureTime}</strong> - {bus.arrivalTime})
-                        </div>
-
-                        <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "13px", color: "#475569", fontWeight: "600", display: "flex", flexDirection: "column", gap: "6px" }}>
-                          <div>Bus Type: <strong style={{ color: "#0f172a", fontWeight: "700" }}>{bus.busType}</strong></div>
-                          <div>Total Capacity: <strong style={{ color: "#0f172a", fontWeight: "700" }}>{bus.totalSeats} Seats</strong></div>
-                          <div>Assigned Driver: <strong style={{ color: "#15803d", fontWeight: "700" }}>{bus.driverName || user?.name} (You)</strong></div>
-                          {bus.driverPhone && <div>Contact: <strong style={{ fontWeight: "700" }}>{bus.driverPhone}</strong></div>}
+                        {/* Bus Specs Strip */}
+                        <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "12.5px", color: "#64748b", marginTop: "10px", fontWeight: "600" }}>
+                          <span>💺 Capacity: <strong style={{ color: "#0f172a" }}>{bus.totalSeats} Seats</strong></span>
+                          <span>🚍 Type: <strong style={{ color: "#0f172a" }}>{bus.busType}</strong></span>
+                          {bus.driverPhone && <span>📱 Contact: <strong style={{ color: "#0f172a" }}>{bus.driverPhone}</strong></span>}
+                          <span>🧑✈️ Driver: <strong style={{ color: "#15803d" }}>{(!bus.driverName || bus.driverName === "Not Assigned" || bus.driverName.includes("Unassigned") || bus.driverName.includes("Replacement Driver Required")) ? (user?.name || "Silpa") : bus.driverName} (You)</strong></span>
                         </div>
                       </div>
 
-                      <div style={{ marginTop: "16px", background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", padding: "10px 14px", borderRadius: "12px", textAlign: "center", fontWeight: "800", fontSize: "13.5px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                        <span>Assigned to Active Duty</span>
+                      {/* LEVEL 2: TRIPS ASSIGNED TO THIS BUS */}
+                      <div style={{ background: "#f8fafc", borderRadius: "16px", padding: "18px", border: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
+                          <div style={{ fontSize: "14px", fontWeight: "900", color: "#0f172a", display: "flex", alignItems: "center", gap: "7px" }}>
+                            <Clock size={16} color="#6366f1" />
+                            <span>Trips Assigned to this Bus ({tripsForThisBus.length})</span>
+                          </div>
+                          <span style={{ fontSize: "11.5px", fontWeight: "700", color: "#64748b" }}>
+                            Scheduled departures for your {driverShift} duty shift
+                          </span>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                          {tripsForThisBus.map((tr, tIdx) => (
+                            <div
+                              key={tr.id || tIdx}
+                              style={{
+                                background: "#ffffff",
+                                borderRadius: "14px",
+                                padding: "14px 18px",
+                                border: "1.5px solid #e2e8f0",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: "12px",
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: "13.5px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "3px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+                                    ⏰ {tr.departureTime}
+                                  </span>
+                                  <span style={{ fontSize: "15px", fontWeight: "800", color: "#0f172a" }}>
+                                    {tr.routeName}
+                                  </span>
+                                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "2px 8px", borderRadius: "6px" }}>
+                                    {tr.shift} Departure
+                                  </span>
+                                </div>
+
+                                <div style={{ fontSize: "12px", color: "#64748b", marginTop: "5px", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
+                                  <span>🏁 Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrivalTime}</strong></span>
+                                  {tr.stops && tr.stops.length > 0 && <span>🛑 Route Stops: <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
+                                  <span>💰 Base Fare: <strong style={{ color: "#059669" }}>₹{tr.price || bus.price || 35}</strong></span>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveTripIndex(busIdx);
+                                  navigate("/driver/live-drive", {
+                                    state: {
+                                      selectedBusId: bus._id,
+                                      selectedBusNumber: bus.busNumber,
+                                      selectedScheduleId: tr.scheduleId,
+                                      departureTime: tr.departureTime,
+                                      routeName: tr.routeName,
+                                      fromLocation: tr.fromLocation,
+                                      toLocation: tr.toLocation,
+                                      stops: tr.stops,
+                                    }
+                                  });
+                                }}
+                                style={{
+                                  padding: "9px 18px",
+                                  borderRadius: "10px",
+                                  background: "linear-gradient(135deg, #16a34a, #059669)",
+                                  color: "#ffffff",
+                                  fontSize: "13px",
+                                  fontWeight: "800",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  boxShadow: "0 2px 8px rgba(22, 163, 74, 0.25)",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                <Navigation size={14} /> Start This Trip →
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -4646,7 +5212,7 @@ function Driver({ defaultTab = "dashboard" }) {
           <div className="driver-leave-grid">
             <div className="card-shadow">
               <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 6px" }}>Apply for Driver Leave</h2>
-              <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Select Full Day or Half Day leave and submit for Admin approval.</p>
+              <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Select Full Day, Specific Shift, or Half Day leave and submit for Admin approval.</p>
 
               <form onSubmit={handleApplyLeaveSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                 <div>
@@ -4655,30 +5221,46 @@ function Driver({ defaultTab = "dashboard" }) {
                 </div>
 
                 <div>
-                  <label style={styles.formLabel}>Leave Type <span style={{ color: "#e11d48" }}>*</span></label>
-                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                    {["Full Day", "Half Day"].map((type) => (
-                      <button
-                        key={type}
-                        type="button"
-                        className="touch-target"
-                        onClick={() => setLeaveForm({ ...leaveForm, leaveType: type })}
-                        style={{
-                          flex: 1,
-                          minWidth: "130px",
-                          padding: "12px",
-                          borderRadius: "12px",
-                          border: `2px solid ${leaveForm.leaveType === type ? "#16a34a" : "#cbd5e1"}`,
-                          background: leaveForm.leaveType === type ? "#f0fdf4" : "#ffffff",
-                          color: leaveForm.leaveType === type ? "#15803d" : "#475569",
-                          fontWeight: "800",
-                          fontSize: "14px",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {type === "Full Day" ? "Full Day Leave" : "Half Day Leave"}
-                      </button>
-                    ))}
+                  <label style={styles.formLabel}>Leave Scope / Shift <span style={{ color: "#e11d48" }}>*</span></label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+                    {[
+                      { id: "ALL", label: "Full Day (All Shifts)", type: "Full Day" },
+                      { id: "Morning", label: "Morning Shift (06:00-14:00)", type: "Shift" },
+                      { id: "Evening", label: "Evening Shift (14:00-22:00)", type: "Shift" },
+                      { id: "Night", label: "Night Shift (22:00-06:00)", type: "Shift" },
+                      { id: "Half Day", label: "Half Day Slot", type: "Half Day" },
+                    ].map((opt) => {
+                      const isSelected = opt.id === "Half Day"
+                        ? leaveForm.leaveType === "Half Day"
+                        : (leaveForm.leaveType === "Full Day" && (leaveForm.shiftSlot === opt.id || (!leaveForm.shiftSlot && opt.id === "ALL")));
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className="touch-target"
+                          onClick={() => {
+                            if (opt.id === "Half Day") {
+                              setLeaveForm({ ...leaveForm, leaveType: "Half Day", shiftSlot: "Morning" });
+                            } else {
+                              setLeaveForm({ ...leaveForm, leaveType: "Full Day", shiftSlot: opt.id });
+                            }
+                          }}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: "12px",
+                            border: `2px solid ${isSelected ? "#16a34a" : "#cbd5e1"}`,
+                            background: isSelected ? "#f0fdf4" : "#ffffff",
+                            color: isSelected ? "#15803d" : "#475569",
+                            fontWeight: "800",
+                            fontSize: "12.5px",
+                            cursor: "pointer",
+                            textAlign: "center",
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -4692,9 +5274,9 @@ function Driver({ defaultTab = "dashboard" }) {
                             type="radio"
                             name="halfDaySlot"
                             checked={leaveForm.halfDaySlot === slot}
-                            onChange={() => setLeaveForm({ ...leaveForm, halfDaySlot: slot })}
+                            onChange={() => setLeaveForm({ ...leaveForm, halfDaySlot: slot, shiftSlot: slot === "Afternoon (PM)" ? "Evening" : "Morning" })}
                           />
-                          {slot === "Forenoon (AM)" ? "Forenoon (AM)" : "Afternoon (PM)"}
+                          {slot === "Forenoon (AM)" ? "Forenoon (AM) - Morning" : "Afternoon (PM) - Evening"}
                         </label>
                       ))}
                     </div>
@@ -4717,8 +5299,8 @@ function Driver({ defaultTab = "dashboard" }) {
                     style={styles.formInput}
                     required
                   />
-                  <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px" }}>
-                    ℹ️ Same-day leave is disabled. Please select tomorrow or an upcoming date.
+                  <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                    <AlertCircle size={12} color="#64748b" /> Same-day leave is disabled. Please select tomorrow or an upcoming date.
                   </div>
                 </div>
 
@@ -4754,15 +5336,20 @@ function Driver({ defaultTab = "dashboard" }) {
                     <div key={l._id} style={{ background: "rgba(248, 250, 252, 0.85)", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
                         <span style={{ fontSize: "14.5px", fontWeight: "800", color: "#0f172a" }}>
-                          {l.leaveDate} ({l.leaveType})
+                          {l.leaveDate} • {l.shiftSlot ? `${l.shiftSlot} Shift` : l.leaveType}
                         </span>
 
                         <span className={l.status === "Approved" ? "status-badge-approved" : l.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
-                          {l.status === "Approved" ? "Approved by Admin ✓" : l.status === "Rejected" ? "Rejected by Admin" : "Pending Review"}
+                          {l.status === "Approved" ? "Approved by Admin" : l.status === "Rejected" ? "Rejected by Admin" : "Pending Review"}
                         </span>
                       </div>
 
-                      {l.leaveType === "Half Day" && (
+                      {l.shiftSlot && l.shiftSlot !== "ALL" && (
+                        <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
+                          Shift Slot: {l.shiftSlot} {l.halfDaySlot && l.halfDaySlot !== "N/A" ? `(${l.halfDaySlot})` : ""}
+                        </div>
+                      )}
+                      {l.leaveType === "Half Day" && (!l.shiftSlot || l.shiftSlot === "ALL") && (
                         <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
                           Slot: {l.halfDaySlot}
                         </div>
@@ -4846,7 +5433,7 @@ function Driver({ defaultTab = "dashboard" }) {
                       marginBottom: "8px",
                     }}
                   >
-                    📁 Upload Profile Photo
+                    <Upload size={14} /> Upload Profile Photo
                     <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ display: "none" }} />
                   </label>
 
@@ -4854,7 +5441,9 @@ function Driver({ defaultTab = "dashboard" }) {
                     <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "12px", background: "#f0fdf4", padding: "10px 14px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
                       <img src={verificationData?.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover", border: "2px solid #16a34a" }} />
                       <div>
-                        <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "block" }}>Photo Attached ✓</span>
+                        <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "flex", alignItems: "center", gap: "4px" }}>
+                          <CheckCircle2 size={14} color="#15803d" /> Photo Attached
+                        </span>
                         <span style={{ fontSize: "11.5px", color: "#64748b" }}>Ready for profile verification</span>
                       </div>
                     </div>
@@ -4865,9 +5454,11 @@ function Driver({ defaultTab = "dashboard" }) {
                   <label style={styles.formLabel}>Driving License Document</label>
                   <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ fontSize: "13px", fontWeight: "600" }} />
                   {verificationData?.licenseImage && (
-                    <div style={{ marginTop: "8px" }}>
+                    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
                       <img src={verificationData?.licenseImage} alt="License Preview" style={{ height: "64px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                      <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "700", marginLeft: "12px" }}>Document Attached ✓</span>
+                      <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "700", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                        <CheckCircle2 size={14} color="#15803d" /> Document Attached
+                      </span>
                     </div>
                   )}
                 </div>
@@ -4897,8 +5488,8 @@ function Driver({ defaultTab = "dashboard" }) {
                   <div style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 12px", fontWeight: "600" }}>{user?.email || "driver@movesmart.in"}</div>
 
                   {verificationData?.verificationStatus === "Approved" ? (
-                    <div style={{ background: "#f0fdf4", color: "#15803d", border: "1.5px solid #bbf7d0", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      Verified Driver ✓
+                    <div style={{ background: "#f0fdf4", color: "#15803d", border: "1.5px solid #bbf7d0", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "center", width: "100%" }}>
+                      <CheckCircle2 size={16} color="#15803d" /> Verified Driver
                     </div>
                   ) : verificationData?.verificationStatus === "Pending" ? (
                     <div style={{ background: "#fffbeb", color: "#92400e", border: "1.5px solid #fde68a", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
@@ -4919,40 +5510,125 @@ function Driver({ defaultTab = "dashboard" }) {
                 </div>
               </div>
 
-              <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#15803d", fontSize: "13px", fontWeight: "600", marginTop: "16px" }}>
-                ℹ️ Driver identity and biometric verifications are managed through the Central Admin Portal.
+              <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#15803d", fontSize: "13px", fontWeight: "600", marginTop: "16px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <AlertCircle size={15} color="#15803d" /> Driver identity and biometric verifications are managed through the Central Admin Portal.
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 5: TRIPS SCHEDULE */}
+        {/* TAB 5: TRIPS SCHEDULE TIMELINE */}
         {activeTab === "trips" && (
-          <div className="card-shadow">
-            <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Today's Scheduled Trips</h3>
+          <div className="card-shadow" style={{ padding: "24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <h3 style={{ ...styles.cardTitle, margin: 0, fontSize: "20px", fontWeight: "900" }}>
+                  🛣️ Today's Scheduled Departures Timeline
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
+                  Chronological list of all departures scheduled across your assigned bus slots.
+                </p>
+              </div>
+
+              <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "6px 14px", borderRadius: "20px", border: "1px solid #c7d2fe" }}>
+                {dynamicSchedules.length} Scheduled Trip{dynamicSchedules.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+
             {dynamicSchedules.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "36px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
+              <div style={{ textAlign: "center", padding: "40px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
                 <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 4px" }}>
-                  No scheduled trips found for today.
+                  No scheduled departures found for your assigned shifts today.
                 </div>
                 <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
-                  When Admin assigns bus routes in Fleet Management, your daily schedule will automatically populate here.
+                  When departures are scheduled on your assigned vehicles in Fleet Management, they will automatically appear here.
                 </div>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                {dynamicSchedules.map((tr, idx) => (
-                  <div key={tr.id} style={{ padding: "16px 20px", borderRadius: "14px", background: idx === activeTripIndex ? "#f5f3ff" : "rgba(248, 250, 252, 0.8)", border: `1.5px solid ${idx === activeTripIndex ? "#c4b5fd" : "#e2e8f0"}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                    <div>
-                      <div style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a" }}>{tr.routeName}</div>
-                      <div style={{ fontSize: "13.5px", color: "#64748b", marginTop: "4px", fontWeight: "600" }}>Departure: <strong style={{ color: "#0f172a" }}>{tr.departure}</strong> | Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrival}</strong></div>
-                      <div style={{ fontSize: "12.5px", color: "#15803d", marginTop: "2px", fontWeight: "700" }}>{tr.passengers} Passengers Booked • Fare Total: ₹ {tr.fareEarned.toFixed(2)}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {dynamicSchedules.map((tr, idx) => {
+                  const isSelected = idx === activeTripIndex;
+                  return (
+                    <div
+                      key={tr.id}
+                      style={{
+                        padding: "18px 22px",
+                        borderRadius: "16px",
+                        background: isSelected ? "#f5f3ff" : "#ffffff",
+                        border: isSelected ? "2px solid #7c3aed" : "1.5px solid #e2e8f0",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "14px",
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
+                          <span style={{ fontSize: "14px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+                            ⏰ {tr.departure}
+                          </span>
+                          <span style={{ fontSize: "13px", fontFamily: "monospace", fontWeight: "900", background: "#f8fafc", padding: "4px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", color: "#0f172a" }}>
+                            🚌 {tr.busNumber} ({tr.busName})
+                          </span>
+                          <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: "6px" }}>
+                            {tr.shift} Shift
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a", marginBottom: "4px" }}>
+                          {tr.routeName}
+                        </div>
+
+                        <div style={{ fontSize: "12.5px", color: "#64748b", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
+                          <span>🏁 Expected Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrival}</strong></span>
+                          {tr.stops && tr.stops.length > 0 && <span>🛑 <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
+                          <span>👥 <strong style={{ color: "#059669" }}>{tr.passengers || 0} Pax Booked</strong></span>
+                          <span>💰 Fare: <strong>₹{tr.fareEarned.toFixed(2)}</strong></span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTripIndex(tr.busIndex || 0);
+                            navigate("/driver/live-drive", {
+                              state: {
+                                selectedBusId: tr.busId,
+                                selectedBusNumber: tr.busNumber,
+                                selectedScheduleId: tr.scheduleId,
+                                departureTime: tr.departure,
+                                routeName: tr.routeName,
+                                fromLocation: tr.fromLocation,
+                                toLocation: tr.toLocation,
+                                stops: tr.stops,
+                              }
+                            });
+                          }}
+                          style={{
+                            padding: "10px 18px",
+                            borderRadius: "10px",
+                            background: "linear-gradient(135deg, #7c3aed, #4c1d95)",
+                            color: "#ffffff",
+                            fontSize: "13px",
+                            fontWeight: "800",
+                            border: "none",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            boxShadow: "0 2px 8px rgba(124, 58, 237, 0.25)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <Navigation size={14} /> Start Live Drive →
+                        </button>
+                      </div>
                     </div>
-                    <button className="btn-purple-gradient touch-target" onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }} style={{ padding: "8px 16px", fontSize: "13.5px" }}>
-                      Select Trip
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4993,14 +5669,20 @@ function Driver({ defaultTab = "dashboard" }) {
             {drvLfToast && (
               <div style={{ background: "#2e1065", color: "#fff", padding: "12px 18px", borderRadius: "12px", marginBottom: "16px", fontSize: "13.5px", fontWeight: "700" }}>{drvLfToast}</div>
             )}
-            <h3 style={{ ...styles.cardTitle, marginBottom: "4px" }}>📦 Lost &amp; Found — Report Found Item</h3>
+            <h3 style={{ ...styles.cardTitle, marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Package size={17} color="#6337D9" /> Lost &amp; Found — Report Found Item
+            </h3>
             <p style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginBottom: "20px" }}>Found something on your bus? Report it here so passengers can claim it through MoveSmart.</p>
 
             {/* Sub-tabs */}
             <div style={{ display: "flex", gap: "10px", marginBottom: "22px" }}>
-              {[{ id: "reportFound", label: "📦 Report Found Item" }, { id: "myFound", label: "📁 My Found Reports" }].map(st => (
+              {[
+                { id: "reportFound", label: "Report Found Item", icon: <Package size={14} /> },
+                { id: "myFound", label: "My Found Reports", icon: <FileText size={14} /> }
+              ].map(st => (
                 <button key={st.id} type="button" onClick={() => { setDrvLfSubTab(st.id); if (st.id === "myFound") fetchDrvMyFound(); }}
-                  style={{ padding: "9px 18px", borderRadius: "12px", border: `2px solid ${drvLfSubTab === st.id ? "#7c3aed" : "#e2e8f0"}`, background: drvLfSubTab === st.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : "#f8fafc", color: drvLfSubTab === st.id ? "#fff" : "#475569", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
+                  style={{ padding: "9px 18px", borderRadius: "12px", border: `2px solid ${drvLfSubTab === st.id ? "#7c3aed" : "#e2e8f0"}`, background: drvLfSubTab === st.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : "#f8fafc", color: drvLfSubTab === st.id ? "#fff" : "#475569", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  {st.icon}
                   {st.label}
                 </button>
               ))}
@@ -5010,7 +5692,7 @@ function Driver({ defaultTab = "dashboard" }) {
             {drvLfSubTab === "reportFound" && (
               drvFoundSuccess ? (
                 <div style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid #93c5fd", borderRadius: "20px", padding: "32px", textAlign: "center", maxWidth: "480px" }}>
-                  <div style={{ fontSize: "44px", marginBottom: "10px" }}>📦</div>
+                  <Package size={44} color="#1d4ed8" style={{ margin: "0 auto 10px", display: "block" }} />
                   <h4 style={{ fontSize: "18px", fontWeight: "900", color: "#1d4ed8", marginBottom: "6px" }}>Found Report Submitted!</h4>
                   <p style={{ fontSize: "13px", color: "#1e40af", marginBottom: "6px" }}>Report ID:</p>
                   <div style={{ background: "#fff", border: "1px solid #93c5fd", borderRadius: "10px", padding: "12px 18px", fontSize: "18px", fontWeight: "900", color: "#1d4ed8", letterSpacing: "1px", marginBottom: "16px" }}>{drvFoundSuccess}</div>
@@ -5062,7 +5744,7 @@ function Driver({ defaultTab = "dashboard" }) {
                   <div style={{ gridColumn: "1/-1" }}>
                     <button type="submit" disabled={drvLfLoading} className="btn-purple-gradient touch-target"
                       style={{ padding: "13px 28px", fontSize: "14px", opacity: drvLfLoading ? 0.7 : 1, cursor: drvLfLoading ? "not-allowed" : "pointer" }}>
-                      {drvLfLoading ? "Submitting…" : "📦 Submit Found Report →"}
+                      {drvLfLoading ? "Submitting…" : "Submit Found Report →"}
                     </button>
                   </div>
                 </form>
@@ -5107,6 +5789,8 @@ function Driver({ defaultTab = "dashboard" }) {
             )}
           </div>
         )}
+          </div>
+        </div>
       </main>
 
       {/* REPORT ISSUE MODAL */}
@@ -5197,8 +5881,8 @@ function Driver({ defaultTab = "dashboard" }) {
             {/* Modal Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px", borderBottom: "1px solid #e2e8f0", paddingBottom: "14px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "linear-gradient(135deg, #6d28d9, #8b5cf6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" }}>
-                  🛡️
+                <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "linear-gradient(135deg, #6d28d9, #8b5cf6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <ShieldCheck size={22} />
                 </div>
                 <div>
                   <h3 style={{ fontSize: "19px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
@@ -5286,13 +5970,24 @@ function Driver({ defaultTab = "dashboard" }) {
                         ? "#d97706"
                         : capturedFaceAnalysis?.isMatch
                           ? "#15803d"
-                          : "#dc2626"
+                          : "#dc2626",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px"
                     }}>
-                      {!capturedFaceAnalysis?.faceProfileEnrolled
-                        ? "⚠️ Unverified — No Enrolled Profile"
-                        : capturedFaceAnalysis?.isMatch
-                          ? `🟢 Verified (${capturedFaceAnalysis.matchScore}% Match)`
-                          : `🔴 Identity Mismatch (${capturedFaceAnalysis.matchScore}% Similarity)`}
+                      {!capturedFaceAnalysis?.faceProfileEnrolled ? (
+                        <>
+                          <AlertTriangle size={13} /> Unverified — No Enrolled Profile
+                        </>
+                      ) : capturedFaceAnalysis?.isMatch ? (
+                        <>
+                          <CheckCircle2 size={13} color="#15803d" /> Verified ({capturedFaceAnalysis.matchScore}% Match)
+                        </>
+                      ) : (
+                        <>
+                          <XCircle size={13} color="#dc2626" /> Identity Mismatch ({capturedFaceAnalysis.matchScore}% Similarity)
+                        </>
+                      )}
                     </span>
                   </div>
                   <div style={{ fontSize: "11.5px", color: "#64748b", fontWeight: "600" }}>
@@ -5325,7 +6020,7 @@ function Driver({ defaultTab = "dashboard" }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                     <span style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>Eye Aspect Ratio (EAR)</span>
                     <span style={{ fontSize: "12.5px", fontWeight: "800", color: capturedFaceAnalysis?.ear >= 0.22 ? "#15803d" : "#dc2626" }}>
-                      {capturedFaceAnalysis?.ear ? capturedFaceAnalysis.ear.toFixed(2) : "0.29"} {capturedFaceAnalysis?.eyeState || "Open ✓"}
+                      {capturedFaceAnalysis?.ear ? capturedFaceAnalysis.ear.toFixed(2) : "0.29"} ({capturedFaceAnalysis?.eyeState || "Open"})
                     </span>
                   </div>
                   <div style={{ width: "100%", height: "6px", borderRadius: "3px", background: "#e2e8f0", overflow: "hidden", marginTop: "4px" }}>
@@ -5363,9 +6058,9 @@ function Driver({ defaultTab = "dashboard" }) {
                 type="button"
                 onClick={handleTakeDriverPhoto}
                 className="touch-target"
-                style={{ padding: "10px 16px", borderRadius: "10px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#475569", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}
+                style={{ padding: "10px 16px", borderRadius: "10px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#475569", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
-                🔄 Retake Photo
+                <RotateCw size={13} /> Retake Photo
               </button>
 
               <button
@@ -5373,18 +6068,19 @@ function Driver({ defaultTab = "dashboard" }) {
                 onClick={handleEnrollBiometricWeb}
                 disabled={isEnrollingWeb}
                 className="touch-target"
-                style={{ padding: "10px 16px", borderRadius: "10px", border: "1.5px solid #7c3aed", background: "#f5f3ff", color: "#6d28d9", fontWeight: "800", fontSize: "13px", cursor: isEnrollingWeb ? "not-allowed" : "pointer" }}
+                style={{ padding: "10px 16px", borderRadius: "10px", border: "1.5px solid #7c3aed", background: "#f5f3ff", color: "#6d28d9", fontWeight: "800", fontSize: "13px", cursor: isEnrollingWeb ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
-                {isEnrollingWeb ? `Enrolling (${enrollProgress}/20)...` : "⚡ Enroll 128-d Face Profile"}
+                <Zap size={14} />
+                {isEnrollingWeb ? `Enrolling (${enrollProgress}/20)...` : "Enroll 128-d Face Profile"}
               </button>
 
               <button
                 type="button"
                 onClick={handleSaveCapturedAsProfilePic}
                 className="btn-green-gradient touch-target"
-                style={{ padding: "10px 20px", fontSize: "13.5px", borderRadius: "10px", border: "none", cursor: "pointer" }}
+                style={{ padding: "10px 20px", fontSize: "13.5px", borderRadius: "10px", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
-                ✓ Use as Official Profile Photo
+                <Check size={15} /> Use as Official Profile Photo
               </button>
             </div>
           </div>
@@ -5410,8 +6106,8 @@ function Driver({ defaultTab = "dashboard" }) {
             {/* Modal Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px", borderBottom: "1px solid #e2e8f0", paddingBottom: "14px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" }}>
-                  📡
+                <div style={{ width: "42px", height: "42px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Radio size={22} />
                 </div>
                 <div>
                   <h3 style={{ fontSize: "19px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
@@ -5437,7 +6133,7 @@ function Driver({ defaultTab = "dashboard" }) {
             {/* Step-by-Step Instructions Banner */}
             <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: "14px", padding: "14px 16px", marginBottom: "20px", fontSize: "13px", color: "#166534" }}>
               <div style={{ fontWeight: "800", marginBottom: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <span>💡</span> Easy 2-Step Device Connection
+                <Sparkles size={15} color="#16a34a" /> Easy 2-Step Device Connection
               </div>
               <ol style={{ margin: "0 0 0 18px", padding: 0, lineHeight: "1.6", fontWeight: "600" }}>
                 <li>Power ON your ESP32 device and connect your phone/laptop to Wi-Fi: <strong>MoveSmart-RFID-xxxx</strong> (Password: <code>MoveSmart123</code>).</li>
@@ -5474,9 +6170,6 @@ function Driver({ defaultTab = "dashboard" }) {
                     }`,
                 }}
               >
-                {rfidProvisioningStatus === "submitting" && "⏳ "}
-                {rfidProvisioningStatus === "success" && "✓ "}
-                {rfidProvisioningStatus === "error" && "⚠ "}
                 {rfidProvisioningMsg}
               </div>
             )}
@@ -5582,7 +6275,7 @@ function Driver({ defaultTab = "dashboard" }) {
                     gap: "6px",
                   }}
                 >
-                  🌐 Open 192.168.4.1 Direct Setup
+                  <Globe size={14} /> Open 192.168.4.1 Direct Setup
                 </a>
 
                 <button
@@ -5598,9 +6291,10 @@ function Driver({ defaultTab = "dashboard" }) {
                   type="submit"
                   disabled={rfidProvisioningStatus === "submitting"}
                   className="btn-green-gradient touch-target"
-                  style={{ padding: "10px 22px", fontSize: "13.5px", borderRadius: "10px", border: "none", cursor: rfidProvisioningStatus === "submitting" ? "not-allowed" : "pointer" }}
+                  style={{ padding: "10px 22px", fontSize: "13.5px", borderRadius: "10px", border: "none", cursor: rfidProvisioningStatus === "submitting" ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
                 >
-                  {rfidProvisioningStatus === "submitting" ? "⏳ Transmitting..." : "🚀 Transmit Configuration"}
+                  <Zap size={14} />
+                  {rfidProvisioningStatus === "submitting" ? "Transmitting..." : "Transmit Configuration"}
                 </button>
               </div>
             </form>
@@ -5620,117 +6314,115 @@ function Driver({ defaultTab = "dashboard" }) {
 const styles = {
   pageWrapper: {
     minHeight: "100vh",
-    background: "radial-gradient(at 0% 0%, rgba(99, 55, 217, 0.03) 0px, transparent 50%), radial-gradient(at 100% 100%, rgba(21, 148, 71, 0.03) 0px, transparent 50%), #F8F7FC",
+    background: "#F8F9FD",
     display: "flex",
     flexDirection: "column"
   },
   topNavbar: {
-    background: "rgba(255, 255, 255, 0.92)",
-    backdropFilter: "blur(16px)",
-    WebkitBackdropFilter: "blur(16px)",
-    borderBottom: "1.5px solid #E6E8F0",
-    padding: "14px 24px",
+    background: "rgba(255, 255, 255, 0.95)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    borderBottom: "1px solid #E2E8F0",
+    padding: "8px 20px",
     position: "sticky",
     top: 0,
     zIndex: 100,
-    boxShadow: "0 4px 20px rgba(24, 32, 51, 0.03)"
+    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.02)"
   },
   navContainer: {
-    maxWidth: "1200px",
+    maxWidth: "1340px",
     margin: "0 auto",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center"
   },
   mainContainer: {
-    maxWidth: "1180px",
+    maxWidth: "1340px",
     width: "100%",
-    margin: "24px auto 36px auto",
-    padding: "0 20px",
+    margin: "14px auto 28px auto",
+    padding: "0 16px",
     flex: 1
   },
   toastBanner: {
-    background: "linear-gradient(135deg, #159447 0%, #6337D9 100%)",
+    background: "linear-gradient(135deg, #059669 0%, #4F46E5 100%)",
     color: "#ffffff",
-    padding: "12px 20px",
-    borderRadius: "14px",
-    fontWeight: "800",
-    fontSize: "14px",
-    marginBottom: "20px",
+    padding: "8px 16px",
+    borderRadius: "10px",
+    fontWeight: "700",
+    fontSize: "12.5px",
+    marginBottom: "12px",
     textAlign: "center",
-    boxShadow: "0 6px 18px rgba(99, 55, 217, 0.25)"
+    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.2)"
   },
   heroDriverCard: {
-    background: "linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 235, 255, 0.65) 100%)",
-    backdropFilter: "blur(12px)",
-    WebkitBackdropFilter: "blur(12px)",
-    borderRadius: "20px",
-    padding: "24px",
-    border: "1.5px solid #E6E8F0",
-    marginBottom: "24px",
-    boxShadow: "0 8px 30px rgba(99, 55, 217, 0.06)"
+    background: "#FFFFFF",
+    borderRadius: "12px",
+    padding: "10px 14px",
+    border: "1px solid #E2E8F0",
+    marginBottom: "14px",
+    boxShadow: "0 1px 3px rgba(15, 23, 42, 0.03)"
   },
   avatarWrapper: {
-    width: "68px",
-    height: "68px",
+    width: "40px",
+    height: "40px",
     borderRadius: "50%",
-    background: "linear-gradient(135deg, #159447 0%, #6337D9 100%)",
-    padding: "3px",
-    boxShadow: "0 4px 14px rgba(99, 55, 217, 0.2)"
+    background: "linear-gradient(135deg, #059669 0%, #4F46E5 100%)",
+    padding: "2px",
+    boxShadow: "0 2px 6px rgba(79, 70, 229, 0.15)"
   },
   avatarInitials: {
     width: "100%",
     height: "100%",
     borderRadius: "50%",
     background: "#ffffff",
-    color: "#6337D9",
-    fontWeight: "900",
-    fontSize: "24px",
+    color: "#4F46E5",
+    fontWeight: "800",
+    fontSize: "15px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center"
   },
   driverIdBadge: {
-    padding: "4px 12px",
-    borderRadius: "12px",
-    fontSize: "12px",
-    fontWeight: "800",
-    background: "#F0EBFF",
-    color: "#6337D9",
-    border: "1px solid #ddd6fe"
+    padding: "2px 8px",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: "700",
+    background: "#F1F5F9",
+    color: "#475569",
+    border: "1px solid #CBD5E1"
   },
   tabsContainer: {
     display: "flex",
     flexWrap: "wrap",
-    gap: "10px",
-    marginBottom: "24px",
+    gap: "8px",
+    marginBottom: "14px",
     alignItems: "center"
   },
   cardTitle: {
-    fontSize: "18px",
+    fontSize: "15px",
     fontWeight: "800",
-    color: "#182033",
+    color: "#0F172A",
     margin: 0
   },
   metricLabel: {
-    fontSize: "11.5px",
+    fontSize: "10.5px",
     fontWeight: "800",
-    color: "#667085",
+    color: "#64748B",
     textTransform: "uppercase",
-    letterSpacing: "0.5px"
+    letterSpacing: "0.4px"
   },
   metricVal: {
-    fontSize: "15px",
+    fontSize: "14px",
     fontWeight: "800",
-    color: "#182033",
-    marginTop: "4px"
+    color: "#0F172A",
+    marginTop: "2px"
   },
   earningsCard: {
-    background: "linear-gradient(135deg, #159447 0%, #087A3D 100%)",
+    background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
     color: "#ffffff",
-    borderRadius: "20px",
-    padding: "24px",
-    boxShadow: "0 8px 24px rgba(21, 148, 71, 0.28)",
+    borderRadius: "14px",
+    padding: "18px",
+    boxShadow: "0 4px 14px rgba(5, 150, 105, 0.22)",
     border: "1px solid rgba(255,255,255,0.15)"
   },
   modalOverlay: {
@@ -5739,58 +6431,58 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    background: "rgba(24, 32, 51, 0.65)",
-    backdropFilter: "blur(8px)",
-    WebkitBackdropFilter: "blur(8px)",
+    background: "rgba(15, 23, 42, 0.6)",
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    padding: "20px"
+    padding: "16px"
   },
   modalCard: {
     background: "#ffffff",
-    borderRadius: "22px",
-    padding: "28px",
-    maxWidth: "480px",
+    borderRadius: "14px",
+    padding: "20px",
+    maxWidth: "460px",
     width: "100%",
-    boxShadow: "0 24px 48px rgba(24, 32, 51, 0.16)",
-    border: "1.5px solid #E6E8F0"
+    boxShadow: "0 16px 36px rgba(15, 23, 42, 0.16)",
+    border: "1px solid #E2E8F0"
   },
   formLabel: {
-    fontSize: "13px",
+    fontSize: "12px",
     fontWeight: "700",
-    color: "#182033",
-    marginBottom: "8px",
+    color: "#0F172A",
+    marginBottom: "4px",
     display: "block"
   },
   formInput: {
     width: "100%",
-    padding: "12px 14px",
-    borderRadius: "12px",
-    border: "1.5px solid #E6E8F0",
-    fontSize: "14px",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    border: "1px solid #CBD5E1",
+    fontSize: "13px",
     outline: "none",
     fontWeight: "600",
     background: "#ffffff",
-    color: "#182033"
+    color: "#0F172A"
   },
   journeyReminderBanner: {
-    background: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
-    border: "2px solid #f59e0b",
-    borderRadius: "16px",
-    padding: "16px 20px",
+    background: "#FFFBEB",
+    border: "1px solid #FCD34D",
+    borderRadius: "12px",
+    padding: "10px 14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: "20px",
-    boxShadow: "0 6px 20px rgba(245, 158, 11, 0.12)",
+    marginBottom: "14px",
+    boxShadow: "0 2px 8px rgba(245, 158, 11, 0.08)",
     animation: "pulseBorder 2s infinite alternate",
     flexWrap: "wrap",
-    gap: "16px"
+    gap: "10px"
   },
   glowingBell: {
-    fontSize: "22px"
+    fontSize: "18px"
   }
 };
 

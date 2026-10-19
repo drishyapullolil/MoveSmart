@@ -5,13 +5,34 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const mongoose = require("mongoose");
 const Bus = require("../models/Bus");
+const Route = require("../models/Route");
 const User = require("../models/User");
 const Journey = require("../models/Journey");
 const Booking = require("../models/Booking");
 const DriverLeave = require("../models/DriverLeave");
 const DriverBusRequest = require("../models/DriverBusRequest");
 const TripSession = require("../models/TripSession");
+const Schedule = require("../models/Schedule");
+const DriverReplacement = require("../models/DriverReplacement");
+const { protect, optionalProtect, adminOnly, driverOnly, approvedDriverOnly } = require("../middleware/authMiddleware");
+const {
+  SHIFT_TYPES,
+  getDutyInterval,
+  getLeaveIntervals,
+  doIntervalsOverlap,
+  inferShiftFromTime,
+  normalizeDateStr,
+} = require("../utils/shiftConflictHelper");
 const { generateTripPdf, formatDateTime, formatTimeOnly, formatDuration } = require("../utils/tripPdfGenerator");
+const {
+  resolveEffectiveDepartureDriver,
+  TRIP_START_STATUS,
+  RESOLVER_STATUS,
+  SHIFT_POLICY_CONFIG,
+  resolveOperationalServiceDate,
+  findOverlappingApprovedLeave,
+  findValidReplacementDuty,
+} = require("../utils/effectiveDriverResolver");
 
 // Helper function to check if departure is within 2 hours of current time
 function isWithin2Hours(departureTimeStr, targetDateStr) {
@@ -62,9 +83,8 @@ function isWithin2Hours(departureTimeStr, targetDateStr) {
 }
 
 // ----------------------------------------------------
-// MIDDLEWARE INJECTION
+// DEFAULT FALLBACK DRIVERS
 // ----------------------------------------------------
-const { protect, optionalProtect, approvedDriverOnly, adminOnly } = require("../middleware/authMiddleware");
 
 // Default fallback driver records for demo/offline resilience
 const DEFAULT_FALLBACK_DRIVERS = [
@@ -142,56 +162,30 @@ router.get("/admin/drivers", async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       try {
         dbDrivers = await User.find({
-          $or: [
-            { role: { $regex: /^driver$/i } },
-            { verificationStatus: { $regex: /^(pending|approved|rejected)$/i } },
-            { licenseNumber: { $exists: true, $ne: null, $nin: ["", null] } },
-            { licenseImage: { $exists: true, $ne: null, $nin: ["", null] } },
-            { "faceProfile.encoding": { $exists: true, $ne: [] } }
-          ]
+          role: { $regex: /^driver$/i }
         }).select("-password").sort({ createdAt: -1 });
       } catch (dbErr) {
         console.warn("User.find query error in /admin/drivers:", dbErr.message);
       }
     }
 
-    // Strictly filter out any regular user/passenger who never applied or requested to be a driver
+    // Strictly filter out any regular user, passenger, or admin - ONLY genuine drivers
     const validDbDrivers = (dbDrivers || []).filter((d) => {
       const role = (d.role || "").toLowerCase().trim();
-      const status = (d.verificationStatus || "").toLowerCase().trim();
-      const hasLicenseNum = Boolean(d.licenseNumber && String(d.licenseNumber).trim().length > 0);
-      const hasLicenseImg = Boolean(d.licenseImage && String(d.licenseImage).trim().length > 0);
-      const hasFaceProfile = Boolean(d.faceProfile && Array.isArray(d.faceProfile.encoding) && d.faceProfile.encoding.length > 0);
-
-      // Must be a driver, or have pending/approved/rejected application, or submitted license/face data
-      if (role === "driver") return true;
-      if (["pending", "approved", "rejected"].includes(status)) return true;
-      if (hasLicenseNum || hasLicenseImg || hasFaceProfile) return true;
-
-      return false;
+      return role === "driver";
     });
 
-    // Merge database drivers with DEFAULT_FALLBACK_DRIVERS to ensure uninterrupted availability
     const seenEmails = new Set();
     const seenIds = new Set();
     const mergedDrivers = [];
 
-    // Add valid DB drivers first (they have the most current DB state)
+    // Add valid DB drivers
     for (const d of validDbDrivers) {
       const emailKey = (d.email || "").toLowerCase().trim();
       const idKey = String(d._id);
       if (emailKey) seenEmails.add(emailKey);
       if (idKey) seenIds.add(idKey);
       mergedDrivers.push(d);
-    }
-
-    // Add default fallback drivers if not already in DB list
-    for (const fb of DEFAULT_FALLBACK_DRIVERS) {
-      const emailKey = (fb.email || "").toLowerCase().trim();
-      const idKey = String(fb._id);
-      if (!seenEmails.has(emailKey) && !seenIds.has(idKey)) {
-        mergedDrivers.push(fb);
-      }
     }
 
     res.json({ success: true, count: mergedDrivers.length, drivers: mergedDrivers });
@@ -205,8 +199,226 @@ router.get("/admin/drivers", async (req, res) => {
 router.use("/admin", protect, adminOnly);
 
 // ----------------------------------------------------
-// 1. DRIVER - VIEW ASSIGNED BUSES & REQUEST TO DRIVE BUS (2-HOUR RULE)
+// 1. DRIVER - EFFECTIVE DUTY RESOLUTION & ASSIGNED BUSES
 // ----------------------------------------------------
+
+// Helper: Resolve effective driver duty (temporary replacement or regular schedule, checking leave and conflicts)
+async function resolveEffectiveDriverDuty(driverId, targetDate = new Date()) {
+  if (!driverId) {
+    return { hasDuty: false, dutyType: "NONE", isReplacementDuty: false, isOnApprovedLeave: false, bus: null, schedule: null };
+  }
+
+  const dateStr = normalizeDateStr(targetDate);
+  const now = targetDate instanceof Date ? targetDate : new Date(targetDate);
+
+  // 1. Check if authenticated driver has an assigned temporary replacement duty for this date/time interval
+  const replacementDuties = await DriverReplacement.find({
+    replacementDriverId: driverId,
+    status: { $in: ["Assigned", "In Progress"] }
+  }).populate("busId").populate("originalDriverId", "name email phone licenseNumber");
+
+  let activeReplacement = null;
+  for (const rep of replacementDuties) {
+    if (rep.startDateTime && rep.endDateTime) {
+      // Allow duty window from 2 hours before scheduled start until end
+      const bufferStart = new Date(rep.startDateTime.getTime() - 2 * 3600 * 1000);
+      if (now >= bufferStart && now <= rep.endDateTime) {
+        activeReplacement = rep;
+        break;
+      }
+    }
+    if (rep.dutyDate === dateStr) {
+      activeReplacement = rep;
+      break;
+    }
+  }
+
+  if (activeReplacement && (activeReplacement.busId || activeReplacement.busNumber)) {
+    let repBus = activeReplacement.busId;
+    if (!repBus && activeReplacement.busNumber) {
+      repBus = await Bus.findOne({ busNumber: activeReplacement.busNumber });
+    }
+
+    return {
+      hasDuty: true,
+      dutyType: "REPLACEMENT",
+      isReplacementDuty: true,
+      isOnApprovedLeave: false,
+      replacementDutyId: activeReplacement._id,
+      replacementRecord: activeReplacement,
+      bus: repBus,
+      shift: activeReplacement.shift,
+      dutyDate: activeReplacement.dutyDate,
+      startDateTime: activeReplacement.startDateTime,
+      endDateTime: activeReplacement.endDateTime,
+      originalDriver: activeReplacement.originalDriverId
+    };
+  }
+
+  // 2. Resolve regular scheduled duty
+  const schedules = await Schedule.find({
+    driver_id: String(driverId),
+    is_active: true
+  }).populate("bus_id");
+
+  let regularBus = null;
+  let regularSchedule = null;
+  let regularShift = "Morning";
+  let regularStartDateTime = null;
+  let regularEndDateTime = null;
+
+  if (schedules.length > 0) {
+    for (const sch of schedules) {
+      const shiftType = sch.shift || inferShiftFromTime(sch.departure_time || sch.shiftStartTime || "08:00 AM");
+      const dutyInt = getDutyInterval(dateStr, shiftType, sch.shiftStartTime, sch.shiftEndTime);
+      const bufferStart = new Date(dutyInt.startDateTime.getTime() - 2 * 3600 * 1000);
+      if (now >= bufferStart && now <= dutyInt.endDateTime) {
+        regularSchedule = sch;
+        regularBus = sch.bus_id;
+        regularShift = shiftType;
+        regularStartDateTime = dutyInt.startDateTime;
+        regularEndDateTime = dutyInt.endDateTime;
+        break;
+      }
+    }
+
+    if (!regularSchedule && schedules.length > 0) {
+      regularSchedule = schedules[0];
+      regularBus = regularSchedule.bus_id;
+      regularShift = regularSchedule.shift || inferShiftFromTime(regularSchedule.departure_time || "08:00 AM");
+      const dutyInt = getDutyInterval(dateStr, regularShift, regularSchedule.shiftStartTime, regularSchedule.shiftEndTime);
+      regularStartDateTime = dutyInt.startDateTime;
+      regularEndDateTime = dutyInt.endDateTime;
+    }
+  }
+
+  if (!regularBus) {
+    const busOrConditions = [
+      { driverId: mongoose.Types.ObjectId.isValid(driverId) ? new mongoose.Types.ObjectId(driverId) : null },
+      { driverId: String(driverId) },
+      { "shifts.morning.driverId": mongoose.Types.ObjectId.isValid(driverId) ? new mongoose.Types.ObjectId(driverId) : null },
+      { "shifts.morning.driverId": String(driverId) },
+      { "shifts.evening.driverId": mongoose.Types.ObjectId.isValid(driverId) ? new mongoose.Types.ObjectId(driverId) : null },
+      { "shifts.evening.driverId": String(driverId) },
+      { "shifts.night.driverId": mongoose.Types.ObjectId.isValid(driverId) ? new mongoose.Types.ObjectId(driverId) : null },
+      { "shifts.night.driverId": String(driverId) }
+    ].filter(c => Object.values(c)[0] !== null);
+
+    if (busOrConditions.length > 0) {
+      regularBus = await Bus.findOne({ $or: busOrConditions });
+    }
+
+    if (regularBus) {
+      if (regularBus.shifts?.morning?.driverId && String(regularBus.shifts.morning.driverId) === String(driverId)) {
+        regularShift = "Morning";
+      } else if (regularBus.shifts?.evening?.driverId && String(regularBus.shifts.evening.driverId) === String(driverId)) {
+        regularShift = "Evening";
+      } else if (regularBus.shifts?.night?.driverId && String(regularBus.shifts.night.driverId) === String(driverId)) {
+        regularShift = "Night";
+      } else {
+        regularShift = inferShiftFromTime(regularBus.departureTime || "08:00 AM");
+      }
+      const dutyInt = getDutyInterval(dateStr, regularShift);
+      regularStartDateTime = dutyInt.startDateTime;
+      regularEndDateTime = dutyInt.endDateTime;
+    }
+  }
+
+  if (!regularBus) {
+    return {
+      hasDuty: false,
+      dutyType: "NONE",
+      isReplacementDuty: false,
+      isOnApprovedLeave: false,
+      bus: null,
+      schedule: null
+    };
+  }
+
+  // 3. Check if driver is on Approved Leave for this duty interval
+  const approvedLeaves = await DriverLeave.find({
+    driverId,
+    status: "Approved"
+  });
+
+  let onLeave = false;
+  let leaveRecord = null;
+  for (const leave of approvedLeaves) {
+    const leaveIntervals = getLeaveIntervals(leave);
+    for (const lInt of leaveIntervals) {
+      if (regularStartDateTime && regularEndDateTime) {
+        if (doIntervalsOverlap(regularStartDateTime, regularEndDateTime, lInt.startDateTime, lInt.endDateTime)) {
+          onLeave = true;
+          leaveRecord = leave;
+          break;
+        }
+      } else {
+        if (leave.leaveDate === dateStr || (leave.leaveEndDate && dateStr >= leave.leaveDate && dateStr <= leave.leaveEndDate)) {
+          onLeave = true;
+          leaveRecord = leave;
+          break;
+        }
+      }
+    }
+    if (onLeave) break;
+  }
+
+  // 4. Check if an approved replacement driver has been assigned for this regular duty today
+  let replacementForRegular = null;
+  if (regularBus) {
+    replacementForRegular = await DriverReplacement.findOne({
+      busId: regularBus._id,
+      originalDriverId: driverId,
+      dutyDate: dateStr,
+      status: { $in: ["Assigned", "In Progress"] }
+    }).populate("replacementDriverId", "name email phone");
+  }
+
+  return {
+    hasDuty: true,
+    dutyType: "REGULAR",
+    isReplacementDuty: false,
+    isOnApprovedLeave: onLeave,
+    leaveRecord: onLeave ? leaveRecord : null,
+    replacementAssigned: Boolean(replacementForRegular),
+    replacementDriver: replacementForRegular?.replacementDriverId || null,
+    bus: regularBus,
+    schedule: regularSchedule,
+    shift: regularShift,
+    dutyDate: dateStr,
+    startDateTime: regularStartDateTime,
+    endDateTime: regularEndDateTime
+  };
+}
+
+// Dedicated endpoint to resolve effective driver duty
+router.get("/driver/duty", optionalProtect, async (req, res) => {
+  try {
+    let driverId = req.user?._id || req.query.driverId;
+    const driverEmail = (req.user?.email || req.query.driverEmail || "").toLowerCase().trim();
+
+    if (!driverId && driverEmail) {
+      const userDoc = await User.findOne({ email: { $regex: new RegExp(`^${driverEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } });
+      if (userDoc) driverId = userDoc._id;
+    }
+
+    if (!driverId) {
+      return res.status(400).json({ success: false, message: "Driver ID or login required." });
+    }
+
+    const targetDate = req.query.date ? new Date(req.query.date) : new Date();
+    const duty = await resolveEffectiveDriverDuty(driverId, targetDate);
+
+    res.json({
+      success: true,
+      duty
+    });
+  } catch (error) {
+    console.error("Error resolving driver duty:", error);
+    res.status(500).json({ success: false, message: "Failed to resolve driver duty", error: error.message });
+  }
+});
+
 router.get("/driver/buses", optionalProtect, async (req, res) => {
   try {
     let driverId = req.user?._id || req.query.driverId;
@@ -236,13 +448,51 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
       }
     }
 
-    // Find the buses strictly assigned to this driver in MongoDB
+    const assignedBuses = [];
+    const seenBusIds = new Set();
+
+    // 1. Check for Assigned / In Progress temporary replacement duties
+    if (driverId) {
+      const replacementDuties = await DriverReplacement.find({
+        replacementDriverId: driverId,
+        status: { $in: ["Assigned", "In Progress"] }
+      }).populate("busId").populate("originalDriverId", "name email phone");
+
+      for (const rep of replacementDuties) {
+        let repBus = rep.busId;
+        if (!repBus && rep.busNumber) {
+          repBus = await Bus.findOne({ busNumber: rep.busNumber });
+        }
+        if (repBus) {
+          const busObj = repBus.toObject ? repBus.toObject() : { ...repBus };
+          busObj.isReplacementDuty = true;
+          busObj.replacementDutyId = rep._id;
+          busObj.shift = rep.shift;
+          busObj.dutyDate = rep.dutyDate;
+          busObj.startDateTime = rep.startDateTime;
+          busObj.endDateTime = rep.endDateTime;
+          busObj.originalDriverName = rep.originalDriverId?.name || "";
+          busObj.originalDriverId = rep.originalDriverId?._id || rep.originalDriverId;
+
+          assignedBuses.push(busObj);
+          seenBusIds.add(String(repBus._id));
+        }
+      }
+    }
+
+    // 2. Find regular buses strictly assigned to this driver in MongoDB
     const queryConditions = [];
     if (driverId) {
       if (mongoose.Types.ObjectId.isValid(driverId)) {
         queryConditions.push({ driverId: new mongoose.Types.ObjectId(driverId) });
+        queryConditions.push({ "shifts.morning.driverId": new mongoose.Types.ObjectId(driverId) });
+        queryConditions.push({ "shifts.evening.driverId": new mongoose.Types.ObjectId(driverId) });
+        queryConditions.push({ "shifts.night.driverId": new mongoose.Types.ObjectId(driverId) });
       }
       queryConditions.push({ driverId: String(driverId) });
+      queryConditions.push({ "shifts.morning.driverId": String(driverId) });
+      queryConditions.push({ "shifts.evening.driverId": String(driverId) });
+      queryConditions.push({ "shifts.night.driverId": String(driverId) });
     }
     if (driverEmail) {
       queryConditions.push({ driverEmail: { $regex: new RegExp(`^${driverEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } });
@@ -260,29 +510,134 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
       queryConditions.push({ driverPhone: { $regex: new RegExp(driverPhone.slice(-10)) } });
     }
 
-    let assignedBuses = [];
     if (queryConditions.length > 0) {
-      assignedBuses = await Bus.find({ $or: queryConditions }).sort({ createdAt: -1 });
+      const dbBuses = await Bus.find({ $or: queryConditions }).sort({ createdAt: -1 });
+      for (const b of dbBuses) {
+        if (!seenBusIds.has(String(b._id))) {
+          seenBusIds.add(String(b._id));
+          const busObj = b.toObject ? b.toObject() : { ...b };
+          if (!busObj.driverName || busObj.driverName === "Not Assigned" || busObj.driverName.includes("Unassigned") || busObj.driverName.includes("Replacement Driver Required")) {
+            if (driverName) {
+              busObj.driverName = driverName;
+            }
+          }
+          assignedBuses.push(busObj);
+        }
+      }
     }
 
     // Also check if assigned via Schedule collection
-    if (assignedBuses.length === 0 && (driverId || driverName)) {
-      const Schedule = require("../models/Schedule");
+    if (driverId || driverName) {
       const scheduleConditions = [];
       if (driverId) scheduleConditions.push({ driver_id: String(driverId) });
       if (driverName) scheduleConditions.push({ driverName: { $regex: new RegExp(driverName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "i") } });
 
       const schedules = await Schedule.find({ $or: scheduleConditions, is_active: true }).populate("bus_id");
       for (const sch of schedules) {
-        if (sch.bus_id && !assignedBuses.some(b => String(b._id) === String(sch.bus_id._id))) {
-          assignedBuses.push(sch.bus_id);
+        let matchedBusObj = null;
+        if (sch.bus_id && !seenBusIds.has(String(sch.bus_id._id))) {
+          seenBusIds.add(String(sch.bus_id._id));
+          matchedBusObj = sch.bus_id.toObject ? sch.bus_id.toObject() : { ...sch.bus_id };
         } else if (sch.busNumber) {
           const matchedBus = await Bus.findOne({ busNumber: sch.busNumber });
-          if (matchedBus && !assignedBuses.some(b => String(b._id) === String(matchedBus._id))) {
-            assignedBuses.push(matchedBus);
+          if (matchedBus && !seenBusIds.has(String(matchedBus._id))) {
+            seenBusIds.add(String(matchedBus._id));
+            matchedBusObj = matchedBus.toObject ? matchedBus.toObject() : { ...matchedBus };
           }
         }
+        if (matchedBusObj) {
+          if (!matchedBusObj.driverName || matchedBusObj.driverName === "Not Assigned" || matchedBusObj.driverName.includes("Unassigned") || matchedBusObj.driverName.includes("Replacement Driver Required")) {
+            if (driverName) {
+              matchedBusObj.driverName = driverName;
+            }
+          }
+          assignedBuses.push(matchedBusObj);
+        }
       }
+    }
+
+    // 3. Annotate regular buses with leave status if driver is on approved leave today
+    if (driverId) {
+      const approvedLeaves = await DriverLeave.find({ driverId, status: "Approved" });
+      const todayStr = normalizeDateStr(new Date());
+      for (const busObj of assignedBuses) {
+        if (!busObj.isReplacementDuty) {
+          const shift = inferShiftFromTime(busObj.departureTime || "08:00 AM");
+          const dutyInt = getDutyInterval(todayStr, shift);
+          let onLeave = false;
+          for (const leave of approvedLeaves) {
+            const leaveIntervals = getLeaveIntervals(leave);
+            for (const lInt of leaveIntervals) {
+              if (doIntervalsOverlap(dutyInt.startDateTime, dutyInt.endDateTime, lInt.startDateTime, lInt.endDateTime)) {
+                onLeave = true;
+                break;
+              }
+            }
+            if (onLeave) break;
+          }
+          busObj.isOnApprovedLeave = onLeave;
+        }
+      }
+    }
+
+    // 4. Attach all scheduled departures / trips belonging to each assigned bus
+    for (const busObj of assignedBuses) {
+      let driverShift = busObj.shift || "Morning";
+      if (driverId && busObj.shifts) {
+        const dIdStr = String(driverId);
+        if (String(busObj.shifts.morning?.driverId) === dIdStr) driverShift = "Morning";
+        else if (String(busObj.shifts.evening?.driverId) === dIdStr) driverShift = "Evening";
+        else if (String(busObj.shifts.night?.driverId) === dIdStr) driverShift = "Night";
+      }
+      busObj.assignedShift = driverShift;
+
+      // Query active schedules for this bus
+      const busSchedules = await Schedule.find({
+        $or: [{ bus_id: busObj._id }, { busNumber: busObj.busNumber }],
+        is_active: true
+      }).populate("route_id").sort({ start_time: 1 }).lean();
+
+      const trips = [];
+      if (busSchedules && busSchedules.length > 0) {
+        for (const s of busSchedules) {
+          trips.push({
+            id: String(s._id),
+            scheduleId: String(s._id),
+            departureTime: s.start_time,
+            arrivalTime: s.end_time || (s.route_id?.estimated_duration ? `${s.route_id.estimated_duration} mins` : "Scheduled"),
+            routeName: s.routeName || s.route_id?.routeName || (s.route_id ? `${s.route_id.fromLocation} ➔ ${s.route_id.toLocation}` : `${busObj.fromLocation} ➔ ${busObj.toLocation}`),
+            fromLocation: s.route_id?.fromLocation || busObj.fromLocation,
+            toLocation: s.route_id?.toLocation || busObj.toLocation,
+            stops: (s.route_id?.stops && s.route_id.stops.length > 0) ? s.route_id.stops : (busObj.stops || []),
+            shift: s.shift || inferShiftFromTime(s.start_time),
+            price: s.route_id?.fare || busObj.price || 35,
+            delayBufferMinutes: s.delay_buffer_minutes || 0,
+            isCurrentDriverShift: (s.shift || inferShiftFromTime(s.start_time)) === driverShift,
+            isExplicitSchedule: true
+          });
+        }
+      }
+
+      // Add base route corridor if bus has one and not duplicate of existing trip
+      if (busObj.departureTime && !trips.some(t => t.departureTime === busObj.departureTime)) {
+        trips.unshift({
+          id: `BUS-${busObj._id}-CORRIDOR`,
+          scheduleId: null,
+          departureTime: busObj.departureTime,
+          arrivalTime: busObj.arrivalTime || "Scheduled",
+          routeName: busObj.routeName || `${busObj.fromLocation} ➔ ${busObj.toLocation}`,
+          fromLocation: busObj.fromLocation,
+          toLocation: busObj.toLocation,
+          stops: busObj.stops || [],
+          shift: inferShiftFromTime(busObj.departureTime),
+          price: busObj.price || 35,
+          delayBufferMinutes: 0,
+          isCurrentDriverShift: inferShiftFromTime(busObj.departureTime) === driverShift,
+          isBaseCorridor: true
+        });
+      }
+
+      busObj.assignedTrips = trips;
     }
 
     res.json({
@@ -300,11 +655,41 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
 // Dedicated endpoint to fetch the primary assigned bus for this driver from MongoDB
 router.get("/driver/assigned-bus", optionalProtect, async (req, res) => {
   try {
-    const driverId = req.user?._id || req.query.driverId;
+    let driverId = req.user?._id || req.query.driverId;
     const driverEmail = (req.user?.email || req.query.driverEmail || "").toLowerCase().trim();
     const driverPhone = String(req.user?.phone || req.query.driverPhone || "").replace(/\D/g, "");
     const driverLicense = (req.user?.licenseNumber || req.query.driverLicense || "").toLowerCase().trim();
     const userBusNumber = (req.user?.busNumber || req.query.busNumber || "").trim();
+
+    if (!driverId && driverEmail) {
+      const userDoc = await User.findOne({ email: { $regex: new RegExp(`^${driverEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } });
+      if (userDoc) driverId = userDoc._id;
+    }
+
+    if (driverId) {
+      const duty = await resolveEffectiveDriverDuty(driverId, new Date());
+      if (duty && duty.hasDuty && duty.bus) {
+        const busObj = duty.bus.toObject ? duty.bus.toObject() : { ...duty.bus };
+        busObj.isReplacementDuty = duty.isReplacementDuty;
+        busObj.replacementDutyId = duty.replacementDutyId || null;
+        busObj.shift = duty.shift;
+        busObj.isOnApprovedLeave = duty.isOnApprovedLeave;
+        busObj.originalDriver = duty.originalDriver || null;
+
+        return res.json({
+          success: true,
+          assigned: true,
+          message: duty.isReplacementDuty
+            ? `Replacement duty on bus ${duty.bus.busNumber} (${duty.bus.busName}) loaded from database`
+            : `Assigned bus ${duty.bus.busNumber} (${duty.bus.busName}) loaded from database`,
+          bus: busObj,
+          dutyType: duty.dutyType,
+          isReplacementDuty: duty.isReplacementDuty,
+          isOnApprovedLeave: duty.isOnApprovedLeave,
+          shift: duty.shift
+        });
+      }
+    }
 
     const queryConditions = [];
     if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
@@ -578,7 +963,9 @@ router.post("/driver/leave", async (req, res) => {
       driverName: driverName || req.user?.name || "Driver",
       driverEmail: dEmail || "driver@movesmart.in",
       leaveDate,
+      leaveEndDate: req.body.leaveEndDate || "",
       leaveType,
+      shiftSlot: req.body.shiftSlot || (leaveType === "Half Day" ? (halfDaySlot === "Afternoon (PM)" ? "Evening" : "Morning") : "Full Day"),
       halfDaySlot: leaveType === "Half Day" ? halfDaySlot : "N/A",
       reason,
       status: "Pending",
@@ -620,9 +1007,324 @@ router.get("/driver/leave/my", async (req, res) => {
 // ----------------------------------------------------
 // 4. ADMIN - LEAVE MANAGEMENT (SEE & ACCEPT / REJECT)
 // ----------------------------------------------------
+
+// Per-duty in-process concurrency lock map (serialized per `busId_dutyDate_shift`)
+// Note: This synchronizes concurrent requests within the single Node.js process.
+const dutyLockChains = new Map();
+
+async function withDutyLock(dutyKey, taskFn) {
+  const prevPromise = dutyLockChains.get(dutyKey) || Promise.resolve();
+
+  let release;
+  const currentPromise = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  const lockedExecution = prevPromise.catch(() => {}).then(async () => {
+    try {
+      return await taskFn();
+    } finally {
+      release();
+      if (dutyLockChains.get(dutyKey) === currentPromise) {
+        dutyLockChains.delete(dutyKey);
+      }
+    }
+  });
+
+  dutyLockChains.set(dutyKey, currentPromise);
+  return lockedExecution;
+}
+
+// Core Helper: Synchronize and create replacement duties for an approved leave record
+async function syncReplacementsForApprovedLeave(leave, deps = {}) {
+  if (!leave || leave.status !== "Approved") return 0;
+
+  const BusModel = deps.Bus || Bus;
+  const ScheduleModel = deps.Schedule || Schedule;
+  const DriverReplacementModel = deps.DriverReplacement || DriverReplacement;
+  const UserModel = deps.User || User;
+
+  const leaveIntervals = getLeaveIntervals(leave);
+  const startDateStr = normalizeDateStr(leave.leaveDate);
+  const endDateStr = normalizeDateStr(leave.leaveEndDate || startDateStr);
+  const datesToProcess = [];
+  const sDate = new Date(startDateStr);
+  const eDate = new Date(endDateStr);
+  const curDate = new Date(sDate);
+  while (curDate <= eDate) {
+    datesToProcess.push(curDate.toISOString().split("T")[0]);
+    curDate.setDate(curDate.getDate() + 1);
+  }
+
+  const driverIdStr = String(leave.driverId || "");
+  const driverNameStr = (leave.driverName || "").trim();
+
+  let resolvedUser = null;
+  if (mongoose.Types.ObjectId.isValid(driverIdStr)) {
+    resolvedUser = await UserModel.findById(driverIdStr);
+  }
+  if (!resolvedUser && leave.driverEmail) {
+    resolvedUser = await UserModel.findOne({ email: new RegExp(`^${leave.driverEmail.trim()}$`, "i") });
+  }
+
+  const scheduleOrConditions = [];
+  if (driverIdStr) {
+    scheduleOrConditions.push({ driver_id: driverIdStr });
+    if (mongoose.Types.ObjectId.isValid(driverIdStr)) {
+      scheduleOrConditions.push({ driver_id: new mongoose.Types.ObjectId(driverIdStr) });
+    }
+  }
+  if (resolvedUser) {
+    scheduleOrConditions.push({ driver_id: String(resolvedUser._id) });
+    scheduleOrConditions.push({ driverName: { $regex: new RegExp(`^${resolvedUser.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } });
+  }
+  if (driverNameStr) {
+    scheduleOrConditions.push({ driverName: { $regex: new RegExp(`^${driverNameStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } });
+  }
+
+  const activeSchedules = scheduleOrConditions.length > 0 ? await ScheduleModel.find({
+    is_active: true,
+    $or: scheduleOrConditions,
+  }).populate("bus_id").populate("route_id") : [];
+
+  const busOrConditions = [];
+  if (driverIdStr) {
+    busOrConditions.push({ driverId: driverIdStr });
+    if (mongoose.Types.ObjectId.isValid(driverIdStr)) {
+      busOrConditions.push({ driverId: new mongoose.Types.ObjectId(driverIdStr) });
+    }
+  }
+  if (resolvedUser) {
+    busOrConditions.push({ driverId: resolvedUser._id });
+    busOrConditions.push({ driverName: { $regex: new RegExp(`^${resolvedUser.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } });
+  }
+  if (driverNameStr) {
+    busOrConditions.push({ driverName: { $regex: new RegExp(`^${driverNameStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } });
+  }
+
+  const assignedBusesDirect = busOrConditions.length > 0 ? await BusModel.find({
+    is_active: { $ne: false },
+    $or: busOrConditions,
+  }) : [];
+
+  const shiftOrConditions = [];
+  if (driverIdStr) {
+    shiftOrConditions.push(
+      { "shifts.morning.driverId": driverIdStr },
+      { "shifts.evening.driverId": driverIdStr },
+      { "shifts.night.driverId": driverIdStr }
+    );
+    if (mongoose.Types.ObjectId.isValid(driverIdStr)) {
+      const objId = new mongoose.Types.ObjectId(driverIdStr);
+      shiftOrConditions.push(
+        { "shifts.morning.driverId": objId },
+        { "shifts.evening.driverId": objId },
+        { "shifts.night.driverId": objId }
+      );
+    }
+  }
+  if (resolvedUser) {
+    shiftOrConditions.push(
+      { "shifts.morning.driverId": resolvedUser._id },
+      { "shifts.evening.driverId": resolvedUser._id },
+      { "shifts.night.driverId": resolvedUser._id }
+    );
+  }
+
+  const assignedBusesByShift = shiftOrConditions.length > 0 ? await BusModel.find({
+    is_active: { $ne: false },
+    $or: shiftOrConditions,
+  }) : [];
+
+  let affectedCount = 0;
+
+  for (const dStr of datesToProcess) {
+    for (const sch of activeSchedules) {
+      const schShift = sch.shift || inferShiftFromTime(sch.start_time);
+      const duty = getDutyInterval(dStr, schShift, sch.start_time);
+
+      const isOverlapping = leaveIntervals.some(li =>
+        doIntervalsOverlap(duty.startDateTime, duty.endDateTime, li.startDateTime, li.endDateTime)
+      );
+
+      if (isOverlapping) {
+        const busDocId = sch.bus_id?._id || sch.bus_id;
+        const busDocNumber = sch.busNumber || sch.bus_id?.busNumber || "Bus";
+        const routeDocId = sch.route_id?._id || sch.route_id;
+        const routeDocName = sch.routeName || sch.route_id?.routeName || (sch.bus_id?.routeName) || (sch.bus_id?.fromLocation && sch.bus_id?.toLocation ? `${sch.bus_id.fromLocation} ➔ ${sch.bus_id.toLocation}` : "Fleet Route");
+
+        if (busDocId) {
+          const dutyKey = `${busDocId}_${dStr}_${duty.shift}`;
+          await withDutyLock(dutyKey, async () => {
+            const existingRep = await DriverReplacementModel.findOne({
+              busId: busDocId,
+              dutyDate: dStr,
+              shift: duty.shift,
+            });
+
+            if (!existingRep) {
+              await DriverReplacementModel.create({
+                leaveId: leave._id,
+                scheduleId: sch._id,
+                busId: busDocId,
+                busNumber: busDocNumber,
+                routeId: routeDocId,
+                routeName: routeDocName,
+                dutyDate: dStr,
+                shift: duty.shift,
+                startDateTime: duty.startDateTime,
+                endDateTime: duty.endDateTime,
+                originalDriverId: leave.driverId || resolvedUser?._id,
+                originalDriverName: leave.driverName || resolvedUser?.name || "Regular Driver",
+                status: "Replacement Required",
+              });
+              affectedCount++;
+            } else if (existingRep.status === "Cancelled") {
+              existingRep.status = "Replacement Required";
+              existingRep.leaveId = leave._id;
+              await existingRep.save();
+              affectedCount++;
+            } else {
+              affectedCount++;
+            }
+          });
+        }
+      }
+    }
+
+    for (const bus of assignedBusesDirect) {
+      const alreadyCoveredInSchedules = activeSchedules.some(
+        s => String(s.bus_id?._id || s.bus_id) === String(bus._id)
+      );
+      if (!alreadyCoveredInSchedules) {
+        const shift = inferShiftFromTime(bus.departureTime || "08:00 AM");
+        const duty = getDutyInterval(dStr, shift, bus.departureTime);
+
+        const isOverlapping = leaveIntervals.some(li =>
+          doIntervalsOverlap(duty.startDateTime, duty.endDateTime, li.startDateTime, li.endDateTime)
+        );
+
+        if (isOverlapping) {
+          const dutyKey = `${bus._id}_${dStr}_${duty.shift}`;
+          await withDutyLock(dutyKey, async () => {
+            const existingRep = await DriverReplacementModel.findOne({
+              busId: bus._id,
+              dutyDate: dStr,
+              shift: duty.shift,
+            });
+
+            if (!existingRep) {
+              await DriverReplacementModel.create({
+                leaveId: leave._id,
+                scheduleId: null,
+                busId: bus._id,
+                busNumber: bus.busNumber,
+                routeId: null,
+                routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+                dutyDate: dStr,
+                shift: duty.shift,
+                startDateTime: duty.startDateTime,
+                endDateTime: duty.endDateTime,
+                originalDriverId: leave.driverId || resolvedUser?._id,
+                originalDriverName: leave.driverName || resolvedUser?.name || "Regular Driver",
+                status: "Replacement Required",
+              });
+              affectedCount++;
+            } else if (existingRep.status === "Cancelled") {
+              existingRep.status = "Replacement Required";
+              existingRep.leaveId = leave._id;
+              await existingRep.save();
+              affectedCount++;
+            } else {
+              affectedCount++;
+            }
+          });
+        }
+      }
+    }
+
+    // 3. Process three-shift regular roster assignments from Bus.shifts
+    const targetDriverIds = new Set();
+    if (driverIdStr) targetDriverIds.add(driverIdStr);
+    if (resolvedUser) targetDriverIds.add(String(resolvedUser._id));
+
+    const canonicalShiftList = [
+      { key: "morning", shiftName: "Morning", startTime: "06:00 AM", endTime: "02:00 PM", shiftType: SHIFT_TYPES.MORNING },
+      { key: "evening", shiftName: "Evening", startTime: "02:00 PM", endTime: "10:00 PM", shiftType: SHIFT_TYPES.EVENING },
+      { key: "night",   shiftName: "Night",   startTime: "10:00 PM", endTime: "06:00 AM", shiftType: SHIFT_TYPES.NIGHT   },
+    ];
+
+    for (const bus of assignedBusesByShift) {
+      if (!bus.shifts) continue;
+      for (const sConf of canonicalShiftList) {
+        const shiftData = bus.shifts[sConf.key];
+        if (!shiftData || !shiftData.driverId) continue;
+        if (targetDriverIds.has(String(shiftData.driverId))) {
+          const duty = getDutyInterval(dStr, sConf.shiftType, sConf.startTime, sConf.endTime);
+
+          const isOverlapping = leaveIntervals.some(li =>
+            doIntervalsOverlap(duty.startDateTime, duty.endDateTime, li.startDateTime, li.endDateTime)
+          );
+
+          if (isOverlapping) {
+            const dutyKey = `${bus._id}_${dStr}_${duty.shift}`;
+            await withDutyLock(dutyKey, async () => {
+              const existingRep = await DriverReplacementModel.findOne({
+                busId: bus._id,
+                dutyDate: dStr,
+                shift: duty.shift,
+              });
+
+              if (!existingRep) {
+                await DriverReplacementModel.create({
+                  leaveId: leave._id,
+                  scheduleId: null,
+                  busId: bus._id,
+                  busNumber: bus.busNumber,
+                  routeId: null,
+                  routeName: bus.routeName || (bus.fromLocation && bus.toLocation ? `${bus.fromLocation} ➔ ${bus.toLocation}` : "Fleet Route"),
+                  dutyDate: dStr,
+                  shift: duty.shift,
+                  startDateTime: duty.startDateTime,
+                  endDateTime: duty.endDateTime,
+                  originalDriverId: leave.driverId || resolvedUser?._id,
+                  originalDriverName: leave.driverName || resolvedUser?.name || shiftData.driverName || "Regular Driver",
+                  status: "Replacement Required",
+                });
+                affectedCount++;
+              } else if (existingRep.status === "Cancelled") {
+                existingRep.status = "Replacement Required";
+                existingRep.leaveId = leave._id;
+                await existingRep.save();
+                affectedCount++;
+              } else {
+                // Preserve existing Assigned, In Progress, Completed, or Replacement Required
+                affectedCount++;
+              }
+            });
+          }
+        }
+      }
+    }
+  }
+
+  leave.replacementGenerated = true;
+  leave.affectedDutiesCount = affectedCount;
+  if (typeof leave.save === "function") {
+    await leave.save();
+  }
+  return affectedCount;
+}
+
 // Admin fetch all driver leaves
 router.get("/admin/leaves", async (req, res) => {
   try {
+    // Check and synchronize any approved leaves that lack replacement duties
+    const approvedLeavesWithoutRepl = await DriverLeave.find({ status: "Approved", replacementGenerated: { $ne: true } });
+    for (const al of approvedLeavesWithoutRepl) {
+      await syncReplacementsForApprovedLeave(al);
+    }
+
     const leaves = await DriverLeave.find().sort({ createdAt: -1 });
     res.json({ success: true, count: leaves.length, leaves });
   } catch (error) {
@@ -632,18 +1334,18 @@ router.get("/admin/leaves", async (req, res) => {
 });
 
 // Admin Approve (Accept) or Reject Leave Request
-router.put("/admin/leave/:id/status", async (req, res) => {
+router.put("/admin/leave/:id/status", optionalProtect, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, adminComment } = req.body;
 
-    if (!["Approved", "Rejected"].includes(status)) {
-      return res.status(400).json({ message: "Status must be 'Approved' or 'Rejected'." });
+    if (!["Approved", "Rejected", "Cancelled"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Status must be 'Approved', 'Rejected', or 'Cancelled'." });
     }
 
     const leave = await DriverLeave.findById(id);
     if (!leave) {
-      return res.status(404).json({ message: "Leave application not found." });
+      return res.status(404).json({ success: false, message: "Leave application not found." });
     }
 
     leave.status = status;
@@ -651,28 +1353,650 @@ router.put("/admin/leave/:id/status", async (req, res) => {
       leave.adminComment = adminComment;
     }
 
+    let affectedCount = 0;
+
+    if (status === "Approved") {
+      affectedCount = await syncReplacementsForApprovedLeave(leave);
+    } else if (status === "Rejected" || status === "Cancelled") {
+      // Revert/cancel generated replacement duties so they fall back cleanly to original driver
+      await DriverReplacement.updateMany(
+        { leaveId: leave._id, status: { $in: ["Replacement Required", "Assigned"] } },
+        { $set: { status: "Cancelled" } }
+      );
+      leave.replacementGenerated = false;
+      leave.affectedDutiesCount = 0;
+    }
+
     await leave.save();
 
-    // If leave is approved, check if driver is currently assigned to a bus and unassign them so Admin can assign a replacement driver
-    let busReassignedNotice = "";
-    if (status === "Approved") {
-      const assignedBus = await Bus.findOne({ driverName: leave.driverName });
-      if (assignedBus) {
-        assignedBus.driverName = "Unassigned / Replacement Driver Required";
-        assignedBus.driverVerified = false;
-        await assignedBus.save();
-        busReassignedNotice = ` ⚠️ Bus ${assignedBus.busNumber} has been marked as unassigned. Please assign a replacement driver.`;
+    res.json({
+      success: true,
+      message: `Leave request ${status === "Approved" ? "ACCEPTED & APPROVED" : status.toUpperCase()} for ${leave.driverName}.${
+        affectedCount > 0 ? ` ${affectedCount} duty shift(s) flagged for temporary replacement.` : ""
+      }`,
+      leave,
+      affectedDutiesCount: affectedCount,
+    });
+  } catch (error) {
+    console.error("Error updating leave status:", error);
+    res.status(500).json({ success: false, message: "Failed to update leave status", error: error.message });
+  }
+});
+
+// ----------------------------------------------------
+// 4B. ADMIN - REPLACEMENT DRIVER ASSIGNMENT ENDPOINTS
+// ----------------------------------------------------
+
+// 1. GET /api/admin/replacements/pending - List replacement duties requiring or having assigned drivers
+router.get("/admin/replacements/pending", optionalProtect, async (req, res) => {
+  try {
+    const { status, date } = req.query;
+    const query = {};
+
+    // Auto-sync any approved leaves without replacements generated
+    const approvedLeaves = await DriverLeave.find({ status: "Approved", replacementGenerated: { $ne: true } });
+    for (const al of approvedLeaves) {
+      await syncReplacementsForApprovedLeave(al);
+    }
+
+    if (status && status !== "All") {
+      query.status = status;
+    } else if (!status) {
+      // Default: return actionable replacement duties
+      query.status = { $in: ["Replacement Required", "Assigned", "In Progress"] };
+    }
+
+    if (date) {
+      query.dutyDate = normalizeDateStr(date);
+    }
+
+    const replacements = await DriverReplacement.find(query)
+      .populate("leaveId")
+      .populate("scheduleId")
+      .populate("busId")
+      .populate("originalDriverId", "name email phone licenseNumber profilePic")
+      .populate("replacementDriverId", "name email phone licenseNumber profilePic")
+      .sort({ startDateTime: 1, createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: replacements.length,
+      replacements,
+    });
+  } catch (error) {
+    console.error("Error fetching pending replacements:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch replacement duties", error: error.message });
+  }
+});
+
+// 2. GET /api/admin/replacements/eligible-drivers - Find unconflicted drivers for a replacement duty interval
+router.get("/admin/replacements/eligible-drivers", optionalProtect, async (req, res) => {
+  try {
+    const { dutyId, dutyDate, shift, startDateTime, endDateTime, excludeDriverId } = req.query;
+
+    let targetStart;
+    let targetEnd;
+    let targetShift = shift;
+    let targetDate = dutyDate;
+    let origDriverId = excludeDriverId;
+
+    if (dutyId && mongoose.Types.ObjectId.isValid(dutyId)) {
+      const duty = await DriverReplacement.findById(dutyId);
+      if (duty) {
+        targetStart = new Date(duty.startDateTime);
+        targetEnd = new Date(duty.endDateTime);
+        targetShift = duty.shift;
+        targetDate = duty.dutyDate;
+        origDriverId = String(duty.originalDriverId);
       }
+    }
+
+    if (!targetStart || !targetEnd) {
+      if (startDateTime && endDateTime) {
+        targetStart = new Date(startDateTime);
+        targetEnd = new Date(endDateTime);
+      } else if (targetDate) {
+        const interval = getDutyInterval(targetDate, targetShift || SHIFT_TYPES.MORNING);
+        targetStart = interval.startDateTime;
+        targetEnd = interval.endDateTime;
+      } else {
+        return res.status(400).json({ success: false, message: "Missing dutyId or target date/shift interval parameters." });
+      }
+    }
+
+    // 1. Fetch all registered active drivers
+    const allDrivers = await User.find({ role: { $regex: /^driver$/i } })
+      .select("_id name email phone licenseNumber experienceYears verificationStatus")
+      .sort({ name: 1 })
+      .lean();
+
+    // 2. Fetch all approved leaves that overlap with [targetStart, targetEnd)
+    const approvedLeaves = await DriverLeave.find({ status: "Approved" });
+    const driversOnLeave = new Set();
+    for (const lv of approvedLeaves) {
+      const intervals = getLeaveIntervals(lv);
+      if (intervals.some((intv) => doIntervalsOverlap(targetStart, targetEnd, intv.startDateTime, intv.endDateTime))) {
+        driversOnLeave.add(String(lv.driverId));
+        if (lv.driverName) driversOnLeave.add(lv.driverName.toLowerCase().trim());
+      }
+    }
+
+    // 3. Fetch all active regular schedules and check if driver is busy at overlapping time on targetDate
+    const regularSchedules = await Schedule.find({ is_active: true });
+    const busyRegularDriverIds = new Set();
+    for (const sch of regularSchedules) {
+      if (!sch.driver_id && !sch.driverName) continue;
+      const schShift = sch.shift || inferShiftFromTime(sch.start_time);
+      const schInterval = getDutyInterval(targetDate, schShift, sch.start_time);
+      if (doIntervalsOverlap(targetStart, targetEnd, schInterval.startDateTime, schInterval.endDateTime)) {
+        if (sch.driver_id) busyRegularDriverIds.add(String(sch.driver_id));
+        if (sch.driverName) busyRegularDriverIds.add(sch.driverName.toLowerCase().trim());
+      }
+    }
+
+    // 4. Fetch all other active/assigned replacement duties overlapping [targetStart, targetEnd)
+    const replacementQuery = {
+      status: { $in: ["Assigned", "In Progress"] },
+    };
+    if (dutyId && mongoose.Types.ObjectId.isValid(dutyId)) {
+      replacementQuery._id = { $ne: new mongoose.Types.ObjectId(dutyId) };
+    }
+    const activeReplacements = await DriverReplacement.find(replacementQuery);
+    const busyReplacementDriverIds = new Set();
+    for (const rep of activeReplacements) {
+      if (rep.replacementDriverId && doIntervalsOverlap(targetStart, targetEnd, rep.startDateTime, rep.endDateTime)) {
+        busyReplacementDriverIds.add(String(rep.replacementDriverId));
+      }
+    }
+
+    // 5. Filter drivers
+    const eligibleDrivers = allDrivers.filter((d) => {
+      const dId = String(d._id);
+      const dName = (d.name || "").toLowerCase().trim();
+
+      if (origDriverId && (dId === origDriverId || String(dId) === String(origDriverId))) {
+        return false; // Cannot be the driver on leave
+      }
+      if (driversOnLeave.has(dId) || driversOnLeave.has(dName)) {
+        return false; // On approved leave
+      }
+      if (busyRegularDriverIds.has(dId) || busyRegularDriverIds.has(dName)) {
+        return false; // Busy on regular schedule
+      }
+      if (busyReplacementDriverIds.has(dId)) {
+        return false; // Busy on another replacement duty
+      }
+      return true;
+    });
+
+    res.json({
+      success: true,
+      dutyId: dutyId || null,
+      targetInterval: {
+        date: targetDate,
+        shift: targetShift,
+        startDateTime: targetStart,
+        endDateTime: targetEnd,
+      },
+      count: eligibleDrivers.length,
+      drivers: eligibleDrivers,
+    });
+  } catch (error) {
+    console.error("Error fetching eligible replacement drivers:", error);
+    res.status(500).json({ success: false, message: "Failed to evaluate eligible replacement drivers", error: error.message });
+  }
+});
+
+// 3. POST /api/admin/replacements/assign - Assign temporary replacement driver with strict recheck
+router.post("/admin/replacements/assign", optionalProtect, async (req, res) => {
+  try {
+    const { dutyId, replacementDriverId, notes } = req.body;
+
+    if (!dutyId || !replacementDriverId) {
+      return res.status(400).json({ success: false, message: "Both dutyId and replacementDriverId are required." });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(dutyId)) {
+      return res.status(400).json({ success: false, message: "Invalid dutyId format." });
+    }
+
+    const duty = await DriverReplacement.findById(dutyId);
+    if (!duty) {
+      return res.status(404).json({ success: false, message: "Replacement duty record not found." });
+    }
+
+    if (duty.status === "Completed") {
+      return res.status(400).json({ success: false, message: "Cannot reassign a completed duty." });
+    }
+    if (duty.status === "Cancelled") {
+      return res.status(400).json({ success: false, message: "Cannot assign a cancelled duty." });
+    }
+
+    const driver = await User.findById(replacementDriverId);
+    if (!driver || String(driver.role || "").toLowerCase().trim() !== "driver") {
+      return res.status(400).json({ success: false, message: "Selected user is not a registered driver." });
+    }
+
+    if (String(driver._id) === String(duty.originalDriverId)) {
+      return res.status(400).json({ success: false, message: "The original driver on leave cannot be assigned as their own replacement." });
+    }
+
+    // Strict Backend Recheck
+    const targetStart = new Date(duty.startDateTime);
+    const targetEnd = new Date(duty.endDateTime);
+
+    // 1. Leave Check
+    const driverLeaves = await DriverLeave.find({
+      driverId: driver._id,
+      status: "Approved",
+    });
+    for (const lv of driverLeaves) {
+      const intervals = getLeaveIntervals(lv);
+      if (intervals.some((intv) => doIntervalsOverlap(targetStart, targetEnd, intv.startDateTime, intv.endDateTime))) {
+        return res.status(400).json({
+          success: false,
+          message: `Leave Conflict: Driver ${driver.name} is on approved leave on ${lv.leaveDate} (${lv.leaveType}).`,
+        });
+      }
+    }
+
+    // 2. Regular Schedule Duty Overlap Check
+    const driverSchedules = await Schedule.find({
+      is_active: true,
+      $or: [
+        { driver_id: String(driver._id) },
+        { driverName: { $regex: new RegExp(`^${driver.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } },
+      ],
+    });
+    for (const sch of driverSchedules) {
+      const schShift = sch.shift || inferShiftFromTime(sch.start_time);
+      const schInterval = getDutyInterval(duty.dutyDate, schShift, sch.start_time);
+      if (doIntervalsOverlap(targetStart, targetEnd, schInterval.startDateTime, schInterval.endDateTime)) {
+        return res.status(400).json({
+          success: false,
+          message: `Double Booking Conflict: Driver ${driver.name} is already scheduled for regular duty on Bus ${
+            sch.busNumber || ""
+          } (${sch.start_time}) overlapping this shift.`,
+        });
+      }
+    }
+
+    // 3. Other Active Replacement Overlap Check
+    const otherReplacements = await DriverReplacement.find({
+      _id: { $ne: duty._id },
+      replacementDriverId: driver._id,
+      status: { $in: ["Assigned", "In Progress"] },
+    });
+    for (const rep of otherReplacements) {
+      if (doIntervalsOverlap(targetStart, targetEnd, rep.startDateTime, rep.endDateTime)) {
+        return res.status(400).json({
+          success: false,
+          message: `Double Booking Conflict: Driver ${driver.name} is already assigned as replacement for Bus ${rep.busNumber} on ${rep.dutyDate} (${rep.shift} shift).`,
+        });
+      }
+    }
+
+    // Save Assignment
+    duty.replacementDriverId = driver._id;
+    duty.replacementDriverName = driver.name;
+    duty.status = "Assigned";
+    duty.assignedBy = req.user?._id || null;
+    duty.assignedAt = new Date();
+    if (notes !== undefined) duty.notes = notes;
+
+    await duty.save();
+
+    res.json({
+      success: true,
+      message: `Driver ${driver.name} successfully assigned as temporary replacement for Bus ${duty.busNumber} (${duty.shift} Shift) on ${duty.dutyDate}.`,
+      replacement: duty,
+    });
+  } catch (error) {
+    console.error("Error assigning replacement driver:", error);
+    res.status(500).json({ success: false, message: "Failed to assign replacement driver", error: error.message });
+  }
+});
+
+// ----------------------------------------------------
+// 4C. ADMIN - REGULAR THREE-SHIFT FLEET ROSTER ENDPOINTS
+// ----------------------------------------------------
+
+const CANONICAL_SHIFTS = Object.freeze({
+  morning: { key: "morning", name: "Morning", startTime: "06:00 AM", endTime: "02:00 PM", shiftType: SHIFT_TYPES.MORNING },
+  evening: { key: "evening", name: "Evening", startTime: "02:00 PM", endTime: "10:00 PM", shiftType: SHIFT_TYPES.EVENING },
+  night: { key: "night", name: "Night", startTime: "10:00 PM", endTime: "06:00 AM", shiftType: SHIFT_TYPES.NIGHT },
+});
+
+function getCanonicalShiftConfig(shiftKey) {
+  const norm = String(shiftKey || "").toLowerCase().trim();
+  return CANONICAL_SHIFTS[norm] || null;
+}
+
+// 1. GET /api/admin/buses/shift-roster - List all fleet buses with their regular 3-shift driver roster
+router.get("/admin/buses/shift-roster", async (req, res) => {
+  try {
+    const buses = await Bus.find().sort({ busNumber: 1 });
+
+    const roster = buses.map((bus) => {
+      const bObj = bus.toObject ? bus.toObject() : bus;
+      const shifts = bObj.shifts || {};
+
+      return {
+        _id: bObj._id,
+        busNumber: bObj.busNumber,
+        busName: bObj.busName,
+        busType: bObj.busType,
+        routeName: bObj.routeName || (bObj.fromLocation && bObj.toLocation ? `${bObj.fromLocation} ➔ ${bObj.toLocation}` : ""),
+        fromLocation: bObj.fromLocation,
+        toLocation: bObj.toLocation,
+        departureTime: bObj.departureTime,
+        arrivalTime: bObj.arrivalTime,
+        legacyDriver: {
+          driverId: bObj.driverId || null,
+          driverName: bObj.driverName || "Not Assigned",
+          driverPhone: bObj.driverPhone || "",
+        },
+        shifts: {
+          morning: {
+            driverId: shifts.morning?.driverId || null,
+            driverName: shifts.morning?.driverName || "Not Assigned",
+            driverEmail: shifts.morning?.driverEmail || "",
+            driverPhone: shifts.morning?.driverPhone || "",
+            startTime: "06:00 AM",
+            endTime: "02:00 PM",
+            shiftName: "Morning",
+          },
+          evening: {
+            driverId: shifts.evening?.driverId || null,
+            driverName: shifts.evening?.driverName || "Not Assigned",
+            driverEmail: shifts.evening?.driverEmail || "",
+            driverPhone: shifts.evening?.driverPhone || "",
+            startTime: "02:00 PM",
+            endTime: "10:00 PM",
+            shiftName: "Evening",
+          },
+          night: {
+            driverId: shifts.night?.driverId || null,
+            driverName: shifts.night?.driverName || "Not Assigned",
+            driverEmail: shifts.night?.driverEmail || "",
+            driverPhone: shifts.night?.driverPhone || "",
+            startTime: "10:00 PM",
+            endTime: "06:00 AM",
+            shiftName: "Night",
+          },
+        },
+      };
+    });
+
+    res.json({
+      success: true,
+      count: roster.length,
+      buses: roster,
+    });
+  } catch (error) {
+    console.error("Error fetching bus shift roster:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch shift roster", error: error.message });
+  }
+});
+
+// 2. GET /api/admin/buses/:busId/shifts/:shift/eligible-drivers - Get approved drivers unconflicted for this shift
+router.get("/admin/buses/:busId/shifts/:shift/eligible-drivers", async (req, res) => {
+  try {
+    const { busId, shift } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(busId)) {
+      return res.status(400).json({ success: false, message: "Invalid bus ID format." });
+    }
+
+    const targetBus = await Bus.findById(busId);
+    if (!targetBus) {
+      return res.status(404).json({ success: false, message: "Bus not found." });
+    }
+
+    const shiftConfig = getCanonicalShiftConfig(shift);
+    if (!shiftConfig) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shift name. Must be 'morning', 'evening', or 'night'.",
+      });
+    }
+
+    // Interval for target shift (using reference date to compute continuous [start, end) timestamps)
+    const refDateStr = normalizeDateStr(new Date());
+    const targetInterval = getDutyInterval(refDateStr, shiftConfig.shiftType, shiftConfig.startTime, shiftConfig.endTime);
+
+    // 1. Fetch all registered drivers with role === 'driver' and verificationStatus === 'Approved'
+    const drivers = await User.find({
+      role: { $regex: /^driver$/i },
+      verificationStatus: "Approved",
+    }).select("_id name email phone licenseNumber experienceYears verificationStatus").sort({ name: 1 }).lean();
+
+    // 2. Fetch all other fleet buses to check for overlapping shift assignments
+    const allBuses = await Bus.find({ _id: { $ne: targetBus._id } }).lean();
+
+    // 3. Fetch all approved leaves to check for conflict with this shift's duty interval
+    const approvedLeaves = await DriverLeave.find({ status: "Approved" }).lean();
+
+    const eligibleDrivers = [];
+    const conflictedDrivers = [];
+
+    for (const d of drivers) {
+      const dIdStr = String(d._id);
+
+      // Check A: Leave conflict (using actual continuous interval overlap math)
+      let onLeave = false;
+      let leaveReason = "";
+      for (const lv of approvedLeaves) {
+        const lvDriverId = String(lv.driverId || "");
+        if (lvDriverId === dIdStr || (lv.driverEmail && lv.driverEmail.toLowerCase() === (d.email || "").toLowerCase())) {
+          const intervals = getLeaveIntervals(lv);
+          if (intervals.some((intv) => doIntervalsOverlap(targetInterval.startDateTime, targetInterval.endDateTime, intv.startDateTime, intv.endDateTime))) {
+            onLeave = true;
+            leaveReason = `On approved leave (${lv.leaveType} on ${lv.leaveDate})`;
+            break;
+          }
+        }
+      }
+
+      if (onLeave) {
+        conflictedDrivers.push({ driver: d, reason: leaveReason });
+        continue;
+      }
+
+      // Check B: Shift overlap on other buses (actual date/time intervals, including overnight shifts crossing midnight)
+      let busOverlap = false;
+      let overlapReason = "";
+
+      for (const b of allBuses) {
+        if (!b.shifts) continue;
+        for (const [sKey, sVal] of Object.entries(b.shifts)) {
+          if (!sVal || !sVal.driverId) continue;
+          if (String(sVal.driverId) === dIdStr) {
+            const sConf = getCanonicalShiftConfig(sKey);
+            if (sConf) {
+              const assignedInt = getDutyInterval(refDateStr, sConf.shiftType, sConf.startTime, sConf.endTime);
+              if (doIntervalsOverlap(targetInterval.startDateTime, targetInterval.endDateTime, assignedInt.startDateTime, assignedInt.endDateTime)) {
+                busOverlap = true;
+                overlapReason = `Already assigned to ${sConf.name} shift (${sConf.startTime}–${sConf.endTime}) on Bus ${b.busNumber}`;
+                break;
+              }
+            }
+          }
+        }
+        if (busOverlap) break;
+      }
+
+      if (busOverlap) {
+        conflictedDrivers.push({ driver: d, reason: overlapReason });
+        continue;
+      }
+
+      eligibleDrivers.push(d);
     }
 
     res.json({
       success: true,
-      message: `Leave request ${status === "Approved" ? "ACCEPTED & APPROVED" : "REJECTED"} for ${leave.driverName}.${busReassignedNotice}`,
-      leave,
+      busId: targetBus._id,
+      busNumber: targetBus.busNumber,
+      shift: shiftConfig.name,
+      shiftHours: `${shiftConfig.startTime} – ${shiftConfig.endTime}`,
+      count: eligibleDrivers.length,
+      drivers: eligibleDrivers,
+      conflictedCount: conflictedDrivers.length,
+      conflicted: conflictedDrivers.map((c) => ({ id: c.driver._id, name: c.driver.name, reason: c.reason })),
     });
   } catch (error) {
-    console.error("Error updating leave status:", error);
-    res.status(500).json({ message: "Failed to update leave status", error: error.message });
+    console.error("Error evaluating eligible shift drivers:", error);
+    res.status(500).json({ success: false, message: "Failed to evaluate eligible drivers", error: error.message });
+  }
+});
+
+// 3. PUT /api/admin/buses/:busId/shifts - Assign or clear driver for a single shift independently
+router.put("/admin/buses/:busId/shifts", async (req, res) => {
+  try {
+    const { busId } = req.params;
+    const { shift, driverId } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(busId)) {
+      return res.status(400).json({ success: false, message: "Invalid bus ID format." });
+    }
+
+    const bus = await Bus.findById(busId);
+    if (!bus) {
+      return res.status(404).json({ success: false, message: "Bus not found." });
+    }
+
+    const shiftConfig = getCanonicalShiftConfig(shift);
+    if (!shiftConfig) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shift name. Must be 'morning', 'evening', or 'night'.",
+      });
+    }
+
+    const shiftKey = shiftConfig.key;
+
+    // Ensure shifts subdocument structure exists on bus document
+    if (!bus.shifts) {
+      bus.shifts = {
+        morning: { driverId: null, driverName: "Not Assigned", driverEmail: "", driverPhone: "", startTime: "06:00 AM", endTime: "02:00 PM" },
+        evening: { driverId: null, driverName: "Not Assigned", driverEmail: "", driverPhone: "", startTime: "02:00 PM", endTime: "10:00 PM" },
+        night: { driverId: null, driverName: "Not Assigned", driverEmail: "", driverPhone: "", startTime: "10:00 PM", endTime: "06:00 AM" },
+      };
+    }
+    if (!bus.shifts[shiftKey]) {
+      bus.shifts[shiftKey] = {
+        driverId: null,
+        driverName: "Not Assigned",
+        driverEmail: "",
+        driverPhone: "",
+        startTime: shiftConfig.startTime,
+        endTime: shiftConfig.endTime,
+      };
+    }
+
+    // CASE 1: UNASSIGN / CLEAR SHIFT (driverId is null, empty string, or "unassigned")
+    if (!driverId || driverId === "unassigned" || driverId === "null") {
+      bus.shifts[shiftKey].driverId = null;
+      bus.shifts[shiftKey].driverName = "Not Assigned";
+      bus.shifts[shiftKey].driverEmail = "";
+      bus.shifts[shiftKey].driverPhone = "";
+
+      bus.markModified("shifts");
+      await bus.save();
+
+      return res.json({
+        success: true,
+        message: `${shiftConfig.name} shift on Bus ${bus.busNumber} has been unassigned.`,
+        shift: shiftConfig.name,
+        bus,
+      });
+    }
+
+    // CASE 2: ASSIGN DRIVER TO SPECIFIC SHIFT
+    if (!mongoose.Types.ObjectId.isValid(driverId)) {
+      return res.status(400).json({ success: false, message: "Invalid driver ID format." });
+    }
+
+    const driver = await User.findById(driverId);
+    if (!driver || String(driver.role || "").toLowerCase().trim() !== "driver") {
+      return res.status(400).json({
+        success: false,
+        message: "Assignment rejected: Selected user is not a registered driver.",
+      });
+    }
+
+    if (driver.verificationStatus !== "Approved") {
+      return res.status(400).json({
+        success: false,
+        message: `Assignment rejected: Driver ${driver.name} is not verified/approved (Status: ${driver.verificationStatus || "Unverified"}).`,
+      });
+    }
+
+    // Compute actual continuous time interval for target shift
+    const refDateStr = normalizeDateStr(new Date());
+    const targetInterval = getDutyInterval(refDateStr, shiftConfig.shiftType, shiftConfig.startTime, shiftConfig.endTime);
+
+    // 1. Leave Check (using actual continuous interval overlap math)
+    const approvedLeaves = await DriverLeave.find({
+      $or: [
+        { driverId: driver._id },
+        { driverEmail: driver.email ? new RegExp(`^${driver.email.trim()}$`, "i") : null },
+      ].filter((c) => c.driverId || c.driverEmail),
+      status: "Approved",
+    });
+
+    for (const lv of approvedLeaves) {
+      const intervals = getLeaveIntervals(lv);
+      if (intervals.some((intv) => doIntervalsOverlap(targetInterval.startDateTime, targetInterval.endDateTime, intv.startDateTime, intv.endDateTime))) {
+        return res.status(400).json({
+          success: false,
+          message: `Leave Conflict: Driver ${driver.name} is on approved leave (${lv.leaveType} on ${lv.leaveDate}).`,
+        });
+      }
+    }
+
+    // 2. Overlapping duty check on other fleet buses (actual continuous date/time intervals, including midnight crossing)
+    const otherBuses = await Bus.find({ _id: { $ne: bus._id } });
+    for (const b of otherBuses) {
+      if (!b.shifts) continue;
+      for (const [sK, sV] of Object.entries(b.shifts)) {
+        if (!sV || !sV.driverId) continue;
+        if (String(sV.driverId) === String(driver._id)) {
+          const sC = getCanonicalShiftConfig(sK);
+          if (sC) {
+            const assignedInt = getDutyInterval(refDateStr, sC.shiftType, sC.startTime, sC.endTime);
+            if (doIntervalsOverlap(targetInterval.startDateTime, targetInterval.endDateTime, assignedInt.startDateTime, assignedInt.endDateTime)) {
+              return res.status(400).json({
+                success: false,
+                message: `Shift Conflict: Driver ${driver.name} is already assigned to ${sC.name} shift (${sC.startTime}–${sC.endTime}) on Bus ${b.busNumber}.`,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Update ONLY the target shift
+    bus.shifts[shiftKey].driverId = driver._id;
+    bus.shifts[shiftKey].driverName = driver.name;
+    bus.shifts[shiftKey].driverEmail = driver.email || "";
+    bus.shifts[shiftKey].driverPhone = driver.phone || "";
+    bus.shifts[shiftKey].startTime = shiftConfig.startTime;
+    bus.shifts[shiftKey].endTime = shiftConfig.endTime;
+
+    bus.markModified("shifts");
+    await bus.save();
+
+    res.json({
+      success: true,
+      message: `Driver ${driver.name} successfully assigned to ${shiftConfig.name} shift (${shiftConfig.startTime}–${shiftConfig.endTime}) on Bus ${bus.busNumber}.`,
+      shift: shiftConfig.name,
+      bus,
+    });
+  } catch (error) {
+    console.error("Error updating bus shift driver:", error);
+    res.status(500).json({ success: false, message: "Failed to update shift driver", error: error.message });
   }
 });
 
@@ -1224,6 +2548,9 @@ const { getIO } = require("../services/socketService");
 // Key: driverId (String) or busId (String)
 const liveDriveSessions = new Map();
 
+// In-process concurrency locks for starting live drive sessions per bus (prevents race-condition duplicate sessions)
+const activeStartOperations = new Map();
+
 // Helper to calculate distance between two stops
 async function getDistanceBetweenStops(fromStopId, toStopId) {
   if (!fromStopId || !toStopId || String(fromStopId) === String(toStopId)) return 0;
@@ -1385,26 +2712,46 @@ async function generateTripSessionId() {
 }
 
 // 1. POST /api/driver/live-drive/start - Start Live Bus Drive Session
-router.post("/driver/live-drive/start", async (req, res) => {
+router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) => {
   try {
-    const { driverId, busId, busNumber } = req.body;
+    const { busId, busNumber, scheduleId, serviceDate, departureTime } = req.body;
 
-    let driver = null;
-    if (driverId && mongoose.Types.ObjectId.isValid(driverId)) {
-      driver = await User.findById(driverId);
-    } else if (driverId) {
-      driver = await User.findOne({ email: driverId });
-    } else if (req.user) {
-      driver = req.user;
+    // Resolve authenticated driver strictly from trusted middleware (never trust client-supplied driverId)
+    const driver = req.user;
+    if (!driver || !driver._id) {
+      return res.status(401).json({
+        success: false,
+        message: "Driver profile could not be identified. Please log in.",
+        code: "UNAUTHORIZED_DRIVER"
+      });
     }
 
+    // Resolve bus
     let bus = null;
     if (busId && mongoose.Types.ObjectId.isValid(busId)) {
       bus = await Bus.findById(busId);
     } else if (busNumber) {
       bus = await Bus.findOne({ busNumber: String(busNumber).trim() });
-    } else if (driver) {
+    }
+
+    // If bus was not explicitly provided, find bus associated with this driver
+    if (!bus && driver) {
+      // Check active replacement duty first
+      const activeRep = await DriverReplacement.findOne({
+        replacementDriverId: driver._id,
+        status: { $in: ["Assigned", "In Progress"] }
+      }).sort({ createdAt: -1 });
+
+      if (activeRep && activeRep.busId) {
+        bus = await Bus.findById(activeRep.busId);
+      }
+    }
+
+    if (!bus && driver) {
       const driverConditions = [
+        { "shifts.morning.driverId": driver._id },
+        { "shifts.evening.driverId": driver._id },
+        { "shifts.night.driverId": driver._id },
         { driverId: driver._id },
         { driverEmail: driver.email }
       ];
@@ -1418,6 +2765,226 @@ router.post("/driver/live-drive/start", async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "No assigned bus found in database for your driver profile. Please request or assign a bus in database first."
+      });
+    }
+
+    // Resolve schedule and validate that bus and schedule belong together
+    let schedule = null;
+    if (scheduleId && mongoose.Types.ObjectId.isValid(scheduleId)) {
+      schedule = await Schedule.findById(scheduleId);
+      if (!schedule) {
+        return res.status(404).json({
+          success: false,
+          message: `Requested schedule (${scheduleId}) was not found.`,
+          code: "SCHEDULE_NOT_FOUND"
+        });
+      }
+      const scheduleBusMatches = (schedule.bus_id && String(schedule.bus_id) === String(bus._id)) ||
+        (schedule.busNumber && schedule.busNumber === bus.busNumber);
+      if (!scheduleBusMatches) {
+        return res.status(400).json({
+          success: false,
+          message: `Requested schedule (${schedule.start_time} - ${schedule.routeName || "Route"}) does not belong to bus ${bus.busNumber}.`,
+          code: "SCHEDULE_BUS_MISMATCH"
+        });
+      }
+    }
+
+    if (!schedule) {
+      // Look up active schedules for this bus
+      const busSchedules = await Schedule.find({
+        $or: [
+          { bus_id: bus._id },
+          { busNumber: bus.busNumber }
+        ],
+        is_active: true
+      });
+
+      if (busSchedules.length === 1) {
+        schedule = busSchedules[0];
+      } else if (busSchedules.length > 1) {
+        // If departureTime was explicitly provided, match on it
+        if (departureTime) {
+          schedule = busSchedules.find(s => s.start_time === departureTime || s.departure_time === departureTime);
+          if (!schedule) {
+            return res.status(404).json({
+              success: false,
+              message: `No active schedule found for bus ${bus.busNumber} matching departure time ${departureTime}.`,
+              code: "SCHEDULE_TIME_NOT_FOUND"
+            });
+          }
+        }
+
+        if (!schedule) {
+          // Identify driver's assigned shift on this bus or active replacement duty
+          let targetShift = null;
+          if (bus.shifts?.morning?.driverId && String(bus.shifts.morning.driverId) === String(driver._id)) {
+            targetShift = "Morning";
+          } else if (bus.shifts?.evening?.driverId && String(bus.shifts.evening.driverId) === String(driver._id)) {
+            targetShift = "Evening";
+          } else if (bus.shifts?.night?.driverId && String(bus.shifts.night.driverId) === String(driver._id)) {
+            targetShift = "Night";
+          } else {
+            const rep = await DriverReplacement.findOne({
+              replacementDriverId: driver._id,
+              busId: bus._id,
+              status: { $in: ["Assigned", "In Progress"] }
+            });
+            if (rep) targetShift = rep.shift;
+          }
+
+          if (targetShift) {
+            const shiftSchedules = busSchedules.filter(s => (s.shift || inferShiftFromTime(s.start_time)) === targetShift);
+            if (shiftSchedules.length === 1) {
+              schedule = shiftSchedules[0];
+            } else if (shiftSchedules.length > 1) {
+              // Ambiguous: multiple departures exist in this shift and cannot be uniquely selected without guessing
+              return res.status(400).json({
+                success: false,
+                message: `Multiple scheduled departures exist for bus ${bus.busNumber} in the ${targetShift} shift. Please select the specific schedule or departure time.`,
+                code: "AMBIGUOUS_SCHEDULE",
+                availableDepartures: shiftSchedules.map(s => ({
+                  scheduleId: s._id,
+                  startTime: s.start_time,
+                  routeName: s.routeName
+                }))
+              });
+            }
+          }
+
+          if (!schedule) {
+            return res.status(400).json({
+              success: false,
+              message: `Multiple departures exist for bus ${bus.busNumber}. Please specify scheduleId or departureTime to start.`,
+              code: "AMBIGUOUS_SCHEDULE",
+              availableDepartures: busSchedules.map(s => ({
+                scheduleId: s._id,
+                startTime: s.start_time,
+                shift: s.shift || inferShiftFromTime(s.start_time),
+                routeName: s.routeName
+              }))
+            });
+          }
+        }
+      }
+    }
+
+    // Fallback: Synthesize schedule from Bus attributes if no schedule documents exist
+    if (!schedule) {
+      const busDepartureTime = bus.departureTime || "08:00 AM";
+      const busShift = bus.shift || inferShiftFromTime(busDepartureTime);
+      schedule = {
+        _id: null,
+        bus_id: bus._id,
+        busNumber: bus.busNumber,
+        start_time: busDepartureTime,
+        departure_time: busDepartureTime,
+        route_id: bus.routeId || null,
+        routeName: bus.routeName || `${bus.fromLocation || "Origin"} ➔ ${bus.toLocation || "Destination"}`,
+        duration: bus.duration || "1 hour",
+        delay_buffer_minutes: bus.delayBufferMinutes || 0,
+        shift: busShift,
+        driver_id: null,
+        driverName: "Not Assigned"
+      };
+    }
+
+    // Resolve Route for duration validation if needed
+    let route = null;
+    const routeId = schedule.route_id || bus.routeId;
+    if (routeId && mongoose.Types.ObjectId.isValid(routeId)) {
+      route = await Route.findById(routeId);
+    }
+
+    // Determine operational service date (accounting for post-midnight Night shifts)
+    const operationalServiceDate = resolveOperationalServiceDate(serviceDate || new Date(), schedule.start_time);
+
+    // Fetch leaves and replacements for authorization validation
+    const driverLeaves = await DriverLeave.find({ status: "Approved" });
+    const driverReplacements = await DriverReplacement.find({
+      $or: [
+        { busId: bus._id },
+        { busNumber: bus.busNumber }
+      ],
+      status: { $in: ["Assigned", "In Progress"] }
+    });
+
+    // Run the pure deterministic effective driver resolver
+    const resolverResult = resolveEffectiveDepartureDriver({
+      schedule,
+      bus,
+      route,
+      serviceDate: operationalServiceDate,
+      driverReplacements,
+      driverLeaves,
+      gracePeriodMinutes: SHIFT_POLICY_CONFIG.DEFAULT_GRACE_PERIOD_MINUTES,
+    });
+
+    // 1. If resolver determined trip start is BLOCKED (unassigned shift, unreplaced leave, major overrun, etc.)
+    if (!resolverResult.tripStartEligibility.canStartTrip) {
+      return res.status(403).json({
+        success: false,
+        message: `Trip start blocked: ${resolverResult.tripStartEligibility.blockingReason || resolverResult.reason || "Duty authorization failed."}`,
+        resolverStatus: resolverResult.status,
+        substatus: resolverResult.substatus,
+        blockingReason: resolverResult.tripStartEligibility.blockingReason,
+        auditRecord: resolverResult.tripStartEligibility.auditRecord || null
+      });
+    }
+
+    // 2. Explicit schedule driver compatibility verification
+    if (resolverResult.status === RESOLVER_STATUS.EXPLICIT_SCHEDULE_DRIVER && resolverResult.driverId) {
+      const explicitLeave = findOverlappingApprovedLeave(
+        resolverResult.driverId,
+        driverLeaves,
+        {
+          startDateTime: resolverResult.boundaryCheck?.tripStartDateTime,
+          endDateTime: resolverResult.boundaryCheck?.tripEndDateTime
+        }
+      );
+      if (explicitLeave) {
+        const replacementForExplicit = findValidReplacementDuty({
+          busId: bus._id,
+          busNumber: bus.busNumber,
+          shift: resolverResult.shift,
+          dutyDate: operationalServiceDate,
+          replacements: driverReplacements,
+          tripInterval: {
+            startDateTime: resolverResult.boundaryCheck?.tripStartDateTime,
+            endDateTime: resolverResult.boundaryCheck?.tripEndDateTime
+          }
+        });
+        if (!replacementForExplicit) {
+          return res.status(403).json({
+            success: false,
+            message: `Trip start blocked: Assigned schedule driver (${resolverResult.driverName}) is on approved leave (${explicitLeave.leaveType}) and no replacement is assigned.`,
+            blockingReason: "Assigned schedule driver is on approved leave without replacement.",
+            resolverStatus: resolverResult.status
+          });
+        }
+      }
+    }
+
+    // 3. Verify that requesting authenticated driver is the effective authorized driver
+    const authorizedDriverId = String(resolverResult.driverId || "");
+    const requestingDriverId = String(driver._id);
+
+    if (!authorizedDriverId || authorizedDriverId !== requestingDriverId) {
+      return res.status(403).json({
+        success: false,
+        message: `Unauthorized: You (${driver.name}) are not authorized to start this trip on bus ${bus.busNumber}. Effective authorized driver for this ${resolverResult.shift} shift is ${resolverResult.driverName}.`,
+        authorizedDriver: resolverResult.driverName,
+        requestedBus: bus.busNumber,
+        shift: resolverResult.shift
+      });
+    }
+
+    // 4. Record and handle minor shift overrun warning if applicable
+    let warningMessage = null;
+    if (resolverResult.tripStartEligibility.status === TRIP_START_STATUS.WARNING_OVERRUN) {
+      warningMessage = resolverResult.tripStartEligibility.warningMessage;
+      console.warn(`[SHIFT OVERRUN EXCEPTION] Driver ${driver.name} starting Bus ${bus.busNumber} with warning: ${warningMessage}`, {
+        auditRecord: resolverResult.tripStartEligibility.auditRecord
       });
     }
 
@@ -1436,127 +3003,169 @@ router.post("/driver/live-drive/start", async (req, res) => {
       longitude: 76.3860
     };
 
-    // Check if there is an ALREADY ACTIVE trip session for this bus (avoids duplicating session on accidental double tap)
-    let activeTripDoc = await TripSession.findOne({
-      busId: bus._id,
-      status: { $in: ["ACTIVE", "PAUSED"] }
-    }).sort({ createdAt: -1 });
+    const busKey = String(bus._id);
 
-    if (!activeTripDoc && driver?._id) {
-      activeTripDoc = await TripSession.findOne({
-        driverId: driver._id,
+    // Concurrency lock per bus: await any in-flight trip-start operation on the same bus
+    while (activeStartOperations.has(busKey)) {
+      await activeStartOperations.get(busKey);
+    }
+
+    let releaseLock;
+    const lockPromise = new Promise(resolve => { releaseLock = resolve; });
+    activeStartOperations.set(busKey, lockPromise);
+
+    try {
+      // Check if there is an ALREADY ACTIVE trip session for this bus (avoids duplicating session on accidental double tap)
+      let activeTripDoc = await TripSession.findOne({
+        busId: bus._id,
         status: { $in: ["ACTIVE", "PAUSED"] }
       }).sort({ createdAt: -1 });
-    }
 
-    // If an active session already exists, resume it
-    if (activeTripDoc) {
-      const sessionObj = activeTripDoc.toObject();
-      const sessionKey = driver ? String(driver._id) : String(bus._id);
-      liveDriveSessions.set(sessionKey, sessionObj);
-      liveDriveSessions.set(String(bus._id), sessionObj);
-      liveDriveSessions.set(activeTripDoc.tripSessionId, sessionObj);
-
-      return res.json({
-        success: true,
-        message: `Resuming active drive session ${activeTripDoc.tripSessionId} for ${bus.busName} (${bus.busNumber}) 🚀`,
-        drive: sessionObj,
-        tripSessionId: activeTripDoc.tripSessionId,
-        stops
-      });
-    }
-
-    // CREATE BRAND NEW UNIQUE TRIP SESSION
-    const newTripSessionId = await generateTripSessionId();
-
-    activeTripDoc = new TripSession({
-      tripSessionId: newTripSessionId,
-      busId: bus._id,
-      busNumber: bus.busNumber,
-      busName: bus.busName,
-      driverId: driver ? driver._id : (bus.driverId || null),
-      driverName: driver ? driver.name : (bus.driverName || "Driver"),
-      driverEmail: driver ? driver.email : (bus.driverEmail || ""),
-      routeName: bus.routeName || `${bus.fromLocation || "Origin"} ➔ ${bus.toLocation || "Destination"}`,
-      fromLocation: bus.fromLocation || initialStop.name,
-      toLocation: bus.toLocation || destStop.name,
-      startStop: initialStop.name,
-      endStop: destStop.name,
-      status: "ACTIVE",
-      mode: "manual",
-      startTime: new Date(),
-      currentStopIndex: 0,
-      currentStop: initialStop,
-      nextStop: stops.length > 1 ? stops[1] : null,
-      completedStops: [],
-      upcomingStops: stops.slice(1),
-      totalDistanceKm: 0,
-      distanceCovered: 0,
-      totalRfidTaps: 0,
-      totalTapIns: 0,
-      totalTapOuts: 0,
-      totalFare: 0,
-      uniquePassengers: 0,
-      reportUrl: ""
-    });
-
-    await activeTripDoc.save();
-
-    const sessionObj = activeTripDoc.toObject();
-    const sessionKey = driver ? String(driver._id) : String(bus._id);
-
-    liveDriveSessions.set(sessionKey, sessionObj);
-    liveDriveSessions.set(String(bus._id), sessionObj);
-    liveDriveSessions.set(newTripSessionId, sessionObj);
-
-    // Update RfidDevice in MongoDB to starting stop
-    try {
-      const dev = await RfidDevice.findOne({
-        $or: [{ busNumber: bus.busNumber }, { driverEmail: driver?.email }]
-      });
-      if (dev) {
-        dev.stopCode = initialStop.code;
-        await dev.save();
+      if (!activeTripDoc && driver?._id) {
+        activeTripDoc = await TripSession.findOne({
+          driverId: driver._id,
+          status: { $in: ["ACTIVE", "PAUSED"] }
+        }).sort({ createdAt: -1 });
       }
-    } catch {}
 
-    // Broadcast live drive start via Socket.IO
-    try {
-      const io = getIO();
-      if (io) {
-        const payload = {
-          ...sessionObj,
-          tripSessionId: newTripSessionId,
-          latitude: initialStop.latitude || 9.9658,
-          longitude: initialStop.longitude || 76.3204,
-          speed: 25,
-          heading: 45
-        };
-        io.to(`bus:${bus._id}`).emit("bus:trackingStarted", payload);
-        io.to(`bus:${bus._id}`).emit("bus:locationUpdate", payload);
-        io.to("admin-safety").emit("bus:trackingStarted", payload);
-        io.to("admin-safety").emit("bus:locationUpdate", payload);
-        io.emit("admin:fleet-location", payload);
-        io.emit("rfid:location-updated", {
-          tripSessionId: newTripSessionId,
-          busId: bus._id,
-          busNumber: bus.busNumber,
-          stopCode: initialStop.code,
-          stopName: initialStop.name,
-          mode: "manual"
+      // Prevent duplicate active trip on same bus by a different driver
+      if (activeTripDoc && activeTripDoc.driverId && driver?._id && String(activeTripDoc.driverId) !== String(driver._id)) {
+        return res.status(409).json({
+          success: false,
+          message: `Bus ${bus.busNumber} already has an active drive session operated by ${activeTripDoc.driverName || "another driver"}.`
         });
       }
-    } catch (e) {
-      console.warn("Socket broadcast error in live drive start:", e.message);
-    }
 
-    res.json({
-      success: true,
-      message: `Drive started for ${bus.busName} (${bus.busNumber}) at ${initialStop.name} (Session: ${newTripSessionId}) 🚀`,
-      drive: sessionObj,
-      tripSessionId: newTripSessionId,
-      stops
-    });
+      // If an active session already exists, resume it (do not create a duplicate TripSession)
+      if (activeTripDoc) {
+        const sessionObj = activeTripDoc.toObject();
+        const sessionKey = driver ? String(driver._id) : String(bus._id);
+        liveDriveSessions.set(sessionKey, sessionObj);
+        liveDriveSessions.set(String(bus._id), sessionObj);
+        liveDriveSessions.set(activeTripDoc.tripSessionId, sessionObj);
+
+        return res.json({
+          success: true,
+          message: `Resuming active drive session ${activeTripDoc.tripSessionId} for ${bus.busName} (${bus.busNumber}) 🚀`,
+          drive: sessionObj,
+          tripSessionId: activeTripDoc.tripSessionId,
+          warningMessage: warningMessage || undefined,
+          stops
+        });
+      }
+
+      // CREATE BRAND NEW UNIQUE TRIP SESSION ONLY AFTER AUTHORIZATION SUCCEEDS
+      const newTripSessionId = await generateTripSessionId();
+
+      activeTripDoc = new TripSession({
+        tripSessionId: newTripSessionId,
+        busId: bus._id,
+        busNumber: bus.busNumber,
+        busName: bus.busName,
+        driverId: driver._id,
+        driverName: driver.name,
+        driverEmail: driver.email || "",
+        isReplacementDriver: Boolean(resolverResult.isReplacement),
+        shift: resolverResult.shift,
+        replacementDutyId: resolverResult.replacementDutyId || null,
+        originalDriverId: resolverResult.isReplacement ? (resolverResult.originalDriverId || null) : null,
+        originalDriverName: resolverResult.isReplacement ? (resolverResult.originalDriverName || "") : "",
+        scheduleId: schedule._id || null,
+        serviceDate: operationalServiceDate,
+        routeName: schedule.routeName || bus.routeName || `${bus.fromLocation || "Origin"} ➔ ${bus.toLocation || "Destination"}`,
+        fromLocation: bus.fromLocation || initialStop.name,
+        toLocation: bus.toLocation || destStop.name,
+        startStop: initialStop.name,
+        endStop: destStop.name,
+        status: "ACTIVE",
+        mode: "manual",
+        startTime: new Date(),
+        currentStopIndex: 0,
+        currentStop: initialStop,
+        nextStop: stops.length > 1 ? stops[1] : null,
+        completedStops: [],
+        upcomingStops: stops.slice(1),
+        totalDistanceKm: 0,
+        distanceCovered: 0,
+        totalRfidTaps: 0,
+        totalTapIns: 0,
+        totalTapOuts: 0,
+        totalFare: 0,
+        uniquePassengers: 0,
+        reportUrl: ""
+      });
+
+      await activeTripDoc.save();
+
+      if (resolverResult.isReplacement && resolverResult.replacementDutyId) {
+        await DriverReplacement.findByIdAndUpdate(resolverResult.replacementDutyId, { status: "In Progress" });
+      }
+
+      const sessionObj = activeTripDoc.toObject();
+      const sessionKey = driver ? String(driver._id) : String(bus._id);
+
+      liveDriveSessions.set(sessionKey, sessionObj);
+      liveDriveSessions.set(String(bus._id), sessionObj);
+      liveDriveSessions.set(newTripSessionId, sessionObj);
+
+      // Update RfidDevice in MongoDB to starting stop
+      try {
+        const dev = await RfidDevice.findOne({
+          $or: [{ busNumber: bus.busNumber }, { driverEmail: driver?.email }]
+        });
+        if (dev) {
+          dev.stopCode = initialStop.code;
+          await dev.save();
+        }
+      } catch {}
+
+      // Broadcast live drive start via Socket.IO
+      try {
+        const io = getIO();
+        if (io) {
+          const payload = {
+            ...sessionObj,
+            tripSessionId: newTripSessionId,
+            latitude: initialStop.latitude || 9.9658,
+            longitude: initialStop.longitude || 76.3204,
+            speed: 25,
+            heading: 45
+          };
+          io.to(`bus:${bus._id}`).emit("bus:trackingStarted", payload);
+          io.to(`bus:${bus._id}`).emit("bus:locationUpdate", payload);
+          io.to("admin-safety").emit("bus:trackingStarted", payload);
+          io.to("admin-safety").emit("bus:locationUpdate", payload);
+          io.emit("admin:fleet-location", payload);
+          io.emit("rfid:location-updated", {
+            tripSessionId: newTripSessionId,
+            busId: bus._id,
+            busNumber: bus.busNumber,
+            stopCode: initialStop.code,
+            stopName: initialStop.name,
+            mode: "manual"
+          });
+        }
+      } catch (e) {
+        console.warn("Socket broadcast error in live drive start:", e.message);
+      }
+
+      res.json({
+        success: true,
+        message: warningMessage
+          ? `Drive started with shift warning: ${warningMessage} (Session: ${newTripSessionId}) 🚀`
+          : `Drive started for ${bus.busName} (${bus.busNumber}) at ${initialStop.name} (Session: ${newTripSessionId}) 🚀`,
+        drive: sessionObj,
+        tripSessionId: newTripSessionId,
+        shift: resolverResult.shift,
+        serviceDate: operationalServiceDate,
+        warningMessage: warningMessage || undefined,
+        hasShiftOverrunException: Boolean(resolverResult.hasShiftOverrunException),
+        stops
+      });
+    } finally {
+      activeStartOperations.delete(busKey);
+      if (typeof releaseLock === "function") releaseLock();
+    }
   } catch (error) {
     console.error("Live Drive Start Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -1879,6 +3488,17 @@ router.post("/driver/live-drive/end", async (req, res) => {
     }
 
     await activeTripDoc.save();
+
+    // If this was a replacement duty, mark DriverReplacement as Completed
+    if (activeTripDoc.replacementDutyId) {
+      try {
+        await DriverReplacement.findByIdAndUpdate(activeTripDoc.replacementDutyId, {
+          status: "Completed"
+        });
+      } catch (repErr) {
+        console.warn("DriverReplacement completion notice (non-fatal):", repErr.message);
+      }
+    }
 
     // Clean up in-memory map
     const sessionKey = driverId ? String(driverId) : String(busId);
@@ -2630,6 +4250,7 @@ router.get("/admin/reports/date-summary", optionalProtect, async (req, res) => {
 });
 
 router.liveDriveSessions = liveDriveSessions;
+router.syncReplacementsForApprovedLeave = syncReplacementsForApprovedLeave;
 module.exports = router;
 
 

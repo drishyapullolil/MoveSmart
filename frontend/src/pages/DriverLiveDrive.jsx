@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import axios from "axios";
@@ -137,6 +137,7 @@ function createStopMarkerIcon(isCurrent = false, isCompleted = false, index = 1)
 
 export default function DriverLiveDrive() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState(() => getStoredUser());
   const [driverBuses, setDriverBuses] = useState([]);
   const [assignedBus, setAssignedBus] = useState(null);
@@ -980,7 +981,29 @@ export default function DriverLiveDrive() {
 
       setDriverBuses(fetchedAssigned);
 
-      let currentBus = fetchedAssigned.length > 0 ? fetchedAssigned[0] : null;
+      let currentBus = null;
+      if (location.state?.selectedBusId) {
+        currentBus = fetchedAssigned.find(
+          (b) => String(b._id) === String(location.state.selectedBusId) || b.busNumber === location.state.selectedBusNumber
+        );
+      }
+      if (!currentBus && fetchedAssigned.length > 0) {
+        currentBus = fetchedAssigned[0];
+      }
+
+      if (currentBus) {
+        if (location.state?.selectedScheduleId || location.state?.departureTime) {
+          currentBus = {
+            ...currentBus,
+            selectedScheduleId: location.state.selectedScheduleId || null,
+            departureTime: location.state.departureTime || currentBus.departureTime,
+            routeName: location.state.routeName || currentBus.routeName,
+            fromLocation: location.state.fromLocation || currentBus.fromLocation,
+            toLocation: location.state.toLocation || currentBus.toLocation,
+            stops: (location.state.stops && location.state.stops.length > 0) ? location.state.stops : currentBus.stops,
+          };
+        }
+      }
       setAssignedBus(currentBus);
 
       // 2. Fetch stops & active drive specifically for this assigned bus and driver
@@ -1035,8 +1058,19 @@ export default function DriverLiveDrive() {
     }
   }, [navigate]);
 
-  const handleSelectTrip = async (bus) => {
-    setAssignedBus(bus);
+  const handleSelectTrip = async (bus, specificTrip = null) => {
+    const targetBus = specificTrip ? {
+      ...bus,
+      selectedScheduleId: specificTrip.scheduleId || null,
+      departureTime: specificTrip.departureTime || specificTrip.start_time || bus.departureTime,
+      arrivalTime: specificTrip.arrivalTime || bus.arrivalTime,
+      routeName: specificTrip.routeName || bus.routeName,
+      fromLocation: specificTrip.fromLocation || bus.fromLocation,
+      toLocation: specificTrip.toLocation || bus.toLocation,
+      stops: (specificTrip.stops && specificTrip.stops.length > 0) ? specificTrip.stops : bus.stops,
+    } : bus;
+
+    setAssignedBus(targetBus);
     setCurrentStopIndex(0);
     setDriveStatus("NOT STARTED");
     setShowTripModal(false);
@@ -1045,15 +1079,17 @@ export default function DriverLiveDrive() {
     const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${bus._id}`, { headers: authHeaders }).catch(() => null);
+      const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${targetBus._id}`, { headers: authHeaders }).catch(() => null);
       if (driveRes?.data?.stops && driveRes.data.stops.length > 0) {
         setStops(driveRes.data.stops);
+      } else if (targetBus.stops && targetBus.stops.length > 0) {
+        setStops(targetBus.stops);
       }
     } catch (err) {
       console.warn("Failed to fetch route stops for selected bus:", err.message);
     }
 
-    showToast(`✓ Switched Trip to: ${bus.busName} (${bus.busNumber}) - ${bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`}`);
+    showToast(`✓ Selected Trip: ${targetBus.busName} (${targetBus.busNumber}) - ${targetBus.departureTime || ""} ${targetBus.routeName || `${targetBus.fromLocation} ➔ ${targetBus.toLocation}`}`);
   };
 
   const handleReverseDirection = () => {
@@ -1293,6 +1329,8 @@ export default function DriverLiveDrive() {
         driverId: user?._id || user?.id,
         busId: assignedBus._id,
         busNumber: assignedBus.busNumber,
+        scheduleId: assignedBus.selectedScheduleId || assignedBus.scheduleId || undefined,
+        departureTime: assignedBus.departureTime || undefined,
       }, { headers: authHeaders });
 
       if (res.data?.success) {
@@ -2717,83 +2755,166 @@ export default function DriverLiveDrive() {
               </div>
             )}
 
-            {/* ASSIGNED BUSES & TRIPS LIST */}
+            {/* ASSIGNED BUS SLOTS & THEIR TRIPS LIST */}
             <div style={{ marginBottom: "14px" }}>
-              <div style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "10px" }}>
-                Your Assigned Buses &amp; Routes ({driverBuses.length})
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "6px" }}>
+                <div style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  Your Assigned Bus Slots &amp; Scheduled Trips ({driverBuses.length})
+                </div>
+                <div style={{ fontSize: "11.5px", fontWeight: "700", color: "#64748b" }}>
+                  Select the vehicle slot and specific departure to drive
+                </div>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                 {driverBuses.length === 0 ? (
                   <div style={{ padding: "24px 20px", textAlign: "center", color: "#64748b", background: "#f8fafc", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
                     <div style={{ fontSize: "28px", marginBottom: "8px" }}>🚌</div>
                     <div style={{ fontWeight: "800", color: "#1e293b", fontSize: "15px", marginBottom: "4px" }}>
-                      No Bus Assigned
+                      No Bus Slots Assigned
                     </div>
                     <div style={{ fontSize: "13px", color: "#64748b" }}>
-                      There are currently no buses assigned to your driver account. Please contact the administrator.
+                      There are currently no bus slots assigned to your driver account. Please contact the administrator.
                     </div>
                   </div>
                 ) : (
                   driverBuses.map((bus) => {
-                    const isSelected = assignedBus?._id === bus._id || assignedBus?.busNumber === bus.busNumber;
-                    const routeTitle = bus.routeName || `${bus.fromLocation || "Origin"} ➔ ${bus.toLocation || "Destination"}`;
-                    const stopsCount = Array.isArray(bus.stops) ? bus.stops.length : 0;
+                    const isBusActive = assignedBus?._id === bus._id || assignedBus?.busNumber === bus.busNumber;
+                    const driverShift = bus.assignedShift || bus.shift || "Morning";
+                    const shiftBadge = driverShift === "Morning" ? "🌅 Morning (06:00 - 14:00)"
+                      : driverShift === "Evening" ? "🌆 Evening (14:00 - 22:00)"
+                      : "🌙 Night (22:00 - 06:00)";
+
+                    const trips = (bus.assignedTrips && bus.assignedTrips.length > 0)
+                      ? bus.assignedTrips
+                      : [{
+                          id: `BASE-${bus._id}`,
+                          scheduleId: null,
+                          departureTime: bus.departureTime || "08:00 AM",
+                          arrivalTime: bus.arrivalTime || "10:00 AM",
+                          routeName: bus.routeName || `${bus.fromLocation || "Origin"} ➔ ${bus.toLocation || "Destination"}`,
+                          fromLocation: bus.fromLocation,
+                          toLocation: bus.toLocation,
+                          stops: bus.stops || [],
+                          shift: driverShift,
+                          price: bus.price || 35,
+                        }];
 
                     return (
                       <div
                         key={bus._id || bus.busNumber}
                         style={{
-                          padding: "14px 16px",
-                          borderRadius: "14px",
-                          border: isSelected ? "2px solid #16a34a" : "1.5px solid #e2e8f0",
-                          background: isSelected ? "#f0fdf4" : "#ffffff",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: "12px",
-                          transition: "all 0.15s ease",
+                          borderRadius: "16px",
+                          border: isBusActive ? "2px solid #16a34a" : "1.5px solid #e2e8f0",
+                          background: "#ffffff",
+                          overflow: "hidden",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
                         }}
                       >
-                        <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                            <strong style={{ fontSize: "15px", color: "#0f172a" }}>
-                              {bus.busName} ({bus.busNumber})
-                            </strong>
-                            {isSelected && (
-                              <span style={{ fontSize: "10.5px", fontWeight: "900", background: "#16a34a", color: "#ffffff", padding: "2px 8px", borderRadius: "10px" }}>
-                                Active Trip
+                        {/* Level 1: Bus Slot Header */}
+                        <div
+                          style={{
+                            padding: "12px 16px",
+                            background: isBusActive ? "#f0fdf4" : "#f8fafc",
+                            borderBottom: "1px solid #e2e8f0",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "8px",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            <span style={{ fontSize: "13px", fontFamily: "monospace", fontWeight: "900", background: "#ffffff", padding: "4px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", color: "#0f172a" }}>
+                              🚌 {bus.busNumber}
+                            </span>
+                            <span style={{ fontSize: "15px", fontWeight: "900", color: "#0f172a" }}>
+                              {bus.busName}
+                            </span>
+                            {isBusActive && (
+                              <span style={{ fontSize: "10px", fontWeight: "900", background: "#16a34a", color: "#ffffff", padding: "2px 8px", borderRadius: "10px" }}>
+                                Active Bus
                               </span>
                             )}
                           </div>
 
-                          <div style={{ fontSize: "13.5px", fontWeight: "700", color: "#2563eb", marginTop: "3px" }}>
-                            {routeTitle}
-                          </div>
-
-                          <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "2px" }}>
-                            Departure: <strong>{bus.departureTime || "08:00 AM"}</strong> • {stopsCount > 0 ? `${stopsCount} Stops` : "Direct Route"} • Capacity: <strong>{bus.totalSeats || 45} seats</strong>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "3px 10px", borderRadius: "12px", border: "1px solid #c7d2fe" }}>
+                              {shiftBadge}
+                            </span>
+                            <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: "600" }}>
+                              {bus.totalSeats || 32} seats
+                            </span>
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleSelectTrip(bus)}
-                          disabled={isSelected}
-                          style={{
-                            padding: "8px 16px",
-                            borderRadius: "10px",
-                            background: isSelected ? "#e2e8f0" : "#16a34a",
-                            color: isSelected ? "#64748b" : "#ffffff",
-                            border: "none",
-                            fontWeight: "800",
-                            fontSize: "12.5px",
-                            cursor: isSelected ? "default" : "pointer",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isSelected ? "Selected ✓" : "Select Trip ➔"}
-                        </button>
+                        {/* Level 2: Trips Assigned Under this Bus Slot */}
+                        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                          <div style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>
+                            Trips Assigned to this Bus ({trips.length})
+                          </div>
+                          {trips.map((tr, tIdx) => {
+                            const isThisTripSelected = isBusActive && (
+                              (assignedBus?.selectedScheduleId && tr.scheduleId && assignedBus.selectedScheduleId === tr.scheduleId) ||
+                              (!assignedBus?.selectedScheduleId && assignedBus?.departureTime === tr.departureTime)
+                            );
+
+                            return (
+                              <div
+                                key={tr.id || tr.scheduleId || tIdx}
+                                style={{
+                                  padding: "10px 14px",
+                                  borderRadius: "10px",
+                                  border: isThisTripSelected ? "1.5px solid #2563eb" : "1px solid #e2e8f0",
+                                  background: isThisTripSelected ? "#eff6ff" : "#f8fafc",
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  flexWrap: "wrap",
+                                  gap: "10px",
+                                }}
+                              >
+                                <div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: "12.5px", fontWeight: "900", color: "#2563eb", background: "#ffffff", padding: "2px 8px", borderRadius: "6px", border: "1px solid #bfdbfe" }}>
+                                      ⏰ {tr.departureTime}
+                                    </span>
+                                    <span style={{ fontSize: "13.5px", fontWeight: "800", color: "#0f172a" }}>
+                                      {tr.routeName}
+                                    </span>
+                                    {isThisTripSelected && (
+                                      <span style={{ fontSize: "10px", fontWeight: "800", color: "#2563eb", background: "#dbeafe", padding: "2px 6px", borderRadius: "6px" }}>
+                                        Selected Departure
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", fontWeight: "600" }}>
+                                    Arrival: <strong>{tr.arrivalTime}</strong> • Stops: <strong>{tr.stops?.length || 0}</strong> • Fare: <strong style={{ color: "#059669" }}>₹{tr.price || 35}</strong>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectTrip(bus, tr)}
+                                  disabled={isThisTripSelected}
+                                  style={{
+                                    padding: "6px 14px",
+                                    borderRadius: "8px",
+                                    background: isThisTripSelected ? "#cbd5e1" : "linear-gradient(135deg, #16a34a, #059669)",
+                                    color: isThisTripSelected ? "#475569" : "#ffffff",
+                                    border: "none",
+                                    fontWeight: "800",
+                                    fontSize: "12px",
+                                    cursor: isThisTripSelected ? "default" : "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {isThisTripSelected ? "Driving Now ✓" : "Drive This Trip ➔"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })

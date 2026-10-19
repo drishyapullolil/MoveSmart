@@ -4,36 +4,9 @@ import axios from "axios";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import { processRazorpayPayment } from "../utils/razorpay";
+import { getStoredUser, getStoredToken } from "../utils/session";
 
 const API_BASE = "/api";
-
-const getStoredUser = () => {
-  try {
-    const s = localStorage.getItem("user") || sessionStorage.getItem("user");
-    return s ? JSON.parse(s) : null;
-  } catch (e) {
-    return null;
-  }
-};
-
-const getStoredToken = () => {
-  const token =
-    localStorage.getItem("authToken") ||
-    sessionStorage.getItem("authToken") ||
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("token");
-
-  if (
-    !token ||
-    token === "null" ||
-    token === "undefined" ||
-    typeof token !== "string" ||
-    token.trim() === ""
-  ) {
-    return null;
-  }
-  return token.trim();
-};
 
 export default function Wallet() {
   const navigate = useNavigate();

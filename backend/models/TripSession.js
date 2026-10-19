@@ -34,6 +34,29 @@ const tripSessionSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    isReplacementDriver: {
+      type: Boolean,
+      default: false,
+    },
+    shift: {
+      type: String,
+      enum: ["Morning", "Evening", "Night"],
+      default: "Morning",
+    },
+    replacementDutyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DriverReplacement",
+      default: null,
+    },
+    originalDriverId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    originalDriverName: {
+      type: String,
+      default: "",
+    },
     routeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Route",

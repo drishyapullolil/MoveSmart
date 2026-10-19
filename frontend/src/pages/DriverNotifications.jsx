@@ -46,12 +46,12 @@ const NOTIF_TRANSLATIONS = {
     tapToRead: "Tap to mark as read",
 
     // Notification Titles
-    leaveApprovedTitle: "Leave Application Approved ✅",
-    leaveRejectedTitle: "Leave Application Rejected ❌",
-    scheduleAssignedTitle: "New Departure Schedule Assigned ⏰",
-    busReassignedTitle: "Fleet Vehicle Reassigned 🚌",
-    delayAlertTitle: "Traffic Delay Buffer Added ⚠️",
-    announcementTitle: "Admin System Announcement 📢",
+    leaveApprovedTitle: "Leave Application Approved",
+    leaveRejectedTitle: "Leave Application Rejected",
+    scheduleAssignedTitle: "New Departure Schedule Assigned",
+    busReassignedTitle: "Fleet Vehicle Reassigned",
+    delayAlertTitle: "Traffic Delay Buffer Added",
+    announcementTitle: "Admin System Announcement",
 
     // Time Ago
     justNow: "Just now",
@@ -69,25 +69,25 @@ const NOTIF_TRANSLATIONS = {
     pageTitle: "അറിയിപ്പുകളും മുന്നറിയിപ്പുകളും",
     pageSubtitle: "നിങ്ങളുടെ റൂട്ട്, ലീവ്, ഷെഡ്യൂൾ വിവരങ്ങൾ ഇവിടുത്തെ ബോർഡിൽ കാണാം",
     unreadCountBadge: "വായിക്കാത്തത്",
-    markAllRead: "✓ എല്ലാം വായിച്ചതായി അടയാളപ്പെടുത്തുക",
+    markAllRead: "എല്ലാം വായിച്ചതായി അടയാളപ്പെടുത്തുക",
     refreshBtn: "വീണ്ടും കാണുക (Refresh)",
     emptyTitle: "അറിയിപ്പുകൾ ഒന്നും ഇല്ല",
     emptySubtitle: "നിങ്ങൾക്ക് പുതിയ അറിയിപ്പുകളോ മാറ്റിനിശ്ചയിക്കലുകളോ ഇല്ല.",
     loadingMsg: "അറിയിപ്പുകൾ ലോഡ് ചെയ്യുന്നു...",
     errorMsg: "അറിയിപ്പുകൾ കണ്ടെത്താനായില്ല",
     retryBtn: "വീണ്ടും ശ്രമിക്കുക",
-    backToDashboard: "← ഡാഷ്ബോർഡിലേക്ക് മടങ്ങുക",
+    backToDashboard: "ഡാഷ്ബോർഡിലേക്ക് മടങ്ങുക",
     readStatus: "വായിച്ചത്",
     unreadStatus: "പുതിയത്",
     tapToRead: "വായിച്ചതായി മാറ്റാൻ ടാപ്പ് ചെയ്യുക",
 
     // Notification Titles
-    leaveApprovedTitle: "ലീവ് അപേക്ഷ അഡ്മിൻ അംഗീകരിച്ചു ✅",
-    leaveRejectedTitle: "ലീവ് അപേക്ഷ നിരസിക്കപ്പെട്ടു ❌",
-    scheduleAssignedTitle: "പുതിയ യാത്ര ഷെഡ്യൂൾ നൽകിയിട്ടുണ്ട് ⏰",
-    busReassignedTitle: "ബസ്സ് വാഹനം മാറ്റി നൽകിയിട്ടുണ്ട് 🚌",
-    delayAlertTitle: "ട്രാഫിക് തടസ്സ മുന്നറിയിപ്പ് ⚠️",
-    announcementTitle: "അഡ്മിൻ പൊതു അറിയിപ്പ് 📢",
+    leaveApprovedTitle: "ലീവ് അപേക്ഷ അഡ്മിൻ അംഗീകരിച്ചു",
+    leaveRejectedTitle: "ലീവ് അപേക്ഷ നിരസിക്കപ്പെട്ടു",
+    scheduleAssignedTitle: "പുതിയ യാത്ര ഷെഡ്യൂൾ നൽകിയിട്ടുണ്ട്",
+    busReassignedTitle: "ബസ്സ് വാഹനം മാറ്റി നൽകിയിട്ടുണ്ട്",
+    delayAlertTitle: "ട്രാഫിക് തടസ്സ മുന്നറിയിപ്പ്",
+    announcementTitle: "അഡ്മിൻ പൊതു അറിയിപ്പ്",
 
     // Time Ago
     justNow: "ഇപ്പോൾ",
@@ -206,10 +206,10 @@ export default function DriverNotifications({ isEmbedded = false }) {
                 title: isApproved ? t("leaveApprovedTitle") : t("leaveRejectedTitle"),
                 message: isApproved
                   ? (lang === "ml"
-                      ? `നിങ്ങളുടെ ${formattedDate} ലെ ലീവ് അപേക്ഷ അഡ്മിൻ അംഗീകരിച്ചു ✅`
+                      ? `നിങ്ങളുടെ ${formattedDate} ലെ ലീവ് അപേക്ഷ അഡ്മിൻ അംഗീകരിച്ചു.`
                       : `Your leave request for ${formattedDate} has been APPROVED by MoveSmart Admin.`)
                   : (lang === "ml"
-                      ? `നിങ്ങളുടെ ${formattedDate} ലെ ലീവ് അപേക്ഷ അഡ്മിൻ നിരസിച്ചു ❌`
+                      ? `നിങ്ങളുടെ ${formattedDate} ലെ ലീവ് അപേക്ഷ അഡ്മിൻ നിരസിച്ചു.`
                       : `Your leave request for ${formattedDate} was REJECTED by MoveSmart Admin.`),
                 createdAt: lv.updatedAt || lv.createdAt || Date.now() - 3600000,
                 isRead: readIds.includes(notifId),

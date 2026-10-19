@@ -372,8 +372,8 @@ function Profile() {
 
         {/* 👤 Hero Profile Section Header */}
         <section style={styles.heroProfileCard}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "24px", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "18px", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
               {/* Circular Avatar */}
               <div style={styles.avatarWrapper}>
                 {user.avatarUrl ? (
@@ -388,8 +388,8 @@ function Profile() {
 
               {/* User Identity Details */}
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <h1 style={{ fontSize: "26px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <h1 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
                     {user.name}
                   </h1>
                   <span style={{
@@ -402,17 +402,17 @@ function Profile() {
                   </span>
                 </div>
 
-                <div style={{ display: "flex", gap: "18px", marginTop: "8px", flexWrap: "wrap", color: "#64748b", fontSize: "14px", fontWeight: "500" }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <div style={{ display: "flex", gap: "14px", marginTop: "6px", flexWrap: "wrap", color: "#64748b", fontSize: "13px", fontWeight: "500" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
                       <polyline points="22,6 12,13 2,6" />
                     </svg>
                     {user.email}
                   </span>
 
-                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <span style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
                     </svg>
                     {user.phone || "+91 98765 43210"}
@@ -422,8 +422,8 @@ function Profile() {
             </div>
 
             {/* Edit Profile Action Button */}
-            <button className="action-btn-primary" onClick={handleOpenEditModal}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <button className="action-btn-primary" onClick={handleOpenEditModal} style={{ fontSize: "13px", padding: "8px 16px" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
               </svg>
@@ -870,54 +870,6 @@ function Profile() {
         )}
       </main>
 
-      {/* Footer Branding */}
-      <footer style={{ backgroundColor: "#0f172a", color: "#94a3b8", padding: "40px 5% 24px", borderTop: "3px solid #38a169", marginTop: "auto" }}>
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "30px" }}>
-          <div>
-            <div className="rta-logo" style={{ marginBottom: "12px", display: "inline-flex", alignItems: "center", gap: "12px" }}>
-              <img
-                src="/logo.png"
-                alt="MoveSmart Logo"
-                style={{
-                  height: "44px",
-                  width: "auto",
-                  objectFit: "contain",
-                  background: "#ffffff",
-                  padding: "4px 10px",
-                  borderRadius: "10px"
-                }}
-              />
-              <span style={{ fontSize: "20px", fontWeight: "800", color: "#ffffff" }}>
-                MoveSmart Kerala
-              </span>
-            </div>
-            <p style={{ fontSize: "13px", maxWidth: "340px", lineHeight: "1.6", color: "#94a3b8", margin: 0 }}>
-              Smart Private Bus Fleet Management &amp; Passenger Portal for Kerala. Real-time bus tracking, RFID pass management, and digital ticketing.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "40px" }}>
-            <div>
-              <h4 style={{ color: "#ffffff", marginBottom: "12px", fontSize: "14px", fontWeight: "700" }}>Transit Services</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><Link to="/dashboard" style={{ color: "#94a3b8", textDecoration: "none" }}>Private Bus City Routes</Link></li>
-                <li><Link to="/dashboard/card-application" style={{ color: "#94a3b8", textDecoration: "none" }}>MoveSmart RFID Pass</Link></li>
-                <li><Link to="/dashboard" style={{ color: "#94a3b8", textDecoration: "none" }}>Intercity Express Routes</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 style={{ color: "#ffffff", marginBottom: "12px", fontSize: "14px", fontWeight: "700" }}>Support</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px" }}>
-                <li><Link to="/profile" style={{ color: "#94a3b8", textDecoration: "none" }}>Help Center</Link></li>
-                <li><span style={{ color: "#94a3b8" }}>Kerala Transit Helpline: 1800-425-4747</span></li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "24px", paddingTop: "16px", textAlign: "center", fontSize: "12px", color: "#64748b" }}>
-          © {new Date().getFullYear()} MoveSmart Kerala. Smart Urban Transit System. All rights reserved.
-        </div>
-      </footer>
-
       {/* ✏️ EDIT PROFILE MODAL */}
       {showEditModal && (
         <div style={styles.modalOverlay} onClick={() => setShowEditModal(false)}>
@@ -1086,14 +1038,14 @@ const styles = {
   topNavbar: {
     background: "#ffffff",
     borderBottom: "1px solid #e2e8f0",
-    padding: "14px 24px",
+    padding: "10px 20px",
     position: "sticky",
     top: 0,
     zIndex: 100,
-    boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+    boxShadow: "0 1px 4px rgba(0,0,0,0.02)",
   },
   navContainer: {
-    maxWidth: "1200px",
+    maxWidth: "1040px",
     margin: "0 auto",
     display: "flex",
     justifyContent: "space-between",
@@ -1103,44 +1055,44 @@ const styles = {
     color: "#475569",
     textDecoration: "none",
     fontWeight: "600",
-    fontSize: "14px",
+    fontSize: "13px",
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "5px",
   },
   mainContainer: {
-    maxWidth: "1100px",
+    maxWidth: "1040px",
     width: "100%",
-    margin: "32px auto 40px auto",
-    padding: "0 20px",
+    margin: "16px auto 32px auto",
+    padding: "0 16px",
     flex: 1,
   },
   toastBanner: {
     background: "linear-gradient(135deg, #38a169, #8b5cf6)",
     color: "#ffffff",
-    padding: "12px 20px",
-    borderRadius: "12px",
+    padding: "10px 16px",
+    borderRadius: "10px",
     fontWeight: "700",
-    fontSize: "14px",
-    marginBottom: "20px",
-    boxShadow: "0 4px 14px rgba(56, 161, 105, 0.25)",
+    fontSize: "13px",
+    marginBottom: "14px",
+    boxShadow: "0 2px 10px rgba(56, 161, 105, 0.2)",
     textAlign: "center",
   },
   heroProfileCard: {
     background: "linear-gradient(135deg, #ffffff 60%, #f3e8ff 100%)",
-    borderRadius: "20px",
-    padding: "32px",
+    borderRadius: "14px",
+    padding: "18px 22px",
     border: "1px solid #e2e8f0",
-    boxShadow: "0 10px 30px rgba(139, 92, 246, 0.08)",
-    marginBottom: "28px",
+    boxShadow: "0 4px 16px rgba(139, 92, 246, 0.05)",
+    marginBottom: "18px",
   },
   avatarWrapper: {
     position: "relative",
-    width: "76px",
-    height: "76px",
+    width: "56px",
+    height: "56px",
     borderRadius: "50%",
     background: "linear-gradient(135deg, #38a169, #8b5cf6)",
-    padding: "3px",
+    padding: "2px",
   },
   avatarImage: {
     width: "100%",
@@ -1155,50 +1107,50 @@ const styles = {
     background: "#ffffff",
     color: "#38a169",
     fontWeight: "800",
-    fontSize: "26px",
+    fontSize: "20px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
   },
   onlineBadge: {
-    width: "14px",
-    height: "14px",
+    width: "12px",
+    height: "12px",
     borderRadius: "50%",
     background: "#22c55e",
     border: "2px solid #ffffff",
     position: "absolute",
-    bottom: "2px",
-    right: "2px",
+    bottom: "1px",
+    right: "1px",
   },
   roleBadge: {
-    padding: "4px 12px",
-    borderRadius: "16px",
-    fontSize: "12px",
+    padding: "3px 10px",
+    borderRadius: "12px",
+    fontSize: "11px",
     fontWeight: "800",
     border: "1px solid",
   },
   tabsContainer: {
     display: "flex",
-    gap: "10px",
-    marginBottom: "24px",
+    gap: "8px",
+    marginBottom: "18px",
     borderBottom: "1px solid #e2e8f0",
-    paddingBottom: "12px",
+    paddingBottom: "8px",
   },
   card: {
     background: "#ffffff",
-    borderRadius: "16px",
-    padding: "24px",
+    borderRadius: "14px",
+    padding: "18px 20px",
     border: "1px solid #e2e8f0",
-    boxShadow: "0 4px 16px rgba(0,0,0,0.03)",
+    boxShadow: "0 2px 10px rgba(0,0,0,0.02)",
   },
   cardHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "20px",
+    marginBottom: "14px",
   },
   cardTitle: {
-    fontSize: "18px",
+    fontSize: "16px",
     fontWeight: "800",
     color: "#0f172a",
     margin: 0,
@@ -1206,58 +1158,58 @@ const styles = {
   infoGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "20px",
+    gap: "14px",
   },
   infoBox: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
-    padding: "14px",
-    borderRadius: "12px",
+    gap: "3px",
+    padding: "11px 14px",
+    borderRadius: "10px",
     background: "#f8fafc",
     border: "1px solid #f1f5f9",
   },
   infoLabel: {
-    fontSize: "12px",
+    fontSize: "11px",
     fontWeight: "700",
     color: "#64748b",
     textTransform: "uppercase",
     letterSpacing: "0.5px",
   },
   infoValue: {
-    fontSize: "14.5px",
+    fontSize: "13.5px",
     fontWeight: "700",
     color: "#0f172a",
   },
   rfidCard: {
     background: "linear-gradient(135deg, #38a169, #8b5cf6)",
     color: "#ffffff",
-    borderRadius: "18px",
-    padding: "24px",
-    boxShadow: "0 10px 25px rgba(56, 161, 105, 0.25)",
+    borderRadius: "14px",
+    padding: "18px",
+    boxShadow: "0 6px 18px rgba(56, 161, 105, 0.2)",
   },
   activityItemCard: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "16px 20px",
-    borderRadius: "14px",
+    padding: "12px 16px",
+    borderRadius: "10px",
     background: "#ffffff",
     border: "1px solid #e2e8f0",
   },
   walletCard: {
     background: "linear-gradient(135deg, #38a169, #2f855a)",
     color: "#ffffff",
-    borderRadius: "18px",
-    padding: "24px",
-    boxShadow: "0 10px 25px rgba(56, 161, 105, 0.25)",
+    borderRadius: "14px",
+    padding: "18px",
+    boxShadow: "0 6px 18px rgba(56, 161, 105, 0.2)",
   },
   settingRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "12px 14px",
-    borderRadius: "12px",
+    padding: "10px 12px",
+    borderRadius: "10px",
     background: "#f8fafc",
     border: "1px solid #f1f5f9",
   },
@@ -1270,29 +1222,29 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    padding: "20px",
+    padding: "16px",
   },
   modalCard: {
     background: "#ffffff",
-    borderRadius: "20px",
-    padding: "28px",
-    maxWidth: "480px",
+    borderRadius: "16px",
+    padding: "22px",
+    maxWidth: "460px",
     width: "100%",
-    boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+    boxShadow: "0 16px 36px rgba(0,0,0,0.18)",
   },
   formLabel: {
-    fontSize: "12px",
+    fontSize: "11.5px",
     fontWeight: "700",
     color: "#475569",
-    marginBottom: "6px",
+    marginBottom: "4px",
     display: "block",
   },
   formInput: {
     width: "100%",
-    padding: "10px 14px",
-    borderRadius: "10px",
+    padding: "8px 12px",
+    borderRadius: "8px",
     border: "1px solid #cbd5e1",
-    fontSize: "14px",
+    fontSize: "13px",
     outline: "none",
     background: "#ffffff",
     color: "#0f172a",

@@ -10,6 +10,7 @@ import DriverSafetyMonitoring from "../components/admin/DriverSafetyMonitoring";
 import DriverBiometricsManager from "../components/admin/DriverBiometricsManager";
 import AdminTripHistory from "../components/admin/AdminTripHistory";
 import AdminBusGallery from "../components/admin/AdminBusGallery";
+import AdminShiftRoster from "../components/admin/AdminShiftRoster";
 import LiveBusMap from "../components/common/LiveBusMap";
 import { addMinutesToTime, formatMinutesToDuration, calculateCumulativeOffsets } from "../utils/timeUtils";
 import {
@@ -59,7 +60,8 @@ import {
   UserX,
   EyeOff,
   Package,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Clock
 } from "lucide-react";
 
 export default function Admin({ defaultTab = "overview" }) {
@@ -70,11 +72,17 @@ export default function Admin({ defaultTab = "overview" }) {
     if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
       return "busRoutes";
     }
+    if (location.pathname === "/admin/buses" || location.pathname === "/admin/bus-fleet") {
+      return "busFleet";
+    }
     if (location.pathname === "/admin/lost-found") {
       return "lostFound";
     }
     if (location.pathname === "/admin/bus-gallery") {
       return "busGallery";
+    }
+    if (location.pathname === "/admin/shift-roster") {
+      return "shiftRoster";
     }
     return defaultTab;
   });
@@ -83,8 +91,14 @@ export default function Admin({ defaultTab = "overview" }) {
     if (location.pathname === "/admin/bus-routes" || location.pathname === "/admin/add-bus-route") {
       setActiveTab("busRoutes");
     }
+    if (location.pathname === "/admin/buses" || location.pathname === "/admin/bus-fleet") {
+      setActiveTab("busFleet");
+    }
     if (location.pathname === "/admin/bus-gallery") {
       setActiveTab("busGallery");
+    }
+    if (location.pathname === "/admin/shift-roster") {
+      setActiveTab("shiftRoster");
     }
   }, [location.pathname]);
 
@@ -154,12 +168,25 @@ export default function Admin({ defaultTab = "overview" }) {
   const [rejectReason, setRejectReason] = useState("");
   const [correctionNote, setCorrectionNote] = useState("");
 
-  // Driver Leaves, Verifications & Bus Requests States
+  // Driver Leaves, Replacements, Verifications & Bus Requests States
   const [adminLeaves, setAdminLeaves] = useState([]);
   const [leaveFilterStatus, setLeaveFilterStatus] = useState("All");
   const [selectedLeaveModal, setSelectedLeaveModal] = useState(null);
   const [leaveModalStatus, setLeaveModalStatus] = useState("Approved");
   const [leaveModalComment, setLeaveModalComment] = useState("");
+  const [leavesSubTab, setLeavesSubTab] = useState("leaves"); // "leaves" | "replacements"
+
+  // Replacement Driver States
+  const [adminReplacements, setAdminReplacements] = useState([]);
+  const [loadingReplacements, setLoadingReplacements] = useState(false);
+  const [replacementFilterStatus, setReplacementFilterStatus] = useState("All");
+  const [selectedReplacementModal, setSelectedReplacementModal] = useState(null);
+  const [eligibleDrivers, setEligibleDrivers] = useState([]);
+  const [loadingEligibleDrivers, setLoadingEligibleDrivers] = useState(false);
+  const [selectedReplacementDriverId, setSelectedReplacementDriverId] = useState("");
+  const [replacementAdminNotes, setReplacementAdminNotes] = useState("");
+  const [submittingReplacement, setSubmittingReplacement] = useState(false);
+  const [replacementAssignError, setReplacementAssignError] = useState("");
 
   const [adminDrivers, setAdminDrivers] = useState([]);
   const [driversLoading, setDriversLoading] = useState(false);
@@ -485,6 +512,21 @@ export default function Admin({ defaultTab = "overview" }) {
     }
   }, []);
 
+  // Fetch Driver Replacements
+  const fetchAdminReplacements = useCallback(async () => {
+    setLoadingReplacements(true);
+    try {
+      const res = await axios.get("/api/admin/replacements/pending", {
+        headers: { Authorization: `Bearer ${getStoredToken()}` }
+      });
+      setAdminReplacements(res.data.replacements || []);
+    } catch (err) {
+      console.error("Error fetching driver replacements:", err);
+    } finally {
+      setLoadingReplacements(false);
+    }
+  }, []);
+
   // Fetch Driver Leaves
   const fetchAdminLeaves = useCallback(async () => {
     try {
@@ -528,12 +570,30 @@ export default function Admin({ defaultTab = "overview" }) {
     }
   }, []);
 
+  // Fetch Bus Fleet count
+  const [busesCount, setBusesCount] = useState(10);
+
+  const fetchAdminBuses = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/admin/buses", {
+        headers: { Authorization: `Bearer ${getStoredToken()}` }
+      });
+      if (res.data?.success) {
+        setBusesCount(res.data.buses?.length || 0);
+      }
+    } catch (err) {
+      console.error("Error fetching admin buses count:", err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchAdminApplications();
     fetchAdminRfidData();
     fetchAdminLeaves();
+    fetchAdminReplacements();
     fetchAdminDrivers();
     fetchAdminBusRequests();
+    fetchAdminBuses();
     fetchSafetyAlertsCount();
     fetchActiveSessions();
     fetchLiveAlerts();
@@ -545,7 +605,7 @@ export default function Admin({ defaultTab = "overview" }) {
     }, 6000);
 
     return () => clearInterval(interval);
-  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminDrivers, fetchAdminBusRequests, fetchSafetyAlertsCount, fetchActiveSessions, fetchLiveAlerts]);
+  }, [fetchAdminApplications, fetchAdminRfidData, fetchAdminLeaves, fetchAdminReplacements, fetchAdminDrivers, fetchAdminBusRequests, fetchAdminBuses, fetchSafetyAlertsCount, fetchActiveSessions, fetchLiveAlerts]);
 
   // Re-fetch data on active tab switch to ensure real-time accuracy
   useEffect(() => {
@@ -553,13 +613,14 @@ export default function Admin({ defaultTab = "overview" }) {
       fetchAdminDrivers();
     } else if (activeTab === "leaves") {
       fetchAdminLeaves();
+      fetchAdminReplacements();
     } else if (activeTab === "busRequests") {
       fetchAdminBusRequests();
     } else if (activeTab === "applications" || activeTab === "cards") {
       fetchAdminApplications();
       fetchAdminRfidData();
     }
-  }, [activeTab, fetchAdminDrivers, fetchAdminLeaves, fetchAdminBusRequests, fetchAdminApplications, fetchAdminRfidData]);
+  }, [activeTab, fetchAdminDrivers, fetchAdminLeaves, fetchAdminReplacements, fetchAdminBusRequests, fetchAdminApplications, fetchAdminRfidData]);
 
   // Real-Time Socket.IO Video Frames & Safety Alert Ingestion for Global Admin Dashboard
   useEffect(() => {
@@ -945,18 +1006,71 @@ export default function Admin({ defaultTab = "overview" }) {
     e.preventDefault();
     if (!selectedLeaveModal) return;
     try {
-      await axios.put(`/api/admin/leave/${selectedLeaveModal._id}/status`, {
+      const res = await axios.put(`/api/admin/leave/${selectedLeaveModal._id}/status`, {
         status: leaveModalStatus,
         adminComment: leaveModalComment || (leaveModalStatus === "Approved" ? "Leave application approved by Admin." : "Leave application rejected."),
       }, {
         headers: { Authorization: `Bearer ${getStoredToken()}` }
       });
-      showToast(`Leave application ${leaveModalStatus} successfully!`);
+      showToast(res.data?.message || `Leave application ${leaveModalStatus} successfully!`);
       setSelectedLeaveModal(null);
       setLeaveModalComment("");
       fetchAdminLeaves();
+      fetchAdminReplacements();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to update leave status", "error");
+    }
+  };
+
+  // Handler: Open Assign Replacement Driver Modal
+  const handleOpenAssignModal = async (replacement) => {
+    setSelectedReplacementModal(replacement);
+    setSelectedReplacementDriverId(replacement.replacementDriverId?._id || replacement.replacementDriverId || "");
+    setReplacementAdminNotes(replacement.adminNotes || "");
+    setReplacementAssignError("");
+    setLoadingEligibleDrivers(true);
+    try {
+      const res = await axios.get(`/api/admin/replacements/eligible-drivers?dutyId=${replacement._id}`, {
+        headers: { Authorization: `Bearer ${getStoredToken()}` }
+      });
+      setEligibleDrivers(res.data.eligibleDrivers || []);
+    } catch (err) {
+      console.error("Error fetching eligible drivers:", err);
+      setEligibleDrivers([]);
+      setReplacementAssignError(err.response?.data?.message || "Failed to load eligible drivers.");
+    } finally {
+      setLoadingEligibleDrivers(false);
+    }
+  };
+
+  // Handler: Submit Replacement Assignment
+  const handleSubmitAssignReplacement = async (e) => {
+    e.preventDefault();
+    if (!selectedReplacementModal || !selectedReplacementDriverId) {
+      setReplacementAssignError("Please select an eligible replacement driver from the list.");
+      return;
+    }
+    setSubmittingReplacement(true);
+    setReplacementAssignError("");
+    try {
+      const res = await axios.post("/api/admin/replacements/assign", {
+        dutyId: selectedReplacementModal._id,
+        replacementDriverId: selectedReplacementDriverId,
+        adminNotes: replacementAdminNotes || "Assigned by fleet admin."
+      }, {
+        headers: { Authorization: `Bearer ${getStoredToken()}` }
+      });
+      showToast(res.data?.message || "Replacement driver assigned successfully! ✅");
+      setSelectedReplacementModal(null);
+      setSelectedReplacementDriverId("");
+      setReplacementAdminNotes("");
+      fetchAdminReplacements();
+      fetchAdminLeaves();
+    } catch (err) {
+      console.error("Error assigning replacement driver:", err);
+      setReplacementAssignError(err.response?.data?.message || "Failed to assign replacement driver.");
+    } finally {
+      setSubmittingReplacement(false);
     }
   };
 
@@ -1302,37 +1416,38 @@ export default function Admin({ defaultTab = "overview" }) {
 
       {/* TOP HEADER BAR */}
       <header style={{
-        height: "70px",
+        height: "52px",
         background: darkMode ? "#1e293b" : "#ffffff",
         borderBottom: `1px solid ${borderCol}`,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 24px",
+        padding: "0 16px",
         position: "sticky",
         top: 0,
         zIndex: 1000,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.03)"
+        boxShadow: "0 1px 4px rgba(0,0,0,0.02)"
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             style={{ background: "none", border: "none", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center" }}
+            title="Toggle Sidebar"
           >
-            <Menu size={20} />
+            <Menu size={18} />
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <div
               style={{
-                width: "44px",
-                height: "44px",
-                borderRadius: "12px",
+                width: "30px",
+                height: "30px",
+                borderRadius: "8px",
                 background: "#ffffff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                padding: "4px",
-                boxShadow: "0 4px 14px rgba(109, 40, 217, 0.15)",
+                padding: "2px",
+                boxShadow: "0 2px 8px rgba(109, 40, 217, 0.12)",
                 border: "1.5px solid rgba(139, 92, 246, 0.3)",
                 flexShrink: 0,
               }}
@@ -1340,24 +1455,24 @@ export default function Admin({ defaultTab = "overview" }) {
               <img src="/logo.png" alt="MoveSmart Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             </div>
             <div>
-              <strong style={{ fontSize: "18px", fontWeight: "900", letterSpacing: "-0.4px", color: textPrimary, display: "block", lineHeight: 1.1 }}>MoveSmart</strong>
-              <span style={{ fontSize: "11px", fontWeight: "800", color: "#8b5cf6", letterSpacing: "0.5px", textTransform: "uppercase", marginTop: "2px", display: "block" }}>Admin Console</span>
+              <strong style={{ fontSize: "15px", fontWeight: "900", letterSpacing: "-0.3px", color: textPrimary, display: "block", lineHeight: 1.1 }}>MoveSmart</strong>
+              <span style={{ fontSize: "9.5px", fontWeight: "800", color: "#8b5cf6", letterSpacing: "0.5px", textTransform: "uppercase", marginTop: "1px", display: "block" }}>Admin Console</span>
             </div>
           </div>
         </div>
 
         {/* Header Right Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
 
           {/* Notifications Bell */}
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setNotificationOpen(!notificationOpen)}
-              style={{ background: "none", border: `1px solid ${borderCol}`, width: "40px", height: "40px", borderRadius: "12px", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+              style={{ background: "none", border: `1px solid ${borderCol}`, width: "32px", height: "32px", borderRadius: "8px", cursor: "pointer", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
             >
-              <Bell size={18} />
+              <Bell size={15} />
               {totalNotificationCount > 0 && (
-                <span style={{ position: "absolute", top: "-4px", right: "-4px", background: "#ef4444", color: "#ffffff", fontSize: "10.5px", fontWeight: "900", width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ position: "absolute", top: "-3px", right: "-3px", background: "#ef4444", color: "#ffffff", fontSize: "9px", fontWeight: "900", width: "16px", height: "16px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {totalNotificationCount}
                 </span>
               )}
@@ -1365,21 +1480,21 @@ export default function Admin({ defaultTab = "overview" }) {
 
             {/* Notification Drawer */}
             {notificationOpen && (
-              <div style={{ position: "absolute", right: 0, top: "50px", width: "320px", background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", boxShadow: "0 12px 30px rgba(0,0,0,0.15)", padding: "16px", zIndex: 1001 }}>
-                <h4 style={{ fontSize: "14.5px", fontWeight: "900", margin: "0 0 12px 0", color: textPrimary, borderBottom: `1px solid ${borderCol}`, paddingBottom: "8px" }}>
+              <div style={{ position: "absolute", right: 0, top: "42px", width: "290px", background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "12px", boxShadow: "0 10px 25px rgba(0,0,0,0.15)", padding: "12px", zIndex: 1001 }}>
+                <h4 style={{ fontSize: "13px", fontWeight: "900", margin: "0 0 8px 0", color: textPrimary, borderBottom: `1px solid ${borderCol}`, paddingBottom: "6px" }}>
                   System Notifications
                 </h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "12.5px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "11.5px" }}>
                   {safetyAlertsCount > 0 && (
-                    <div onClick={() => { setActiveTab("driverSafety"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: "rgba(239, 68, 68, 0.15)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", color: "#dc2626" }}>
-                      <ShieldAlert size={14} style={{ color: "#ef4444" }} /> <strong>{safetyAlertsCount} Driver Safety Alerts</strong> active
+                    <div onClick={() => { setActiveTab("driverSafety"); setNotificationOpen(false); }} style={{ padding: "6px 10px", borderRadius: "8px", background: "rgba(239, 68, 68, 0.15)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", color: "#dc2626" }}>
+                      <ShieldAlert size={13} style={{ color: "#ef4444" }} /> <strong>{safetyAlertsCount} Safety Alerts</strong> active
                     </div>
                   )}
-                  <div onClick={() => { setActiveTab("applications"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <FileCheck size={14} style={{ color: "#0ea5e9" }} /> <strong>{pendingAppsCount} Card Applications</strong> pending
+                  <div onClick={() => { setActiveTab("applications"); setNotificationOpen(false); }} style={{ padding: "6px 10px", borderRadius: "8px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <FileCheck size={13} style={{ color: "#0ea5e9" }} /> <strong>{pendingAppsCount} Applications</strong> pending
                   </div>
-                  <div onClick={() => { setActiveTab("drivers"); setNotificationOpen(false); }} style={{ padding: "8px 12px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <UserCheck size={14} style={{ color: "#8b5cf6" }} /> <strong>{pendingDriversCount} Driver Licenses</strong> awaiting review
+                  <div onClick={() => { setActiveTab("drivers"); setNotificationOpen(false); }} style={{ padding: "6px 10px", borderRadius: "8px", background: darkMode ? "#334155" : "#f1f5f9", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <UserCheck size={13} style={{ color: "#8b5cf6" }} /> <strong>{pendingDriversCount} Driver Licenses</strong> pending
                   </div>
                 </div>
               </div>
@@ -1389,20 +1504,20 @@ export default function Admin({ defaultTab = "overview" }) {
           {/* Dark Mode Toggle */}
           <button
             onClick={() => setDarkMode(!darkMode)}
-            style={{ background: "none", border: `1px solid ${borderCol}`, padding: "8px 14px", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "700", color: textPrimary, display: "flex", alignItems: "center", gap: "6px" }}
+            style={{ background: "none", border: `1px solid ${borderCol}`, padding: "5px 10px", borderRadius: "8px", cursor: "pointer", fontSize: "11.5px", fontWeight: "700", color: textPrimary, display: "flex", alignItems: "center", gap: "5px" }}
           >
-            {darkMode ? <Sun size={14} /> : <Moon size={14} />} {darkMode ? "Light" : "Dark"}
+            {darkMode ? <Sun size={13} /> : <Moon size={13} />} {darkMode ? "Light" : "Dark"}
           </button>
 
           {/* Admin Profile & Logout */}
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", borderLeft: `1px solid ${borderCol}`, paddingLeft: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", borderLeft: `1px solid ${borderCol}`, paddingLeft: "12px" }}>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "13.5px", fontWeight: "800", color: textPrimary }}>{user?.fullName || user?.name || "System Admin"}</div>
-              <div style={{ fontSize: "11px", color: textSecondary }}>{user?.email || "admin@movesmart.com"}</div>
+              <div style={{ fontSize: "12px", fontWeight: "800", color: textPrimary }}>{user?.fullName || user?.name || "System Admin"}</div>
+              <div style={{ fontSize: "10px", color: textSecondary }}>{user?.email || "admin@movesmart.com"}</div>
             </div>
             <button
               onClick={() => { clearStoredSession(); setUser(null); navigate("/"); }}
-              style={{ background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", padding: "8px 14px", borderRadius: "10px", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}
+              style={{ background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", padding: "5px 10px", borderRadius: "8px", fontWeight: "800", fontSize: "11.5px", cursor: "pointer" }}
             >
               Logout
             </button>
@@ -1416,14 +1531,14 @@ export default function Admin({ defaultTab = "overview" }) {
 
         {/* LEFT SIDEBAR NAVIGATION */}
         <aside style={{
-          width: sidebarCollapsed ? "72px" : "260px",
-          transition: "all 0.25s ease",
+          width: sidebarCollapsed ? "56px" : "215px",
+          transition: "all 0.22s ease",
           background: darkMode ? "#1e293b" : "#ffffff",
           borderRight: `1px solid ${borderCol}`,
-          padding: "20px 12px",
+          padding: "10px 6px",
           display: "flex",
           flexDirection: "column",
-          gap: "6px",
+          gap: "2px",
           flexShrink: 0
         }}>
           {[
@@ -1432,7 +1547,9 @@ export default function Admin({ defaultTab = "overview" }) {
             { id: "liveTracking", label: "Live Fleet Tracking", Icon: Navigation, badge: liveFleetBuses.filter(b => b.isLive).length },
             { id: "driverBiometrics", label: "Driver Face Biometrics", Icon: Scan },
             { id: "driverSafety", label: "Driver Safety Monitoring", Icon: ShieldAlert, badge: safetyAlertsCount },
-            { id: "busRoutes", label: "Bus Routes & Schedules", Icon: Bus },
+            { id: "busRoutes", label: "Bus Routes & Schedules", Icon: RouteIcon },
+            { id: "busFleet", label: "Bus Fleet Management", Icon: Bus, badge: busesCount, badgeColor: "#10b981" },
+            { id: "shiftRoster", label: "3-Shift Driver Roster", Icon: Clock },
             { id: "applications", label: "Card Applications", Icon: FileCheck, badge: pendingAppsCount },
             { id: "passengers", label: "Passengers & Wallet", Icon: Users },
             { id: "drivers", label: "Driver Management", Icon: UserCheck, badge: pendingDriversCount },
@@ -1448,30 +1565,46 @@ export default function Admin({ defaultTab = "overview" }) {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                title={item.badge !== undefined && item.badge > 0 ? `${item.label} (${item.badge})` : item.label}
                 style={{
                   width: "100%",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: sidebarCollapsed ? "center" : "space-between",
-                  padding: "12px 14px",
-                  borderRadius: "14px",
+                  padding: "8px 10px",
+                  borderRadius: "10px",
                   border: "none",
                   background: isSel ? "linear-gradient(135deg, #2e1065, #6d28d9)" : "transparent",
                   color: isSel ? "#ffffff" : textSecondary,
-                  fontWeight: isSel ? "900" : "700",
-                  fontSize: "13.5px",
+                  fontWeight: isSel ? "800" : "600",
+                  fontSize: "12px",
                   cursor: "pointer",
-                  transition: "all 0.2s ease",
+                  transition: "all 0.15s ease",
                   textAlign: "left",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <ItemIcon size={18} style={{ color: isSel ? "#ffffff" : textSecondary }} />
-                  {!sidebarCollapsed && <span>{item.label}</span>}
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                  <ItemIcon size={15} style={{ color: isSel ? "#ffffff" : textSecondary, flexShrink: 0 }} />
+                  {!sidebarCollapsed && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>}
                 </div>
 
                 {!sidebarCollapsed && item.badge > 0 && (
-                  <span style={{ background: isSel ? "#4ade80" : "#ef4444", color: isSel ? "#1e1b4b" : "#ffffff", padding: "2px 8px", borderRadius: "999px", fontSize: "11px", fontWeight: "900" }}>
+                  <span
+                    style={{
+                      background: item.badgeColor
+                        ? (isSel ? "#ffffff" : item.badgeColor)
+                        : (isSel ? "#4ade80" : "#ef4444"),
+                      color: item.badgeColor
+                        ? (isSel ? (item.badgeColor === "#10b981" ? "#065f46" : "#1e1b4b") : "#ffffff")
+                        : (isSel ? "#1e1b4b" : "#ffffff"),
+                      padding: "1px 6px",
+                      borderRadius: "999px",
+                      fontSize: "10px",
+                      fontWeight: "900",
+                      flexShrink: 0,
+                      boxShadow: item.badgeColor && !isSel ? "0 2px 6px rgba(16, 185, 129, 0.35)" : "none",
+                    }}
+                  >
                     {item.badge}
                   </span>
                 )}
@@ -1481,99 +1614,99 @@ export default function Admin({ defaultTab = "overview" }) {
         </aside>
 
         {/* MAIN DASHBOARD CONTENT AREA */}
-        <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
+        <main style={{ flex: 1, minWidth: 0, padding: "14px 18px", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box" }}>
 
           {/* CRITICAL LIVE EMERGENCY SAFETY BANNER */}
           {activeEmergencyAlert && (
             <div style={{
               background: "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)",
               color: "#ffffff",
-              padding: "18px 24px",
-              borderRadius: "18px",
-              marginBottom: "24px",
+              padding: "14px 18px",
+              borderRadius: "14px",
+              marginBottom: "16px",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
               flexWrap: "wrap",
-              gap: "16px",
-              boxShadow: "0 10px 30px rgba(220, 38, 38, 0.4)",
-              border: "2px solid #ef4444",
+              gap: "12px",
+              boxShadow: "0 6px 20px rgba(220, 38, 38, 0.3)",
+              border: "1.5px solid #ef4444",
               animation: "pulse 2s infinite ease-in-out",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                 {/* Live Video Thumbnail if available */}
                 {(liveVideoFrames[activeEmergencyAlert.busNumber] || liveVideoFrames["latest"]) ? (
-                  <div style={{ width: "64px", height: "50px", borderRadius: "10px", overflow: "hidden", border: "2px solid #ffffff", position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: "52px", height: "40px", borderRadius: "8px", overflow: "hidden", border: "1.5px solid #ffffff", position: "relative", flexShrink: 0 }}>
                     <img
                       src={liveVideoFrames[activeEmergencyAlert.busNumber] || liveVideoFrames["latest"]}
                       alt="Driver Alert Camera"
                       style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }}
                     />
-                    <span style={{ position: "absolute", bottom: "2px", left: "2px", background: "rgba(0,0,0,0.8)", color: "#ef4444", fontSize: "8px", fontWeight: "900", padding: "1px 3px", borderRadius: "3px" }}>
+                    <span style={{ position: "absolute", bottom: "1px", left: "1px", background: "rgba(0,0,0,0.8)", color: "#ef4444", fontSize: "7.5px", fontWeight: "900", padding: "1px 2px", borderRadius: "2px" }}>
                       LIVE
                     </span>
                   </div>
                 ) : (
                   <div style={{
-                    width: "48px",
-                    height: "48px",
-                    borderRadius: "14px",
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
                     background: "rgba(255, 255, 255, 0.15)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: "24px",
+                    fontSize: "18px",
                     flexShrink: 0,
                   }}>
                     🚨
                   </div>
                 )}
                 <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                    <span style={{ background: "#ef4444", color: "#ffffff", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "900", letterSpacing: "0.5px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <span style={{ background: "#ef4444", color: "#ffffff", padding: "1px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: "900", letterSpacing: "0.4px" }}>
                       LIVE SAFETY ALERT
                     </span>
-                    <strong style={{ fontSize: "16.5px" }}>
+                    <strong style={{ fontSize: "14px" }}>
                       Bus {activeEmergencyAlert.busNumber || "KL-07-MS-1008"} — {activeEmergencyAlert.driverName || "Driver"}
                     </strong>
                   </div>
-                  <div style={{ fontSize: "13.5px", color: "#fecaca", marginTop: "4px", fontWeight: "600" }}>
+                  <div style={{ fontSize: "12px", color: "#fecaca", marginTop: "2px", fontWeight: "600" }}>
                     {activeEmergencyAlert.title || "AI Drowsiness Warning Detected"} • {activeEmergencyAlert.description}
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <button
                   onClick={() => {
                     setActiveTab("driverSafety");
                     setActiveEmergencyAlert(null);
                   }}
                   style={{
-                    padding: "10px 20px",
-                    borderRadius: "12px",
+                    padding: "6px 14px",
+                    borderRadius: "8px",
                     background: "#ffffff",
                     color: "#991b1b",
-                    fontSize: "13px",
-                    fontWeight: "900",
+                    fontSize: "12px",
+                    fontWeight: "800",
                     border: "none",
                     cursor: "pointer",
-                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.15)",
                     display: "flex",
                     alignItems: "center",
-                    gap: "8px",
+                    gap: "6px",
                   }}
                 >
-                  📹 Inspect Live Stream &amp; Driver →
+                  📹 Inspect Stream →
                 </button>
                 <button
                   onClick={() => setActiveEmergencyAlert(null)}
                   style={{
-                    padding: "10px 14px",
-                    borderRadius: "12px",
+                    padding: "6px 10px",
+                    borderRadius: "8px",
                     background: "rgba(255, 255, 255, 0.15)",
                     color: "#ffffff",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: "700",
                     border: "none",
                     cursor: "pointer",
@@ -1590,32 +1723,32 @@ export default function Admin({ defaultTab = "overview" }) {
             <div className="fade-in-section">
 
               {/* MoveSmart Offset Bus Timing & Schedule Banner */}
-              <div style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #311042 100%)", color: "#ffffff", padding: "20px 24px", borderRadius: "20px", marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", boxShadow: "0 8px 24px rgba(49, 16, 66, 0.3)", border: "1px solid rgba(255,255,255,0.1)" }}>
+              <div style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #311042 100%)", color: "#ffffff", padding: "14px 18px", borderRadius: "14px", marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", boxShadow: "0 6px 18px rgba(49, 16, 66, 0.2)", border: "1px solid rgba(255,255,255,0.1)" }}>
                 <div>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(74, 222, 128, 0.2)", color: "#4ade80", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", marginBottom: "8px" }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: "rgba(74, 222, 128, 0.2)", color: "#4ade80", padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "800", marginBottom: "4px" }}>
                     ⚡ MoveSmart Bus Timing Engine Active
                   </div>
-                  <h3 style={{ fontSize: "19px", fontWeight: "900", margin: 0, color: "#ffffff" }}>
+                  <h3 style={{ fontSize: "15px", fontWeight: "900", margin: 0, color: "#ffffff" }}>
                     📍 Bus Route Offset Timings &amp; Departure Schedule System
                   </h3>
-                  <p style={{ color: "#c4b5fd", fontSize: "13px", marginTop: "4px", margin: 0, maxWidth: "650px" }}>
-                    Define incremental travel minutes between stops. Offsets, total duration, and live stop arrival timetables auto-calculate for any departure schedule.
+                  <p style={{ color: "#c4b5fd", fontSize: "11.5px", marginTop: "2px", margin: 0, maxWidth: "600px" }}>
+                    Define incremental travel minutes between stops. Offsets and live arrival timetables auto-calculate for departures.
                   </p>
                 </div>
 
-                <div style={{ display: "flex", gap: "10px" }}>
+                <div style={{ display: "flex", gap: "8px" }}>
                   <button
                     onClick={() => setActiveTab("busRoutes")}
                     style={{
-                      padding: "12px 24px",
-                      borderRadius: "12px",
+                      padding: "8px 16px",
+                      borderRadius: "10px",
                       background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
                       color: "#ffffff",
-                      fontSize: "14px",
+                      fontSize: "12px",
                       fontWeight: "800",
                       border: "none",
                       cursor: "pointer",
-                      boxShadow: "0 4px 14px rgba(14, 165, 233, 0.4)",
+                      boxShadow: "0 3px 10px rgba(14, 165, 233, 0.3)",
                     }}
                   >
                     Manage Bus Routes &amp; Schedules →
@@ -1623,23 +1756,23 @@ export default function Admin({ defaultTab = "overview" }) {
                 </div>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
                 <div>
-                  <h2 style={{ fontSize: "24px", fontWeight: "900", margin: 0, color: textPrimary }}>System Executive Summary</h2>
-                  <p style={{ fontSize: "13.5px", color: textSecondary, margin: "4px 0 0 0" }}>Live analytics, operational state, and passenger transit grid statistics.</p>
+                  <h2 style={{ fontSize: "18px", fontWeight: "900", margin: 0, color: textPrimary }}>System Executive Summary</h2>
+                  <p style={{ fontSize: "12px", color: textSecondary, margin: "2px 0 0 0" }}>Live analytics, operational state, and passenger transit grid statistics.</p>
                 </div>
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <button onClick={() => handleExportCSV("cards")} style={{ padding: "8px 16px", borderRadius: "12px", background: "rgba(109, 40, 217, 0.1)", color: "#6d28d9", border: "1px solid rgba(109, 40, 217, 0.3)", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button onClick={() => handleExportCSV("cards")} style={{ padding: "5px 12px", borderRadius: "8px", background: "rgba(109, 40, 217, 0.1)", color: "#6d28d9", border: "1px solid rgba(109, 40, 217, 0.3)", fontWeight: "800", fontSize: "11.5px", cursor: "pointer" }}>
                     📥 Export Cards CSV
                   </button>
-                  <button onClick={() => handleExportCSV("applications")} style={{ padding: "8px 16px", borderRadius: "12px", background: "rgba(34, 197, 94, 0.1)", color: "#16a34a", border: "1px solid rgba(34, 197, 94, 0.3)", fontWeight: "800", fontSize: "12.5px", cursor: "pointer" }}>
+                  <button onClick={() => handleExportCSV("applications")} style={{ padding: "5px 12px", borderRadius: "8px", background: "rgba(34, 197, 94, 0.1)", color: "#16a34a", border: "1px solid rgba(34, 197, 94, 0.3)", fontWeight: "800", fontSize: "11.5px", cursor: "pointer" }}>
                     📥 Export Applications CSV
                   </button>
                 </div>
               </div>
 
               {/* 5 Summary Metric Cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px", marginBottom: "28px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px", marginBottom: "14px" }}>
                 {[
                   { title: "Total Passengers", val: dbCards.length + adminApplications.length, icon: "👥", color: "#6d28d9", bg: "rgba(109, 40, 217, 0.08)", trend: "+14% this month" },
                   { title: "Active RFID Cards", val: dbCards.filter(c => c.status === "Active").length, icon: "💳", color: "#16a34a", bg: "rgba(22, 163, 74, 0.08)", trend: "Operational" },
@@ -1647,15 +1780,15 @@ export default function Admin({ defaultTab = "overview" }) {
                   { title: "Verified Drivers", val: approvedDriversCount, icon: "🧑✈️", color: "#2563eb", bg: "rgba(37, 99, 235, 0.08)", trend: "On Duty" },
                   { title: "Active Safety Alerts", val: safetyAlertsCount, icon: "🚨", color: safetyAlertsCount > 0 ? "#dc2626" : "#16a34a", bg: safetyAlertsCount > 0 ? "rgba(220, 38, 38, 0.12)" : "rgba(22, 163, 74, 0.08)", trend: safetyAlertsCount > 0 ? "⚠️ Requires Attention" : "All Clear" },
                 ].map((card, idx) => (
-                  <div key={idx} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, boxShadow: "0 8px 20px rgba(0,0,0,0.03)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>{card.title}</span>
-                      <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: card.bg, color: card.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
+                  <div key={idx} style={{ background: bgCard, borderRadius: "10px", padding: "10px 12px", border: `1px solid ${borderCol}`, boxShadow: "0 1px 4px rgba(0,0,0,0.02)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                      <span style={{ fontSize: "10px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>{card.title}</span>
+                      <div style={{ width: "26px", height: "26px", borderRadius: "6px", background: card.bg, color: card.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px" }}>
                         {card.icon}
                       </div>
                     </div>
-                    <div style={{ fontSize: "28px", fontWeight: "900", color: textPrimary, letterSpacing: "-0.5px" }}>{card.val}</div>
-                    <div style={{ fontSize: "11.5px", fontWeight: "800", color: card.color, marginTop: "6px" }}>{card.trend}</div>
+                    <div style={{ fontSize: "18px", fontWeight: "900", color: textPrimary, letterSpacing: "-0.3px" }}>{card.val}</div>
+                    <div style={{ fontSize: "10px", fontWeight: "800", color: card.color, marginTop: "2px" }}>{card.trend}</div>
                   </div>
                 ))}
               </div>
@@ -1666,35 +1799,35 @@ export default function Admin({ defaultTab = "overview" }) {
               <div
                 style={{
                   background: bgCard,
-                  borderRadius: "24px",
+                  borderRadius: "12px",
                   border: `1px solid ${activeTripSessions.length > 0 ? "rgba(34, 197, 94, 0.35)" : borderCol}`,
-                  padding: "24px",
-                  marginBottom: "28px",
-                  boxShadow: activeTripSessions.length > 0 ? "0 8px 24px rgba(34, 197, 94, 0.08)" : "0 8px 20px rgba(0,0,0,0.03)",
+                  padding: "12px 14px",
+                  marginBottom: "14px",
+                  boxShadow: activeTripSessions.length > 0 ? "0 3px 12px rgba(34, 197, 94, 0.06)" : "0 1px 4px rgba(0,0,0,0.02)",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "14px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Zap size={20} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "12px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ width: "28px", height: "28px", borderRadius: "8px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Zap size={14} />
                     </div>
                     <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <h3 style={{ fontSize: "17.5px", fontWeight: "900", margin: 0, color: textPrimary }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <h3 style={{ fontSize: "14px", fontWeight: "900", margin: 0, color: textPrimary }}>
                           Active Bus Driving Sessions &amp; Live RFID Stream
                         </h3>
                         <span style={{
-                          padding: "2px 8px",
+                          padding: "1px 6px",
                           borderRadius: "999px",
-                          fontSize: "11px",
+                          fontSize: "10px",
                           fontWeight: "900",
                           background: activeTripSessions.length > 0 ? "rgba(34, 197, 94, 0.2)" : "rgba(100, 116, 139, 0.15)",
                           color: activeTripSessions.length > 0 ? "#16a34a" : textSecondary,
                         }}>
-                          {activeTripSessions.length > 0 ? `● ${activeTripSessions.length} BUSES ACTIVE` : "○ NO ACTIVE BUSES"}
+                          {activeTripSessions.length > 0 ? `● ${activeTripSessions.length} ACTIVE` : "○ NO ACTIVE BUSES"}
                         </span>
                       </div>
-                      <div style={{ fontSize: "12px", color: textSecondary, marginTop: "2px" }}>
+                      <div style={{ fontSize: "11px", color: textSecondary, marginTop: "1px" }}>
                         Real-time GPS progression, stop detection, and isolated RFID transaction logs.
                       </div>
                     </div>
@@ -1703,28 +1836,28 @@ export default function Admin({ defaultTab = "overview" }) {
                   <button
                     onClick={() => setActiveTab("tripHistory")}
                     style={{
-                      padding: "8px 16px",
-                      borderRadius: "10px",
+                      padding: "5px 12px",
+                      borderRadius: "8px",
                       background: "linear-gradient(135deg, #2e1065, #6d28d9)",
                       color: "#ffffff",
                       border: "none",
-                      fontSize: "12.5px",
+                      fontSize: "11.5px",
                       fontWeight: "800",
                       cursor: "pointer",
                       display: "flex",
                       alignItems: "center",
-                      gap: "6px",
+                      gap: "5px",
                     }}
                   >
-                    <RouteIcon size={14} /> Open Full Trip &amp; RFID Reports Hub →
+                    <RouteIcon size={12} /> Open Trip Reports Hub →
                   </button>
                 </div>
 
                 {activeTripSessions.length === 0 ? (
-                  <div style={{ padding: "24px", textAlign: "center", color: textSecondary, background: darkMode ? "#0f172a" : "#f8fafc", borderRadius: "16px", border: `1px dashed ${borderCol}` }}>
-                    <Bus size={28} style={{ margin: "0 auto 8px auto", display: "block", opacity: 0.4 }} />
-                    <strong style={{ fontSize: "13.5px", color: textPrimary }}>No buses are currently on an active trip</strong>
-                    <div style={{ fontSize: "12px", marginTop: "3px" }}>When a driver clicks START DRIVE, their session ID, GPS, and RFID taps appear here.</div>
+                  <div style={{ padding: "16px", textAlign: "center", color: textSecondary, background: darkMode ? "#0f172a" : "#f8fafc", borderRadius: "10px", border: `1px dashed ${borderCol}` }}>
+                    <Bus size={20} style={{ margin: "0 auto 6px auto", display: "block", opacity: 0.4 }} />
+                    <strong style={{ fontSize: "12.5px", color: textPrimary }}>No buses are currently on an active trip</strong>
+                    <div style={{ fontSize: "11px", marginTop: "2px" }}>When a driver clicks START DRIVE, their session ID, GPS, and RFID taps appear here.</div>
                   </div>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "14px" }}>
@@ -2611,7 +2744,14 @@ export default function Admin({ defaultTab = "overview" }) {
           {/* SECTION: BUS ROUTES, OFFSET TIMINGS & SCHEDULES */}
           {activeTab === "busRoutes" && (
             <div className="fade-in-section">
-              <AdminAddBusRoute isEmbedded={true} />
+              <AdminAddBusRoute isEmbedded={true} initialTab="routes" onNavigateTab={setActiveTab} onBusCountUpdate={setBusesCount} />
+            </div>
+          )}
+
+          {/* SECTION: BUS FLEET MANAGEMENT */}
+          {activeTab === "busFleet" && (
+            <div className="fade-in-section">
+              <AdminAddBusRoute isEmbedded={true} initialTab="buses" onNavigateTab={setActiveTab} onBusCountUpdate={setBusesCount} />
             </div>
           )}
 
@@ -2635,28 +2775,354 @@ export default function Admin({ defaultTab = "overview" }) {
             </div>
           )}
 
-          {/* SECTION 9: DRIVER LEAVES */}
+          {/* SECTION 9: DRIVER LEAVES & REPLACEMENT MANAGEMENT */}
           {activeTab === "leaves" && (
             <div className="fade-in-section">
-              <h2 style={{ fontSize: "22px", fontWeight: "900", margin: "0 0 16px 0", color: textPrimary }}>📅 Driver Leave Applications</h2>
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                {adminLeaves.map((l) => (
-                  <div key={l._id} style={{ background: bgCard, borderRadius: "20px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
-                    <div>
-                      <strong style={{ fontSize: "16px", color: textPrimary }}>{l.driverName} ({l.driverEmail})</strong>
-                      <div style={{ fontSize: "13px", color: "#7c3aed", fontWeight: "800", marginTop: "2px" }}>📅 Date: {l.leaveDate} • Type: {l.leaveType}</div>
-                      <div style={{ fontSize: "12.5px", color: textSecondary, marginTop: "2px" }}>Reason: "{l.reason}"</div>
-                    </div>
-                    {l.status === "Pending" && (
-                      <button onClick={() => setSelectedLeaveModal(l)} style={{ padding: "8px 16px", borderRadius: "10px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                        Review Leave Request →
-                      </button>
-                    )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h2 style={{ fontSize: "22px", fontWeight: "900", margin: 0, color: textPrimary, display: "flex", alignItems: "center", gap: "8px" }}>
+                    📅 Driver Leave &amp; Replacement Management
+                  </h2>
+                  <p style={{ fontSize: "13px", color: textSecondary, margin: "4px 0 0 0" }}>
+                    Manage driver leaves, automatically track affected bus shifts, and assign eligible replacement drivers without altering permanent fleet assignments.
+                  </p>
+                </div>
+                <button
+                  onClick={() => { fetchAdminLeaves(); fetchAdminReplacements(); }}
+                  style={{ padding: "10px 18px", borderRadius: "12px", background: "linear-gradient(135deg,#4c1d95,#7c3aed)", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <RefreshCw size={14} /> Refresh Data
+                </button>
+              </div>
+
+              {/* Summary Metric Counters */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", marginBottom: "22px" }}>
+                {[
+                  { label: "Total Leave Requests", val: adminLeaves.length, color: "#7c3aed" },
+                  { label: "Pending Leave Approvals", val: adminLeaves.filter(l => l.status === "Pending").length, color: "#ea580c", alert: adminLeaves.filter(l => l.status === "Pending").length > 0 },
+                  { label: "Replacement Required", val: adminReplacements.filter(r => r.status === "Replacement Required").length, color: "#dc2626", alert: adminReplacements.filter(r => r.status === "Replacement Required").length > 0 },
+                  { label: "Assigned Replacements", val: adminReplacements.filter(r => ["Assigned", "In Progress"].includes(r.status)).length, color: "#2563eb" },
+                  { label: "Completed Duties", val: adminReplacements.filter(r => r.status === "Completed").length, color: "#16a34a" },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: bgCard, border: `1px solid ${borderCol}`, borderRadius: "16px", padding: "14px", position: "relative" }}>
+                    {s.alert && <span style={{ position: "absolute", top: "8px", right: "8px", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444" }} />}
+                    <div style={{ fontSize: "24px", fontWeight: "900", color: s.color }}>{s.val}</div>
+                    <div style={{ fontSize: "12px", fontWeight: "700", color: textSecondary, marginTop: "2px" }}>{s.label}</div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+
+              {/* Sub-Tab Switcher */}
+              <div style={{ display: "flex", gap: "10px", marginBottom: "20px", borderBottom: `1px solid ${borderCol}`, paddingBottom: "12px", overflowX: "auto" }}>
+                <button
+                  type="button"
+                  onClick={() => setLeavesSubTab("leaves")}
+                  style={{
+                    padding: "9px 18px",
+                    borderRadius: "12px",
+                    border: `2px solid ${leavesSubTab === "leaves" ? "#7c3aed" : borderCol}`,
+                    background: leavesSubTab === "leaves" ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : bgCard,
+                    color: leavesSubTab === "leaves" ? "#fff" : textSecondary,
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  📋 Driver Leave Requests ({adminLeaves.length})
+                  {adminLeaves.filter(l => l.status === "Pending").length > 0 && (
+                    <span style={{ background: "#ef4444", color: "#fff", padding: "1px 7px", borderRadius: "10px", fontSize: "11px", fontWeight: "900" }}>
+                      {adminLeaves.filter(l => l.status === "Pending").length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLeavesSubTab("replacements")}
+                  style={{
+                    padding: "9px 18px",
+                    borderRadius: "12px",
+                    border: `2px solid ${leavesSubTab === "replacements" ? "#7c3aed" : borderCol}`,
+                    background: leavesSubTab === "replacements" ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : bgCard,
+                    color: leavesSubTab === "replacements" ? "#fff" : textSecondary,
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  🔄 Replacement Driver Duties ({adminReplacements.length})
+                  {adminReplacements.filter(r => r.status === "Replacement Required").length > 0 && (
+                    <span style={{ background: "#dc2626", color: "#fff", padding: "1px 7px", borderRadius: "10px", fontSize: "11px", fontWeight: "900" }}>
+                      {adminReplacements.filter(r => r.status === "Replacement Required").length} Need Driver
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* VIEW 1: DRIVER LEAVE APPLICATIONS */}
+              {leavesSubTab === "leaves" && (
+                <div>
+                  {/* Status Filters for Leaves */}
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+                    {["All", "Pending", "Approved", "Rejected"].map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setLeaveFilterStatus(st)}
+                        style={{
+                          padding: "6px 14px",
+                          borderRadius: "10px",
+                          border: `1.5px solid ${leaveFilterStatus === st ? "#7c3aed" : borderCol}`,
+                          background: leaveFilterStatus === st ? (darkMode ? "#4c1d95" : "#f5f3ff") : bgCard,
+                          color: leaveFilterStatus === st ? (darkMode ? "#fff" : "#6d28d9") : textSecondary,
+                          fontWeight: "800",
+                          fontSize: "12px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                    {adminLeaves.filter(l => leaveFilterStatus === "All" || l.status === leaveFilterStatus).length === 0 ? (
+                      <div style={{ padding: "36px", textAlign: "center", color: textSecondary, background: bgCard, borderRadius: "16px", border: `1px solid ${borderCol}` }}>
+                        ✓ No leave applications matching "{leaveFilterStatus}".
+                      </div>
+                    ) : (
+                      adminLeaves
+                        .filter(l => leaveFilterStatus === "All" || l.status === leaveFilterStatus)
+                        .map((l) => {
+                          const statusColor = l.status === "Approved" ? "#16a34a" : l.status === "Rejected" ? "#dc2626" : "#ea580c";
+                          const statusBg = l.status === "Approved" ? "#f0fdf4" : l.status === "Rejected" ? "#fef2f2" : "#fffbeb";
+                          return (
+                            <div key={l._id} style={{ background: bgCard, borderRadius: "18px", padding: "20px", border: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+                              <div style={{ flex: 1, minWidth: "260px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                                  <strong style={{ fontSize: "16px", color: textPrimary }}>{l.driverName}</strong>
+                                  <span style={{ fontSize: "12px", color: textSecondary }}>({l.driverEmail})</span>
+                                  <span style={{ fontSize: "11px", fontWeight: "900", padding: "3px 9px", borderRadius: "10px", background: statusBg, color: statusColor, border: `1px solid ${statusColor}40` }}>
+                                    {l.status}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: "13.5px", color: "#7c3aed", fontWeight: "800", marginTop: "4px" }}>
+                                  📅 Date: {l.leaveDate} {l.leaveEndDate && l.leaveEndDate !== l.leaveDate ? `➔ ${l.leaveEndDate}` : ""} • Slot/Type: {l.shiftSlot || l.leaveType || "Full Day"}
+                                </div>
+                                <div style={{ fontSize: "12.5px", color: textSecondary, marginTop: "4px" }}>
+                                  Reason: "{l.reason}"
+                                </div>
+                                {l.adminComment && (
+                                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px", fontStyle: "italic" }}>
+                                    Admin Note: "{l.adminComment}"
+                                  </div>
+                                )}
+                              </div>
+                              {l.status === "Pending" ? (
+                                <button
+                                  onClick={() => setSelectedLeaveModal(l)}
+                                  style={{ padding: "10px 18px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}
+                                >
+                                  <Check size={15} /> Review &amp; Approve →
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => setSelectedLeaveModal(l)}
+                                  style={{ padding: "8px 14px", borderRadius: "10px", background: darkMode ? "#334155" : "#f1f5f9", color: textPrimary, border: `1px solid ${borderCol}`, fontWeight: "700", fontSize: "12px", cursor: "pointer" }}
+                                >
+                                  Update Decision ⚙️
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW 2: REPLACEMENT DRIVER DUTIES */}
+              {leavesSubTab === "replacements" && (
+                <div>
+                  {/* Status Filters for Replacements */}
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+                    {["All", "Replacement Required", "Assigned", "In Progress", "Completed", "Cancelled"].map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setReplacementFilterStatus(st)}
+                        style={{
+                          padding: "6px 14px",
+                          borderRadius: "10px",
+                          border: `1.5px solid ${replacementFilterStatus === st ? "#7c3aed" : borderCol}`,
+                          background: replacementFilterStatus === st ? (darkMode ? "#4c1d95" : "#f5f3ff") : bgCard,
+                          color: replacementFilterStatus === st ? (darkMode ? "#fff" : "#6d28d9") : textSecondary,
+                          fontWeight: "800",
+                          fontSize: "12px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+
+                  {loadingReplacements ? (
+                    <div style={{ padding: "36px", textAlign: "center", color: textSecondary }}>
+                      ⏳ Loading replacement driver assignments...
+                    </div>
+                  ) : adminReplacements.filter(r => replacementFilterStatus === "All" || r.status === replacementFilterStatus).length === 0 ? (
+                    <div style={{ padding: "36px", textAlign: "center", color: textSecondary, background: bgCard, borderRadius: "16px", border: `1px solid ${borderCol}` }}>
+                      ✓ No replacement duty records matching "{replacementFilterStatus}".
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {adminReplacements
+                        .filter(r => replacementFilterStatus === "All" || r.status === replacementFilterStatus)
+                        .map((rep) => {
+                          const isReq = rep.status === "Replacement Required";
+                          const isAssigned = rep.status === "Assigned";
+                          const isInProg = rep.status === "In Progress";
+                          const isComp = rep.status === "Completed";
+                          const isCanc = rep.status === "Cancelled";
+
+                          const badgeBg = isReq ? "#fef2f2" : isAssigned ? "#eff6ff" : isInProg ? "#faf5ff" : isComp ? "#f0fdf4" : "#f8fafc";
+                          const badgeColor = isReq ? "#dc2626" : isAssigned ? "#2563eb" : isInProg ? "#7c3aed" : isComp ? "#16a34a" : "#64748b";
+
+                          const shiftBg = rep.shift === "Morning" ? "#fef3c7" : rep.shift === "Evening" ? "#e0e7ff" : "#f3e8ff";
+                          const shiftColor = rep.shift === "Morning" ? "#b45309" : rep.shift === "Evening" ? "#3730a3" : "#6b21a8";
+
+                          const busNum = rep.busNumber || rep.busId?.busNumber || "Bus";
+                          const busName = rep.busId?.busName || "";
+                          const routeName = rep.busId?.routeName || (rep.busId?.fromLocation && rep.busId?.toLocation ? `${rep.busId.fromLocation} ➔ ${rep.busId.toLocation}` : "Fleet Route");
+
+                          return (
+                            <div
+                              key={rep._id}
+                              style={{
+                                background: bgCard,
+                                borderRadius: "18px",
+                                padding: "20px",
+                                border: `1.5px solid ${isReq ? "#fecaca" : borderCol}`,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: "16px"
+                              }}
+                            >
+                              <div style={{ flex: 1, minWidth: "280px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
+                                  <strong style={{ fontSize: "16px", color: textPrimary }}>
+                                    🚌 {busNum} {busName ? `• ${busName}` : ""}
+                                  </strong>
+                                  <span style={{ fontSize: "11px", fontWeight: "900", padding: "2px 8px", borderRadius: "8px", background: shiftBg, color: shiftColor }}>
+                                    {rep.shift} Shift
+                                  </span>
+                                  <span style={{ fontSize: "11px", fontWeight: "900", padding: "3px 9px", borderRadius: "10px", background: badgeBg, color: badgeColor, border: `1px solid ${badgeColor}40` }}>
+                                    {rep.status}
+                                  </span>
+                                </div>
+
+                                <div style={{ fontSize: "13px", color: textSecondary, marginBottom: "4px" }}>
+                                  🛣️ Route: <strong>{routeName}</strong>
+                                </div>
+
+                                <div style={{ fontSize: "13px", color: textSecondary, marginBottom: "4px" }}>
+                                  📅 Duty Date: <strong>{rep.dutyDate}</strong> • Scheduled Window: {rep.startDateTime ? new Date(rep.startDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "06:00 AM"} ➔ {rep.endDateTime ? new Date(rep.endDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "02:00 PM"}
+                                </div>
+
+                                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginTop: "8px", fontSize: "12.5px" }}>
+                                  <div>
+                                    <span style={{ color: textSecondary }}>Regular Driver: </span>
+                                    <strong style={{ color: textPrimary }}>{rep.originalDriverId?.name || "Regular Driver"}</strong>
+                                  </div>
+                                  <div>
+                                    <span style={{ color: textSecondary }}>Assigned Replacement: </span>
+                                    {rep.replacementDriverId ? (
+                                      <strong style={{ color: "#16a34a" }}>
+                                        ✓ {rep.replacementDriverId.name} ({rep.replacementDriverId.phone || rep.replacementDriverId.email})
+                                      </strong>
+                                    ) : (
+                                      <strong style={{ color: "#dc2626" }}>⚠️ Not Assigned</strong>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div>
+                                {isReq && (
+                                  <button
+                                    onClick={() => handleOpenAssignModal(rep)}
+                                    style={{
+                                      padding: "10px 18px",
+                                      borderRadius: "12px",
+                                      background: "linear-gradient(135deg, #16a34a, #15803d)",
+                                      color: "#fff",
+                                      border: "none",
+                                      fontWeight: "800",
+                                      fontSize: "13px",
+                                      cursor: "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "6px"
+                                    }}
+                                  >
+                                    ➕ Assign Driver →
+                                  </button>
+                                )}
+
+                                {isAssigned && (
+                                  <button
+                                    onClick={() => handleOpenAssignModal(rep)}
+                                    style={{
+                                      padding: "8px 16px",
+                                      borderRadius: "10px",
+                                      background: darkMode ? "#334155" : "#f1f5f9",
+                                      color: textPrimary,
+                                      border: `1px solid ${borderCol}`,
+                                      fontWeight: "800",
+                                      fontSize: "12.5px",
+                                      cursor: "pointer"
+                                    }}
+                                  >
+                                    🔄 Reassign Driver
+                                  </button>
+                                )}
+
+                                {isInProg && (
+                                  <span style={{ fontSize: "13px", fontWeight: "800", color: "#7c3aed", display: "flex", alignItems: "center", gap: "6px" }}>
+                                    🚀 Drive In Progress
+                                  </span>
+                                )}
+
+                                {isComp && (
+                                  <span style={{ fontSize: "13px", fontWeight: "800", color: "#16a34a", display: "flex", alignItems: "center", gap: "6px" }}>
+                                    ✓ Completed
+                                  </span>
+                                )}
+
+                                {isCanc && (
+                                  <span style={{ fontSize: "13px", fontWeight: "700", color: "#64748b" }}>
+                                    Cancelled
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
           {/* SECTION 10: SETTINGS & TOOLS */}
           {activeTab === "settings" && (
@@ -3641,6 +4107,11 @@ export default function Admin({ defaultTab = "overview" }) {
             <AdminBusGallery darkMode={darkMode} />
           )}
 
+          {/* SECTION: THREE-SHIFT DRIVER ROSTER */}
+          {activeTab === "shiftRoster" && (
+            <AdminShiftRoster darkMode={darkMode} onNavigateTab={setActiveTab} />
+          )}
+
         </main>
       </div>
 
@@ -4182,7 +4653,7 @@ export default function Admin({ defaultTab = "overview" }) {
             <form onSubmit={handleUpdateLeaveSubmit}>
               <div style={{ marginBottom: "14px", fontSize: "13px" }}>
                 <div>Driver: <strong>{selectedLeaveModal.driverName}</strong></div>
-                <div>Date: <strong>{selectedLeaveModal.leaveDate}</strong> ({selectedLeaveModal.leaveType})</div>
+                <div>Date: <strong>{selectedLeaveModal.leaveDate}</strong> ({selectedLeaveModal.shiftSlot || selectedLeaveModal.leaveType})</div>
               </div>
               <div className="rta-input-group" style={{ marginBottom: "14px" }}>
                 <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary }}>Decision</label>
@@ -4198,6 +4669,144 @@ export default function Admin({ defaultTab = "overview" }) {
               <div style={{ display: "flex", gap: "10px" }}>
                 <button type="submit" style={{ flex: 1, padding: "12px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", cursor: "pointer" }}>Submit Approval →</button>
                 <button type="button" onClick={() => setSelectedLeaveModal(null)} style={{ padding: "12px 18px", borderRadius: "12px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: "800", cursor: "pointer" }}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 🔄 MODAL: ASSIGN REPLACEMENT DRIVER */}
+      {selectedReplacementModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: "560px", width: "92%", padding: "28px", borderRadius: "24px", background: bgCard, color: textPrimary, maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+              <h3 style={{ fontSize: "19px", fontWeight: "900", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                🔄 Assign Replacement Driver
+              </h3>
+              <button type="button" onClick={() => setSelectedReplacementModal(null)} style={{ background: "none", border: "none", fontSize: "24px", cursor: "pointer", color: textSecondary, fontWeight: "900" }}>×</button>
+            </div>
+
+            {/* Duty Summary Box */}
+            <div style={{ background: darkMode ? "#1e293b" : "#f1f5f9", borderRadius: "16px", padding: "16px", marginBottom: "20px", border: `1px solid ${borderCol}` }}>
+              <div style={{ fontSize: "14px", fontWeight: "800", color: textPrimary, marginBottom: "6px" }}>
+                🚌 Bus: {selectedReplacementModal.busNumber} {selectedReplacementModal.busId?.busName ? `(${selectedReplacementModal.busId.busName})` : ""}
+              </div>
+              <div style={{ fontSize: "13px", color: textSecondary, marginBottom: "4px" }}>
+                🛣️ Route: <strong>{selectedReplacementModal.busId?.routeName || (selectedReplacementModal.busId?.fromLocation && selectedReplacementModal.busId?.toLocation ? `${selectedReplacementModal.busId.fromLocation} ➔ ${selectedReplacementModal.busId.toLocation}` : "Assigned Fleet Route")}</strong>
+              </div>
+              <div style={{ fontSize: "13px", color: textSecondary, marginBottom: "4px" }}>
+                📅 Date &amp; Shift: <strong>{selectedReplacementModal.dutyDate} • {selectedReplacementModal.shift} Shift</strong>
+              </div>
+              <div style={{ fontSize: "13px", color: textSecondary }}>
+                👤 Regular Driver: <strong>{selectedReplacementModal.originalDriverId?.name || "Regular Driver"}</strong>
+              </div>
+            </div>
+
+            {replacementAssignError && (
+              <div style={{ padding: "12px 16px", borderRadius: "12px", background: "#fef2f2", border: "1.5px solid #fecaca", color: "#dc2626", fontSize: "13px", fontWeight: "700", marginBottom: "18px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <AlertCircle size={16} /> {replacementAssignError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitAssignReplacement}>
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "800", color: textPrimary, display: "block", marginBottom: "8px" }}>
+                  Select Eligible Replacement Driver ({eligibleDrivers.length} Available)
+                </label>
+
+                {loadingEligibleDrivers ? (
+                  <div style={{ padding: "20px", textAlign: "center", color: textSecondary, fontSize: "13px" }}>
+                    ⏳ Checking driver availability and shift conflicts...
+                  </div>
+                ) : eligibleDrivers.length === 0 ? (
+                  <div style={{ padding: "18px", borderRadius: "14px", background: darkMode ? "#1e293b" : "#fefce8", border: `1.5px solid ${darkMode ? "#334155" : "#fef08a"}`, color: darkMode ? "#fef08a" : "#854d0e", fontSize: "13px" }}>
+                    ⚠️ No unconflicted replacement drivers found for this date ({selectedReplacementModal.dutyDate}) and shift ({selectedReplacementModal.shift}). All other drivers are either already operating a duty, on approved leave, or not approved.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "240px", overflowY: "auto", paddingRight: "4px" }}>
+                    {eligibleDrivers.map((drv) => {
+                      const isSelected = selectedReplacementDriverId === drv._id;
+                      return (
+                        <div
+                          key={drv._id}
+                          onClick={() => setSelectedReplacementDriverId(drv._id)}
+                          style={{
+                            padding: "12px 16px",
+                            borderRadius: "14px",
+                            border: isSelected ? "2px solid #7c3aed" : `1.5px solid ${borderCol}`,
+                            background: isSelected ? (darkMode ? "#2e1065" : "#f5f3ff") : bgCard,
+                            cursor: "pointer",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            transition: "all 0.15s ease"
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: "800", fontSize: "14px", color: textPrimary, display: "flex", alignItems: "center", gap: "8px" }}>
+                              {drv.name}
+                              <span style={{ fontSize: "10.5px", fontWeight: "800", background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: "8px" }}>Verified</span>
+                            </div>
+                            <div style={{ fontSize: "12px", color: textSecondary, marginTop: "2px" }}>
+                              📧 {drv.email} • 📱 {drv.phone || "No phone"} • 🪪 {drv.licenseNumber || "License on file"}
+                            </div>
+                          </div>
+                          <input
+                            type="radio"
+                            name="replacementDriverSelection"
+                            checked={isSelected}
+                            onChange={() => setSelectedReplacementDriverId(drv._id)}
+                            style={{ accentColor: "#7c3aed", width: "18px", height: "18px", cursor: "pointer" }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="rta-input-group" style={{ marginBottom: "22px" }}>
+                <label style={{ fontSize: "12px", fontWeight: "800", color: textSecondary, display: "block", marginBottom: "6px" }}>
+                  Admin Assignment Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  className="rta-input-field"
+                  value={replacementAdminNotes}
+                  onChange={(e) => setReplacementAdminNotes(e.target.value)}
+                  placeholder="e.g. Designated replacement for approved sick leave."
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: "12px" }}>
+                <button
+                  type="submit"
+                  disabled={submittingReplacement || !selectedReplacementDriverId || eligibleDrivers.length === 0}
+                  style={{
+                    flex: 1,
+                    padding: "13px 20px",
+                    borderRadius: "14px",
+                    background: eligibleDrivers.length === 0 ? "#94a3b8" : "linear-gradient(135deg, #7c3aed, #4c1d95)",
+                    color: "#fff",
+                    border: "none",
+                    fontWeight: "900",
+                    fontSize: "14px",
+                    cursor: eligibleDrivers.length === 0 ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px"
+                  }}
+                >
+                  {submittingReplacement ? "Assigning Replacement..." : "Confirm Replacement Assignment →"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedReplacementModal(null)}
+                  style={{ padding: "13px 20px", borderRadius: "14px", background: darkMode ? "#334155" : "#f1f5f9", color: textPrimary, border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
               </div>
             </form>
           </div>

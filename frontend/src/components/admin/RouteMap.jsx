@@ -146,107 +146,7 @@ function createCustomIcon(label, color = "#2563eb", iconType = "number", source 
   });
 }
 
-// Verified Comprehensive Kerala Transit Hubs, Sub-Stations & Junctions Catalog
-const KERALA_ALL_PLACES = [
-  // Kottayam Central Hubs & Sub-Stations
-  { name: "Kottayam", category: "District HQ / KSRTC Stand", district: "Kottayam", lat: 9.5916, lng: 76.5222 },
-  { name: "Nagampadam", category: "Sub-Station / Bus Stand", district: "Kottayam", lat: 9.6010, lng: 76.5265 },
-  { name: "Kumaranalloor", category: "Sub-Station", district: "Kottayam", lat: 9.6234, lng: 76.5340 },
-  { name: "Medical College / Gandhi Nagar", category: "Major Hub", district: "Kottayam", lat: 9.6450, lng: 76.5280 },
-  { name: "Caritas Junction", category: "Sub-Station", district: "Kottayam", lat: 9.6480, lng: 76.5450 },
-  { name: "Thellakom", category: "Sub-Station", district: "Kottayam", lat: 9.6520, lng: 76.5510 },
-  { name: "Ettumanoor", category: "Major Sub-Station", district: "Kottayam", lat: 9.6644, lng: 76.5625 },
-  { name: "Kidangoor", category: "Sub-Station", district: "Kottayam", lat: 9.6800, lng: 76.6000 },
-  { name: "Cherpunkal", category: "Sub-Station", district: "Kottayam", lat: 9.6580, lng: 76.6250 },
-  { name: "Pala", category: "Major Bus Terminal", district: "Kottayam", lat: 9.7081, lng: 76.6837 },
-  { name: "Murikkumpuzha", category: "Sub-Station", district: "Kottayam", lat: 9.6950, lng: 76.7120 },
-  { name: "Bharananganam", category: "Pilgrim Sub-Station", district: "Kottayam", lat: 9.6880, lng: 76.7200 },
-  { name: "Kizhaparayar", category: "Sub-Station", district: "Kottayam", lat: 9.6910, lng: 76.7550 },
-  { name: "Plassanal", category: "Sub-Station", district: "Kottayam", lat: 9.6700, lng: 76.7700 },
-  { name: "Choondacherry", category: "Sub-Station", district: "Kottayam", lat: 9.6650, lng: 76.6750 },
-  { name: "Pravithanam", category: "Sub-Station", district: "Kottayam", lat: 9.7200, lng: 76.6500 },
-  { name: "Poovarani", category: "Sub-Station", district: "Kottayam", lat: 9.6600, lng: 76.7000 },
-  { name: "Paika", category: "Sub-Station", district: "Kottayam", lat: 9.6400, lng: 76.7200 },
-  { name: "Ponkunnam", category: "Major Sub-Station", district: "Kottayam", lat: 9.5667, lng: 76.7583 },
-  { name: "Podimattom", category: "Sub-Station", district: "Kottayam", lat: 9.5600, lng: 76.7700 },
-  { name: "Kanjirappally", category: "Major Bus Terminal", district: "Kottayam", lat: 9.5544, lng: 76.7865 },
-  { name: "Manarcadu", category: "Sub-Station", district: "Kottayam", lat: 9.5850, lng: 76.5750 },
-  { name: "Pampady", category: "Sub-Station", district: "Kottayam", lat: 9.5583, lng: 76.6417 },
-  { name: "Vazhoor", category: "Sub-Station", district: "Kottayam", lat: 9.5500, lng: 76.7150 },
-  { name: "19th Mile / Elikulam", category: "Sub-Station", district: "Kottayam", lat: 9.5900, lng: 76.7300 },
-  { name: "Puthuppally", category: "Sub-Station", district: "Kottayam", lat: 9.5600, lng: 76.5600 },
-  { name: "Karukachal", category: "Sub-Station", district: "Kottayam", lat: 9.5100, lng: 76.6300 },
-  { name: "Mundakayam", category: "Major Sub-Station", district: "Kottayam", lat: 9.5424, lng: 76.8833 },
-  { name: "Erumely", category: "Pilgrim Bus Terminal", district: "Kottayam", lat: 9.4716, lng: 76.7865 },
-  { name: "Erattupetta", category: "Major Bus Terminal", district: "Kottayam", lat: 9.6833, lng: 76.7833 },
-  { name: "Poonjar", category: "Sub-Station", district: "Kottayam", lat: 9.6700, lng: 76.8100 },
-  { name: "Teekoy", category: "Sub-Station", district: "Kottayam", lat: 9.7100, lng: 76.8300 },
-  { name: "Vagamon", category: "Hill Station", district: "Kottayam", lat: 9.6870, lng: 76.9050 },
-  { name: "Kuravilangad", category: "Sub-Station", district: "Kottayam", lat: 9.7540, lng: 76.5680 },
-  { name: "Kaduthuruthy", category: "Sub-Station", district: "Kottayam", lat: 9.7330, lng: 76.4950 },
-  { name: "Uzhavoor", category: "Sub-Station", district: "Kottayam", lat: 9.7820, lng: 76.6120 },
-  { name: "Kadaplamattom", category: "Sub-Station", district: "Kottayam", lat: 9.7200, lng: 76.5900 },
-  { name: "Marangattupilly", category: "Sub-Station", district: "Kottayam", lat: 9.7400, lng: 76.6200 },
-  { name: "Kuruppanthara", category: "Sub-Station", district: "Kottayam", lat: 9.7100, lng: 76.5300 },
-  { name: "Monippally", category: "Sub-Station", district: "Kottayam", lat: 9.8050, lng: 76.5850 },
-  { name: "Ramapuram", category: "Sub-Station", district: "Kottayam", lat: 9.7850, lng: 76.6500 },
-  { name: "Ayarkunnam", category: "Sub-Station", district: "Kottayam", lat: 9.6200, lng: 76.6000 },
-  { name: "Vaikom", category: "Bus Terminal", district: "Kottayam", lat: 9.7478, lng: 76.3956 },
-  { name: "Changanassery", category: "Major Bus Terminal", district: "Kottayam", lat: 9.4452, lng: 76.5385 },
-  { name: "Chingavanam", category: "Sub-Station", district: "Kottayam", lat: 9.5280, lng: 76.5350 },
-  { name: "Kumarakom", category: "Tourist Hub", district: "Kottayam", lat: 9.6175, lng: 76.4300 },
-
-  // Pathanamthitta Sub-Stations & Hubs
-  { name: "Sabarimala", category: "Pilgrim Shrine", district: "Pathanamthitta", lat: 9.4350, lng: 77.0811 },
-  { name: "Pampa", category: "Pilgrim River Terminal", district: "Pathanamthitta", lat: 9.4120, lng: 77.0700 },
-  { name: "Chalakkayam", category: "Sub-Station", district: "Pathanamthitta", lat: 9.4000, lng: 77.0450 },
-  { name: "Nilakkal", category: "Pilgrim Base Station", district: "Pathanamthitta", lat: 9.3850, lng: 77.0120 },
-  { name: "Plappally", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3650, lng: 76.9550 },
-  { name: "Lahai", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3400, lng: 76.9100 },
-  { name: "Perunad", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3550, lng: 76.8450 },
-  { name: "Vadasserikkara", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3480, lng: 76.8150 },
-  { name: "Ranni", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.3800, lng: 76.7800 },
-  { name: "Ranni Ittymoove", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3850, lng: 76.7900 },
-  { name: "Kozhencherry", category: "Sub-Station", district: "Pathanamthitta", lat: 9.3400, lng: 76.7050 },
-  { name: "Pathanamthitta", category: "District HQ / KSRTC", district: "Pathanamthitta", lat: 9.2648, lng: 76.7870 },
-  { name: "Konni", category: "Sub-Station", district: "Pathanamthitta", lat: 9.2433, lng: 76.8533 },
-  { name: "Thiruvalla", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.3834, lng: 76.5744 },
-  { name: "Adoor", category: "Major Bus Terminal", district: "Pathanamthitta", lat: 9.1558, lng: 76.7324 },
-  { name: "Pandalam", category: "Pilgrim Sub-Station", district: "Pathanamthitta", lat: 9.2333, lng: 76.6833 },
-  { name: "Mallappally", category: "Sub-Station", district: "Pathanamthitta", lat: 9.4450, lng: 76.6500 },
-
-  // Idukki Sub-Stations & Hubs
-  { name: "Kuttikkanam", category: "Hill Station / Hub", district: "Idukki", lat: 9.5850, lng: 76.9680 },
-  { name: "Peermade", category: "Sub-Station", district: "Idukki", lat: 9.5667, lng: 76.9833 },
-  { name: "Vandiperiyar", category: "Sub-Station", district: "Idukki", lat: 9.5800, lng: 77.0850 },
-  { name: "Kumily", category: "Major Bus Terminal", district: "Idukki", lat: 9.6083, lng: 77.1611 },
-  { name: "Thekkady", category: "Tourist Hub", district: "Idukki", lat: 9.6000, lng: 77.1700 },
-  { name: "Elappara", category: "Sub-Station", district: "Idukki", lat: 9.6380, lng: 76.9750 },
-  { name: "Kattappana", category: "Major Bus Terminal", district: "Idukki", lat: 9.7740, lng: 77.1186 },
-  { name: "Nedumkandam", category: "Sub-Station", district: "Idukki", lat: 9.8350, lng: 77.1650 },
-  { name: "Thodupuzha", category: "Major Bus Terminal", district: "Idukki", lat: 9.8947, lng: 76.7161 },
-  { name: "Adimali", category: "Sub-Station", district: "Idukki", lat: 10.0125, lng: 76.9536 },
-  { name: "Munnar", category: "Hill Station / KSRTC", district: "Idukki", lat: 10.0889, lng: 77.0595 },
-
-  // Alappuzha Sub-Stations & Hubs
-  { name: "Alappuzha", category: "District HQ / KSRTC", district: "Alappuzha", lat: 9.4981, lng: 76.3388 },
-  { name: "Cherthala", category: "Major Bus Terminal", district: "Alappuzha", lat: 9.6847, lng: 76.3315 },
-  { name: "Chengannur", category: "Major Railway / Bus Hub", district: "Alappuzha", lat: 9.3175, lng: 76.6117 },
-  { name: "Mavelikkara", category: "Sub-Station", district: "Alappuzha", lat: 9.2570, lng: 76.5490 },
-  { name: "Kayamkulam", category: "Major Bus Terminal", district: "Alappuzha", lat: 9.1724, lng: 76.5008 },
-  { name: "Haripad", category: "Sub-Station", district: "Alappuzha", lat: 9.2797, lng: 76.4633 },
-
-  // Ernakulam Sub-Stations & Hubs
-  { name: "Kochi / Ernakulam", category: "Vyttila Mobility Hub", district: "Ernakulam", lat: 9.9680, lng: 76.3180 },
-  { name: "Kaloor", category: "Bus Stand", district: "Ernakulam", lat: 9.9920, lng: 76.2940 },
-  { name: "Aluva", category: "Major Bus & Metro Hub", district: "Ernakulam", lat: 10.1076, lng: 76.3516 },
-  { name: "Angamaly", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.1960, lng: 76.3860 },
-  { name: "Muvattupuzha", category: "Major Bus Terminal", district: "Ernakulam", lat: 9.9814, lng: 76.5786 },
-  { name: "Piravom", category: "Sub-Station", district: "Ernakulam", lat: 9.8700, lng: 76.4900 },
-  { name: "Perumbavoor", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.1147, lng: 76.4789 },
-  { name: "Kolenchery", category: "Sub-Station", district: "Ernakulam", lat: 9.9750, lng: 76.4700 },
-  { name: "Kothamangalam", category: "Major Bus Terminal", district: "Ernakulam", lat: 10.0650, lng: 76.6250 },
-];
+import { INDIA_ALL_PLACES, getIndiaTransitPlaceSuggestions } from "../../data/indiaPlaces";
 
 export default function RouteMap({
   fromLocationName = "",
@@ -305,10 +205,10 @@ export default function RouteMap({
     if (!mapContainerRef.current) return;
     if (mapInstanceRef.current) return;
 
-    // Default center Kerala (Kottayam / Kanjirappally area)
+    // Center on India
     const map = L.map(mapContainerRef.current, {
-      center: [9.5916, 76.6500],
-      zoom: 10,
+      center: [20.5937, 78.9629],
+      zoom: 5,
       zoomControl: true,
     });
 
@@ -330,81 +230,11 @@ export default function RouteMap({
     };
   }, []);
 
-  // Geocode & Instant Local Place Suggestions (Kerala)
-  const getKeralaLocationSuggestions = async (inputQuery) => {
-    if (!inputQuery || inputQuery.trim().length === 0) {
-      return KERALA_ALL_PLACES.slice(0, 10).map((p) => ({
-        name: p.name,
-        fullName: `${p.name}, ${p.district} District, Kerala`,
-        lat: p.lat,
-        lng: p.lng,
-        category: p.category,
-        district: p.district,
-      }));
-    }
-
-    const q = inputQuery.trim().toLowerCase();
-    const cleanQ = q.replace(/[-\s]/g, "");
-
-    // 1. Instant local filter (0ms delay)
-    const localMatches = KERALA_ALL_PLACES.filter((p) => {
-      const name = p.name.toLowerCase().replace(/[-\s]/g, "");
-      const district = p.district.toLowerCase().replace(/[-\s]/g, "");
-      const category = (p.category || "").toLowerCase().replace(/[-\s]/g, "");
-      return name.includes(cleanQ) || district.includes(cleanQ) || category.includes(cleanQ);
-    }).map((p) => ({
-      name: p.name,
-      fullName: `${p.name}, ${p.district} District, Kerala`,
-      lat: p.lat,
-      lng: p.lng,
-      category: p.category,
-      district: p.district,
-    }));
-
-    // 2. Fetch Nominatim matches asynchronously with timeout
-    let remoteMatches = [];
-    if (q.length >= 2) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 900);
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q + ", Kerala, India")}&addressdetails=1&limit=6`;
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          remoteMatches = data.map((item) => ({
-            name: item.display_name.split(",")[0] || item.display_name,
-            fullName: item.display_name,
-            lat: parseFloat(item.lat),
-            lng: parseFloat(item.lon),
-            category: "Map Landmark",
-            district: "Kerala",
-          }));
-        }
-      } catch {
-        // Fallback to local in-memory dataset
-      }
-    }
-
-    // Combine without duplicates
-    const combined = [...localMatches];
-    remoteMatches.forEach((rm) => {
-      const exists = combined.some(
-        (c) => c.name.toLowerCase() === rm.name.toLowerCase() || haversineDistance(c.lat, c.lng, rm.lat, rm.lng) < 0.5
-      );
-      if (!exists) {
-        combined.push(rm);
-      }
-    });
-
-    return combined.slice(0, 10);
-  };
-
-  // Instant input change handlers for From & To inputs
+  // Instant input change handlers for From & To inputs (Pan-India)
   const handleFromInputChange = async (val) => {
     setFromQuery(val);
     onLocationsChange(val, toQuery);
-    const results = await getKeralaLocationSuggestions(val);
+    const results = await getIndiaTransitPlaceSuggestions(val);
     setFromSuggestions(results);
     setShowFromDrop(true);
   };
@@ -412,7 +242,7 @@ export default function RouteMap({
   const handleToInputChange = async (val) => {
     setToQuery(val);
     onLocationsChange(fromQuery, val);
-    const results = await getKeralaLocationSuggestions(val);
+    const results = await getIndiaTransitPlaceSuggestions(val);
     setToSuggestions(results);
     setShowToDrop(true);
   };
@@ -423,6 +253,9 @@ export default function RouteMap({
     setStartPoint(point);
     setShowFromDrop(false);
     onLocationsChange(item.name, toQuery);
+    if (mapInstanceRef.current && item.lat && item.lng) {
+      mapInstanceRef.current.flyTo([item.lat, item.lng], 12, { duration: 1.2 });
+    }
   };
 
   const selectToLocation = (item) => {
@@ -431,18 +264,21 @@ export default function RouteMap({
     setDestPoint(point);
     setShowToDrop(false);
     onLocationsChange(fromQuery, item.name);
+    if (mapInstanceRef.current && item.lat && item.lng) {
+      mapInstanceRef.current.flyTo([item.lat, item.lng], 12, { duration: 1.2 });
+    }
   };
 
   // Helper: Direct corridor polyline fallback if OSRM service is unreachable
   const generateFallbackRoute = useCallback((start, end) => {
-    const intermediates = KERALA_ALL_PLACES.filter((p) => {
+    const intermediates = INDIA_ALL_PLACES.filter((p) => {
       const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
       const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
       const totalDirect = haversineDistance(start.lat, start.lng, end.lat, end.lng);
       return dStart > 1.5 && dEnd > 1.5 && (dStart + dEnd) < (totalDirect * 1.3);
     }).sort((a, b) => haversineDistance(start.lat, start.lng, a.lat, a.lng) - haversineDistance(start.lat, start.lng, b.lat, b.lng));
 
-    const waypoints = [start, ...intermediates, end];
+    const waypoints = [start, ...intermediates.slice(0, 8), end];
     const coords = waypoints.map((w) => [w.lat, w.lng]);
 
     let totalDist = 0;
@@ -488,7 +324,7 @@ export default function RouteMap({
     });
 
     // 2. Identify all intermediate sub-stations & junctions located along the road corridor between start and destination
-    KERALA_ALL_PLACES.forEach((p) => {
+    INDIA_ALL_PLACES.forEach((p) => {
       const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
       const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
       if (dStart > 0.2 && dEnd > 0.2) {
@@ -536,7 +372,7 @@ export default function RouteMap({
         if (data.elements && data.elements.length > 0) {
           data.elements.forEach((node) => {
             const tags = node.tags || {};
-            const rawName = (tags.name || tags["name:en"] || tags["name:ml"] || tags.local_name || "").trim();
+            const rawName = (tags.name || tags["name:en"] || tags["name:ml"] || tags["name:hi"] || tags.local_name || "").trim();
             // Exclude unnamed or generic "bus stop" tags
             if (rawName && !/^bus\s*stop$/i.test(rawName) && !/^stop$/i.test(rawName) && rawName.toLowerCase() !== "bus_stop") {
               const proj = projectPointOntoPolyline(node.lat, node.lon, coords);
@@ -653,9 +489,9 @@ export default function RouteMap({
         console.warn("Primary OSRM endpoint error:", err);
       }
 
-      // 2. Discover alternative road corridors through intermediate major transit hubs
+      // 2. Discover alternative road corridors through intermediate major transit hubs across India
       const totalDirect = haversineDistance(start.lat, start.lng, end.lat, end.lng);
-      const intermediateHubs = KERALA_ALL_PLACES.filter((p) => {
+      const intermediateHubs = INDIA_ALL_PLACES.filter((p) => {
         const dStart = haversineDistance(start.lat, start.lng, p.lat, p.lng);
         const dEnd = haversineDistance(end.lat, end.lng, p.lat, p.lng);
         return dStart > 2.0 && dEnd > 2.0 && (dStart + dEnd) < (totalDirect * 1.45);
@@ -781,7 +617,7 @@ export default function RouteMap({
     let end = destPoint;
 
     if (!start || start.name.toLowerCase() !== fromQuery.trim().toLowerCase()) {
-      const res = await getKeralaLocationSuggestions(fromQuery);
+      const res = await getIndiaTransitPlaceSuggestions(fromQuery);
       if (res.length > 0) {
         start = { name: res[0].name, lat: res[0].lat, lng: res[0].lng };
         setStartPoint(start);
@@ -793,7 +629,7 @@ export default function RouteMap({
     }
 
     if (!end || end.name.toLowerCase() !== toQuery.trim().toLowerCase()) {
-      const res = await getKeralaLocationSuggestions(toQuery);
+      const res = await getIndiaTransitPlaceSuggestions(toQuery);
       if (res.length > 0) {
         end = { name: res[0].name, lat: res[0].lat, lng: res[0].lng };
         setDestPoint(end);
@@ -826,10 +662,10 @@ export default function RouteMap({
       const clickLat = e.latlng.lat;
       const clickLng = e.latlng.lng;
 
-      // 1. Check for closest known Kerala place within 2.5km
+      // 1. Check for closest known place in India catalog within 2.5km
       let placeName = "";
       let minPlaceDist = 999;
-      KERALA_ALL_PLACES.forEach((p) => {
+      INDIA_ALL_PLACES.forEach((p) => {
         const d = haversineDistance(clickLat, clickLng, p.lat, p.lng);
         if (d < 2.5 && d < minPlaceDist) {
           minPlaceDist = d;
@@ -837,10 +673,10 @@ export default function RouteMap({
         }
       });
 
-      // 2. If not in catalog, reverse geocode via Nominatim
+      // 2. If not in catalog, reverse geocode via Nominatim across India
       if (!placeName) {
         try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${clickLat}&lon=${clickLng}`);
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${clickLat}&lon=${clickLng}&countrycodes=in`);
           const data = await res.json();
           if (data.display_name) {
             const parts = data.display_name.split(",");
@@ -1190,7 +1026,7 @@ export default function RouteMap({
             <Navigation size={22} style={{ color: "#38bdf8" }} />
             <div>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Interactive Bus Route &amp; Stop Selector</h3>
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Search locations, select road routes &amp; detect Kerala passenger bus stops</p>
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Search any location in India, select road routes &amp; detect passenger bus stops</p>
             </div>
           </div>
 
@@ -1248,7 +1084,7 @@ export default function RouteMap({
           {/* Starting Point Input */}
           <div style={{ position: "relative" }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: "#cbd5e1", textTransform: "uppercase", display: "block", marginBottom: 4 }}>
-              Starting Point
+              Starting Point (Origin in India)
             </label>
             <div style={{ display: "flex", alignItems: "center", background: "#334155", borderRadius: 8, padding: "0 10px" }}>
               <MapPin size={16} style={{ color: "#10b981", marginRight: 6 }} />
@@ -1257,34 +1093,44 @@ export default function RouteMap({
                 value={fromQuery}
                 onChange={(e) => handleFromInputChange(e.target.value)}
                 onFocus={async () => {
-                  const results = await getKeralaLocationSuggestions(fromQuery);
+                  const results = await getIndiaTransitPlaceSuggestions(fromQuery);
                   setFromSuggestions(results);
                   setShowFromDrop(true);
                 }}
-                placeholder="e.g. Kottayam"
+                placeholder="e.g. Delhi, Bengaluru, Mumbai, Kottayam..."
                 style={{ background: "transparent", border: "none", outline: "none", color: "#ffffff", padding: "8px 0", fontSize: 13, width: "100%" }}
               />
             </div>
             {showFromDrop && fromSuggestions.length > 0 && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 240, overflowY: "auto", border: "1px solid #cbd5e1" }}>
-                <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#64748b", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase" }}>
-                  🌴 Kerala Places &amp; Transit Hubs
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 260, overflowY: "auto", border: "1px solid #cbd5e1" }}>
+                <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#475569", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>🇮🇳 All-India Places, Cities &amp; Bus Stands</span>
+                  <span style={{ fontSize: 9, color: "#64748b" }}>{fromSuggestions.length} suggestions</span>
                 </div>
                 {fromSuggestions.map((item, idx) => (
                   <div
                     key={idx}
                     onClick={() => selectFromLocation(item)}
-                    style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                    style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, transition: "background 0.15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
                   >
-                    <div>
-                      <strong style={{ color: "#0f172a", fontSize: 13 }}>📍 {item.name}</strong>
-                      <div style={{ fontSize: 10, color: "#64748b" }}>{item.fullName}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ color: "#0f172a", fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📍 {item.name}</strong>
+                      <div style={{ fontSize: 10, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.fullName}</div>
                     </div>
-                    {item.category && (
-                      <span style={{ fontSize: 10, fontWeight: 700, background: "#eff6ff", color: "#2563eb", padding: "2px 6px", borderRadius: 12, border: "1px solid #bfdbfe", whiteSpace: "nowrap" }}>
-                        {item.category}
-                      </span>
-                    )}
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      {item.state && (
+                        <span style={{ fontSize: 10, fontWeight: 700, background: "#f1f5f9", color: "#475569", padding: "2px 6px", borderRadius: 8, border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
+                          {item.state}
+                        </span>
+                      )}
+                      {item.category && (
+                        <span style={{ fontSize: 10, fontWeight: 700, background: "#eff6ff", color: "#2563eb", padding: "2px 6px", borderRadius: 8, border: "1px solid #bfdbfe", whiteSpace: "nowrap" }}>
+                          {item.category}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1294,7 +1140,7 @@ export default function RouteMap({
           {/* Destination Input */}
           <div style={{ position: "relative" }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: "#cbd5e1", textTransform: "uppercase", display: "block", marginBottom: 4 }}>
-              Destination
+              Destination (Anywhere in India)
             </label>
             <div style={{ display: "flex", alignItems: "center", background: "#334155", borderRadius: 8, padding: "0 10px" }}>
               <MapPin size={16} style={{ color: "#ef4444", marginRight: 6 }} />
@@ -1303,34 +1149,44 @@ export default function RouteMap({
                 value={toQuery}
                 onChange={(e) => handleToInputChange(e.target.value)}
                 onFocus={async () => {
-                  const results = await getKeralaLocationSuggestions(toQuery);
+                  const results = await getIndiaTransitPlaceSuggestions(toQuery);
                   setToSuggestions(results);
                   setShowToDrop(true);
                 }}
-                placeholder="e.g. Pala"
+                placeholder="e.g. Agra, Mysuru, Pune, Pala..."
                 style={{ background: "transparent", border: "none", outline: "none", color: "#ffffff", padding: "8px 0", fontSize: 13, width: "100%" }}
               />
             </div>
             {showToDrop && toSuggestions.length > 0 && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 240, overflowY: "auto", border: "1px solid #cbd5e1" }}>
-                <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#64748b", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase" }}>
-                  🌴 Kerala Places &amp; Transit Hubs
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#ffffff", color: "#1e293b", borderRadius: 10, marginTop: 4, zIndex: 2000, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", maxHeight: 260, overflowY: "auto", border: "1px solid #cbd5e1" }}>
+                <div style={{ padding: "6px 12px", background: "#f8fafc", fontSize: 10, fontWeight: 800, color: "#475569", borderBottom: "1px solid #e2e8f0", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>🇮🇳 All-India Places, Cities &amp; Bus Stands</span>
+                  <span style={{ fontSize: 9, color: "#64748b" }}>{toSuggestions.length} suggestions</span>
                 </div>
                 {toSuggestions.map((item, idx) => (
                   <div
                     key={idx}
                     onClick={() => selectToLocation(item)}
-                    style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                    style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, transition: "background 0.15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
                   >
-                    <div>
-                      <strong style={{ color: "#0f172a", fontSize: 13 }}>📍 {item.name}</strong>
-                      <div style={{ fontSize: 10, color: "#64748b" }}>{item.fullName}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ color: "#0f172a", fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📍 {item.name}</strong>
+                      <div style={{ fontSize: 10, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.fullName}</div>
                     </div>
-                    {item.category && (
-                      <span style={{ fontSize: 10, fontWeight: 700, background: "#fef2f2", color: "#ef4444", padding: "2px 6px", borderRadius: 12, border: "1px solid #fecaca", whiteSpace: "nowrap" }}>
-                        {item.category}
-                      </span>
-                    )}
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      {item.state && (
+                        <span style={{ fontSize: 10, fontWeight: 700, background: "#f1f5f9", color: "#475569", padding: "2px 6px", borderRadius: 8, border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
+                          {item.state}
+                        </span>
+                      )}
+                      {item.category && (
+                        <span style={{ fontSize: 10, fontWeight: 700, background: "#fef2f2", color: "#ef4444", padding: "2px 6px", borderRadius: 8, border: "1px solid #fecaca", whiteSpace: "nowrap" }}>
+                          {item.category}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
