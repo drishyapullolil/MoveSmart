@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import {
   Bus,
@@ -22,57 +22,88 @@ import Footer from "../components/Footer";
 
 export default function BusBooking() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [currentUser] = useState(() => getStoredUser());
 
   // Search & Filter States
   const [searchParams, setSearchParams] = useState({
-    from: "",
-    to: "",
-    date: new Date().toISOString().split("T")[0],
+    from: location.state?.from || "",
+    to: location.state?.to || "",
+    date: location.state?.date || new Date().toISOString().split("T")[0],
   });
 
   const [busTypeFilter, setBusTypeFilter] = useState("All");
-  const [maxPriceFilter, setMaxPriceFilter] = useState(2000);
+  const [maxPriceFilter, setMaxPriceFilter] = useState(25000);
   const [departureWindow, setDepartureWindow] = useState("All");
+  const [bookingModeFilter, setBookingModeFilter] = useState("All");
   const [sortBy, setSortBy] = useState("time_asc");
 
-  // Buses Data State
-  const [buses, setBuses] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Buses Data State (Instant-load from cache if available)
+  const [buses, setBuses] = useState(() => {
+    try {
+      const saved = localStorage.getItem("moveSmart_cachedBuses");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const saved = localStorage.getItem("moveSmart_cachedBuses");
+      return !saved || JSON.parse(saved).length === 0;
+    } catch {
+      return true;
+    }
+  });
+  const [fetchError, setFetchError] = useState(null);
+
+  // Auto-adapt max fare filter when buses load
+  useEffect(() => {
+    if (buses.length > 0) {
+      const highestFare = buses.reduce((max, b) => Math.max(max, Number(b.price) || 0), 2000);
+      if (highestFare > maxPriceFilter) {
+        setMaxPriceFilter(highestFare);
+      }
+    }
+  }, [buses]);
 
   // Fetch Buses from Backend API
-  const fetchBuses = useCallback(async (params = searchParams) => {
+  const fetchBuses = useCallback(async (params) => {
+    const activeParams = params || searchParams;
     setLoading(true);
+    setFetchError(null);
     try {
       const response = await axios.get("/api/buses", {
-        timeout: 6000,
+        timeout: 20000, // 20s to allow Atlas cold queries
         params: {
-          from: params.from,
-          to: params.to,
-          date: params.date,
+          from: activeParams.from,
+          to: activeParams.to,
+          date: activeParams.date,
         },
       });
 
-      if (response.data && response.data.buses) {
+      if (response.data && Array.isArray(response.data.buses)) {
         setBuses(response.data.buses);
-      } else {
-        setBuses([]);
+        try {
+          localStorage.setItem("moveSmart_cachedBuses", JSON.stringify(response.data.buses));
+        } catch (e) {
+          console.warn("Could not cache buses in localStorage:", e);
+        }
       }
     } catch (err) {
       console.error("Error fetching buses:", err);
-      setBuses([]);
+      setFetchError(err.message || "Failed to load bus fleet");
     } finally {
       setLoading(false);
     }
   }, [searchParams]);
 
   useEffect(() => {
-    fetchBuses();
-  }, [fetchBuses]);
+    fetchBuses(searchParams);
+  }, [searchParams]);
 
   const handleSearchSubmit = (newParams) => {
     setSearchParams(newParams);
-    fetchBuses(newParams);
   };
 
   const matchDepartureWindow = (timeStr, window) => {
@@ -117,6 +148,12 @@ export default function BusBooking() {
       if (!matchDepartureWindow(bus.departureTime, departureWindow)) {
         return false;
       }
+      if (bookingModeFilter === "online" && bus.bookingEnabled !== true) {
+        return false;
+      }
+      if (bookingModeFilter === "walkin" && bus.bookingEnabled === true) {
+        return false;
+      }
       return true;
     })
     .sort((a, b) => {
@@ -130,19 +167,19 @@ export default function BusBooking() {
   const handleViewAllBuses = () => {
     setBusTypeFilter("All");
     setDepartureWindow("All");
-    setMaxPriceFilter(2000);
-    const newParams = { from: "", to: "", date: searchParams.date };
-    setSearchParams(newParams);
-    fetchBuses(newParams);
+    setBookingModeFilter("All");
+    const highestFare = buses.reduce((max, b) => Math.max(max, Number(b.price) || 0), 25000);
+    setMaxPriceFilter(highestFare);
+    setSearchParams({ from: "", to: "", date: searchParams.date });
   };
 
   const handleResetFilters = () => {
     setBusTypeFilter("All");
     setDepartureWindow("All");
-    setMaxPriceFilter(2000);
-    const defaultParams = { from: "", to: "", date: searchParams.date };
-    setSearchParams(defaultParams);
-    fetchBuses(defaultParams);
+    setBookingModeFilter("All");
+    const highestFare = buses.reduce((max, b) => Math.max(max, Number(b.price) || 0), 25000);
+    setMaxPriceFilter(highestFare);
+    setSearchParams({ from: "", to: "", date: searchParams.date });
   };
 
   return (
@@ -222,6 +259,42 @@ export default function BusBooking() {
               </select>
             </div>
 
+            {/* Booking Mode Filter (Admin Given Online vs Walk-in) */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>Booking:</span>
+              <div className="time-pills-group">
+                <button
+                  type="button"
+                  onClick={() => setBookingModeFilter("All")}
+                  className={`time-pill-btn ${bookingModeFilter === "All" ? "active" : ""}`}
+                >
+                  All ({buses.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingModeFilter("online")}
+                  className={`time-pill-btn ${bookingModeFilter === "online" ? "active" : ""}`}
+                  style={{
+                    color: bookingModeFilter === "online" ? "#15803d" : undefined,
+                    fontWeight: bookingModeFilter === "online" ? 800 : undefined,
+                  }}
+                >
+                  🟢 Online ({buses.filter((b) => b.bookingEnabled === true).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingModeFilter("walkin")}
+                  className={`time-pill-btn ${bookingModeFilter === "walkin" ? "active" : ""}`}
+                  style={{
+                    color: bookingModeFilter === "walkin" ? "#475569" : undefined,
+                    fontWeight: bookingModeFilter === "walkin" ? 800 : undefined,
+                  }}
+                >
+                  🎫 Walk-in ({buses.filter((b) => b.bookingEnabled !== true).length})
+                </button>
+              </div>
+            </div>
+
             {/* Departure Window */}
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
               <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>Departure:</span>
@@ -245,11 +318,11 @@ export default function BusBooking() {
               <input
                 type="range"
                 min="50"
-                max="2000"
-                step="25"
+                max={Math.max(25000, ...buses.map((b) => Number(b.price) || 0))}
+                step="50"
                 value={maxPriceFilter}
                 onChange={(e) => setMaxPriceFilter(Number(e.target.value))}
-                style={{ accentColor: "var(--primary)", cursor: "pointer", width: 90 }}
+                style={{ accentColor: "var(--primary)", cursor: "pointer", width: 100 }}
               />
               <span style={{ fontWeight: 800, color: "var(--primary)", background: "var(--primary-light)", padding: "2px 8px", borderRadius: 8 }}>
                 ₹{maxPriceFilter}
@@ -328,6 +401,24 @@ export default function BusBooking() {
                     </button>
                   </div>
                 </>
+              ) : fetchError ? (
+                <>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: "#b91c1c", margin: 0 }}>
+                    Unable to Connect to Fleet Database
+                  </h3>
+                  <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "6px 0 18px", maxWidth: 500, marginInline: "auto" }}>
+                    The backend database query timed out or is synchronizing ({fetchError}). Please click below to retry loading buses.
+                  </p>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => fetchBuses({ from: "", to: "", date: searchParams.date })}
+                      style={{ padding: "10px 20px", borderRadius: 12, background: "var(--primary)", color: "#ffffff", border: "none", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    >
+                      <RefreshCcw size={16} /> Retry Bus Fleet
+                    </button>
+                  </div>
+                </>
               ) : (
                 <>
                   <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
@@ -363,6 +454,8 @@ export default function BusBooking() {
                   bus={bus}
                   searchFrom={searchParams.from}
                   searchTo={searchParams.to}
+                  travelDate={searchParams.date}
+                  onBookingSuccess={() => fetchBuses()}
                 />
               ))}
             </div>

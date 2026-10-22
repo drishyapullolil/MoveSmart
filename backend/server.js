@@ -55,12 +55,11 @@ mongoose.connection.on("reconnected", () => {
 });
 
 mongoose.connect(mongoURI, {
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 15000,
-    connectTimeoutMS: 10000,
+    serverSelectionTimeoutMS: 15000,
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 30000,
     maxPoolSize: 20,
-    minPoolSize: 2,
-    heartbeatFrequencyMS: 10000,
+    maxIdleTimeMS: 30000,
     family: 4, // Use IPv4, skip trying IPv6
 })
     .catch((error) => {
@@ -80,6 +79,7 @@ app.use((req, res, next) => {
                 req.path === "/api/routes" ||
                 req.path === "/api/public-routes" ||
                 req.path === "/api/admin/drivers" ||
+                req.path.startsWith("/api/driver") ||
                 req.path.startsWith("/api/monitoring/"))
         ) {
             return next();

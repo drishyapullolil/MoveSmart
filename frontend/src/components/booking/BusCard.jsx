@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import axios from "axios";
 import {
   Bus,
   Clock,
@@ -16,18 +17,38 @@ import {
   Navigation,
   ArrowRight,
   Camera,
-  Film
+  Film,
+  Lock,
+  Unlock,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle,
 } from "lucide-react";
 
 import LiveBusMap from "../common/LiveBusMap";
 import BusGallery from "./BusGallery";
+import SeatLayout from "./SeatLayout";
+import BookingSummary from "./BookingSummary";
+import BookingSuccess from "./BookingSuccess";
+import { getStoredUser, getStoredToken } from "../../utils/session";
 
-export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
+export default function BusCard({ bus, searchFrom = "", searchTo = "", travelDate = "", onBookingSuccess }) {
   const [showDetails, setShowDetails] = useState(false);
   const [showLiveMap, setShowLiveMap] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [selectedStationIndex, setSelectedStationIndex] = useState(null);
+
+  // Seat Selection & Booking Modal States
+  const [showSeatModal, setShowSeatModal] = useState(false);
+  const [selectedSeats, setSelectedSeats] = useState([]);
+  const [freshBookedSeats, setFreshBookedSeats] = useState(bus?.bookedSeats || []);
+  const [freshTotalSeats, setFreshTotalSeats] = useState(bus?.totalSeats || 32);
+  const [isRefreshingSeats, setIsRefreshingSeats] = useState(false);
+  const [ineligibleMessage, setIneligibleMessage] = useState("");
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  const [confirmedBookingData, setConfirmedBookingData] = useState(null);
 
   const {
     _id,
@@ -180,6 +201,134 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
     (searchFrom && !searchFrom.toLowerCase().includes("all") && displayStartStation.name !== startStation.name) ||
     (searchTo && !searchTo.toLowerCase().includes("all") && displayEndStation.name !== endStation.name);
 
+  // ---------------- BOOKING & 5-MIN TAKEOFF CUTOFF EVALUATION ----------------
+  const bookingEnabled = bus?.bookingEnabled === true;
+  const tripStarted = bus?.tripStarted || bus?.bookingStatus === "CLOSED_DRIVE_STARTED";
+  const isCutoffPassed = bus?.bookingStatus === "CLOSED_5MIN_CUTOFF" || (bus?.minutesUntilCutoff != null && bus?.minutesUntilCutoff <= 0);
+  const isBookingOpen = bookingEnabled && !tripStarted && !isCutoffPassed && bus?.isBookingOpen === true;
+
+  const bookingStatus = !bookingEnabled
+    ? "DISABLED_BY_ADMIN"
+    : tripStarted
+    ? "CLOSED_DRIVE_STARTED"
+    : isCutoffPassed
+    ? "CLOSED_5MIN_CUTOFF"
+    : (bus?.bookingStatus || "OPEN");
+
+  const bookingCloseTime = bus?.bookingCloseTime || "";
+  const minutesUntilCutoff = bus?.minutesUntilCutoff;
+
+  const handleSeatToggle = (seatId) => {
+    setSelectedSeats((prev) =>
+      prev.includes(seatId) ? prev.filter((s) => s !== seatId) : [...prev, seatId]
+    );
+  };
+
+  const handleOpenSeatModal = async () => {
+    setBookingError("");
+    setIneligibleMessage("");
+    setIsRefreshingSeats(true);
+    const busIdentifier = _id || bus?.id || bus?.busId || bus?.busNumber;
+    const effectiveTargetDate = travelDate || bus?.serviceDate || new Date().toISOString().split("T")[0];
+    try {
+      const res = await axios.get(`/api/seats/${busIdentifier}`, {
+        params: {
+          date: effectiveTargetDate,
+          travelDate: effectiveTargetDate,
+          serviceDate: effectiveTargetDate,
+        },
+      });
+      if (res.data && res.data.success) {
+        if (!res.data.isBookingEligible || res.data.bookingEnabled === false) {
+          setIneligibleMessage(res.data.message || "Online seat booking is disabled for this bus.");
+          return;
+        }
+        setFreshBookedSeats(res.data.bookedSeats || []);
+        if (res.data.totalSeats) setFreshTotalSeats(res.data.totalSeats);
+        setShowSeatModal(true);
+      } else {
+        setIneligibleMessage(res.data?.message || "Bus is currently ineligible for online booking.");
+      }
+    } catch (err) {
+      console.error("Failed to refresh seat availability:", err);
+      const msg = err.response?.data?.message || "Seat booking is currently unavailable for this bus.";
+      setIneligibleMessage(msg);
+    } finally {
+      setIsRefreshingSeats(false);
+    }
+  };
+
+  const handleConfirmBooking = async (bookingData) => {
+    setIsSubmittingBooking(true);
+    setBookingError("");
+    try {
+      const user = getStoredUser();
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const passengerName = bookingData.passengerName || bookingData.passengerDetails?.name || user?.name || "Passenger";
+      const passengerPhone = bookingData.passengerPhone || bookingData.passengerDetails?.phone || user?.phone || "";
+      const passengerEmail = bookingData.passengerEmail || bookingData.passengerDetails?.email || user?.email || "";
+      const fromLoc = bookingData.fromLocation || bookingData.pickupStation || displayStartStation.name || fromLocation;
+      const toLoc = bookingData.toLocation || bookingData.dropoffStation || displayEndStation.name || toLocation;
+
+      const payload = {
+        busId: _id || bus.id || bus.busId,
+        route_id: bus.route_id,
+        seatsBooked: selectedSeats,
+        selectedSeats: selectedSeats,
+        serviceDate: travelDate || new Date().toISOString().split("T")[0],
+        travelDate: travelDate || new Date().toISOString().split("T")[0],
+        fromLocation: fromLoc,
+        toLocation: toLoc,
+        totalFare: bookingData.totalPrice,
+        totalPrice: bookingData.totalPrice,
+        passengerName,
+        passengerPhone,
+        passengerEmail,
+        passengers: bookingData.passengers || [],
+        paymentMethod: bookingData.paymentMethod || "rfid",
+        arrivalTime: displayEndStation.arrivalTime || arrivalTime,
+      };
+
+      const res = await axios.post("/api/bookings", payload, { headers });
+      if (res.data && res.data.booking) {
+        setConfirmedBookingData({
+          ...res.data.booking,
+          bookingId: res.data.booking._id || res.data.booking.bookingId || "MS-" + Date.now().toString(36).toUpperCase(),
+          passengerName: payload.passengerName,
+          passengerEmail: payload.passengerEmail,
+          passengerPhone: payload.passengerPhone,
+          passengers: payload.passengers,
+          busName: busName,
+          busNumber: busNumber,
+          busType: busType,
+          operator: operator,
+          fromLocation: payload.fromLocation,
+          toLocation: payload.toLocation,
+          travelDate: payload.serviceDate,
+          departureTime: displayStartStation.departureTime || departureTime,
+          arrivalTime: payload.arrivalTime,
+          selectedSeats: selectedSeats,
+          totalPrice: payload.totalFare,
+          paymentMethod: payload.paymentMethod,
+          driverName: driverName,
+          driverPhone: driverPhone,
+          driverLicense: driverLicense,
+        });
+        if (typeof onBookingSuccess === "function") {
+          onBookingSuccess(res.data.booking);
+        }
+      }
+    } catch (err) {
+      console.error("Booking error:", err);
+      const errMsg = err.response?.data?.message || err.message || "Failed to complete reservation.";
+      setBookingError(errMsg);
+    } finally {
+      setIsSubmittingBooking(false);
+    }
+  };
+
   const handleStationClick = (idx) => {
     if (selectedStationIndex === idx) {
       setSelectedStationIndex(null);
@@ -191,6 +340,113 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
 
   return (
     <div className={`bus-card-box ${showDetails ? "expanded-bus" : ""}`}>
+      {/* Real-Time 5-Min Pre-Departure Cutoff & Drive-Start Status Banner */}
+      <div style={{ marginBottom: "12px" }}>
+        {bookingStatus === "OPEN" ? (
+          <div
+            style={{
+              background: "linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)",
+              border: "1.5px solid #86efac",
+              borderRadius: "12px",
+              padding: "9px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontWeight: "800", color: "#15803d" }}>
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e", display: "inline-block" }}></span>
+              <span>🟢 Online Booking OPEN</span>
+              <span style={{ color: "#166534", fontWeight: "600", fontSize: "12px" }}>
+                • Locks 5 mins before takeoff from main station (at <strong>{bookingCloseTime || "5m prior to departure"}</strong>)
+              </span>
+            </div>
+            {minutesUntilCutoff != null && minutesUntilCutoff > 0 && minutesUntilCutoff <= 120 && (
+              <span style={{ fontSize: "11px", background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "6px", fontWeight: "800", border: "1px solid #86efac" }}>
+                ⏱️ {minutesUntilCutoff}m until cutoff
+              </span>
+            )}
+          </div>
+        ) : bookingStatus === "CLOSED_5MIN_CUTOFF" ? (
+          <div
+            style={{
+              background: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)",
+              border: "1.5px solid #fcd34d",
+              borderRadius: "12px",
+              padding: "9px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontWeight: "800", color: "#b45309" }}>
+              <Clock size={15} color="#d97706" />
+              <span>⏱️ Booking Closed: Must book at least 5 mins before takeoff from main station</span>
+              <span style={{ color: "#92400e", fontWeight: "600", fontSize: "11px" }}>
+                (Takeoff scheduled at {departureTime})
+              </span>
+            </div>
+            <span style={{ fontSize: "11px", background: "#fde68a", color: "#92400e", padding: "2px 8px", borderRadius: "6px", fontWeight: "800" }}>
+              Walk-in Counter Only
+            </span>
+          </div>
+        ) : bookingStatus === "CLOSED_DRIVE_STARTED" ? (
+          <div
+            style={{
+              background: "linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)",
+              border: "1.5px solid #d8b4fe",
+              borderRadius: "12px",
+              padding: "9px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontWeight: "800", color: "#7e22ce" }}>
+              <span style={{ fontSize: "15px" }}>🚀</span>
+              <span>Drive Started: Bus is live in transit from origin station</span>
+              <span style={{ color: "#6b21a8", fontWeight: "600", fontSize: "11px" }}>
+                (Driver commenced trip session • Online booking locked)
+              </span>
+            </div>
+            <span style={{ fontSize: "11px", background: "#e9d5ff", color: "#6b21a8", padding: "2px 8px", borderRadius: "6px", fontWeight: "800" }}>
+              In Transit
+            </span>
+          </div>
+        ) : (
+          <div
+            style={{
+              background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)",
+              border: "1.5px solid #cbd5e1",
+              borderRadius: "12px",
+              padding: "9px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "8px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontWeight: "800", color: "#334155" }}>
+              <Lock size={14} color="#64748b" />
+              <span>🎫 Walk-in / Station Counter Ticketing Only</span>
+              <span style={{ color: "#64748b", fontWeight: "600", fontSize: "11px" }}>
+                (Admin has not set online booking for this bus)
+              </span>
+            </div>
+            <span style={{ fontSize: "11px", background: "#e2e8f0", color: "#334155", padding: "2px 8px", borderRadius: "6px", fontWeight: "800", border: "1px solid #cbd5e1" }}>
+              Walk-in Only
+            </span>
+          </div>
+        )}
+      </div>
+
       <div className="bus-card-header-row">
         {/* Bus Title & Operator */}
         <div className="bus-info-group">
@@ -278,8 +534,10 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
         <div className="bus-price-action" style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div className="price-display">
-              <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fare / Ticket</span>
-              <span className="price-num">₹{price}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>
+                {bus.searchContext?.segmentPrice && bus.searchContext.segmentPrice !== price ? "Segment Fare / Ticket" : "Fare / Ticket"}
+              </span>
+              <span className="price-num">₹{bus.searchContext?.segmentPrice || price}</span>
             </div>
 
             <button
@@ -338,6 +596,81 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
               <span>{showLiveMap ? "Hide Live Map" : "🛰️ Live Location"}</span>
             </button>
           </div>
+
+          {/* Ineligible Alert if backend rejected eligibility */}
+          {ineligibleMessage && (
+            <div style={{ fontSize: 11.5, color: "#b91c1c", background: "#fef2f2", padding: "6px 10px", borderRadius: 8, border: "1px solid #fecaca", textAlign: "center", marginBottom: 6, fontWeight: 700 }}>
+              ⚠️ {ineligibleMessage}
+            </div>
+          )}
+
+          {/* Online Booking Button or Disabled Lockout Button */}
+          {isBookingOpen ? (
+            <button
+              type="button"
+              onClick={handleOpenSeatModal}
+              disabled={isRefreshingSeats}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                width: "100%",
+                justifyContent: "center",
+                padding: "10px 18px",
+                borderRadius: 12,
+                background: isRefreshingSeats ? "#93c5fd" : "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                color: "#ffffff",
+                fontSize: 13,
+                fontWeight: 800,
+                border: "none",
+                cursor: isRefreshingSeats ? "wait" : "pointer",
+                boxShadow: "0 4px 14px rgba(37, 99, 235, 0.35)",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <Sparkles size={16} />
+              <span>{isRefreshingSeats ? "Checking Availability..." : "Select Seats & Book"}</span>
+            </button>
+          ) : (
+            <div>
+              <button
+                type="button"
+                disabled
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  width: "100%",
+                  justifyContent: "center",
+                  padding: "10px 18px",
+                  borderRadius: 12,
+                  background: "#f1f5f9",
+                  color: "#94a3b8",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  border: "1px solid #cbd5e1",
+                  cursor: "not-allowed",
+                }}
+                title={bus?.bookingStatusReason || (!bookingEnabled ? "Online booking disabled by Admin for this bus" : "Booking closed")}
+              >
+                <Lock size={14} />
+                <span>
+                  {bookingStatus === "CLOSED_DRIVE_STARTED"
+                    ? "Drive Started (Locked)"
+                    : bookingStatus === "CLOSED_5MIN_CUTOFF"
+                    ? "Closed (< 5m to takeoff)"
+                    : !bookingEnabled
+                    ? "Walk-in Only (No Online Booking)"
+                    : "Booking Closed"}
+                </span>
+              </button>
+              {!bookingEnabled && (
+                <div style={{ fontSize: "11px", color: "#64748b", background: "#f8fafc", padding: "6px 8px", borderRadius: "8px", border: "1px dashed #cbd5e1", textAlign: "center", marginTop: "4px", fontWeight: "600" }}>
+                  🔒 Online booking disabled for this bus. Tickets available via walk-in / conductor.
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             type="button"
@@ -789,6 +1122,154 @@ export default function BusCard({ bus, searchFrom = "", searchTo = "" }) {
         isOpen={showGallery}
         onClose={() => setShowGallery(false)}
       />
+
+      {/* Interactive Seat Selection & Booking Modal */}
+      {showSeatModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.7)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 16,
+          }}
+          onClick={() => setShowSeatModal(false)}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: 24,
+              padding: 24,
+              maxWidth: 960,
+              width: "100%",
+              maxHeight: "92vh",
+              overflowY: "auto",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+              position: "relative",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowSeatModal(false)}
+              style={{
+                position: "absolute",
+                top: 18,
+                right: 18,
+                background: "#f1f5f9",
+                border: "none",
+                borderRadius: "50%",
+                width: 34,
+                height: 34,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <X size={18} color="#64748b" />
+            </button>
+
+            {/* Modal Header */}
+            <div style={{ marginBottom: 18, paddingRight: 40 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, background: "#dbeafe", color: "#1d4ed8", padding: "2px 8px", borderRadius: 6 }}>
+                  {busNumber}
+                </span>
+                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+                  {busType} • {operator}
+                </span>
+              </div>
+              <h3 style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", margin: "0 0 6px 0" }}>
+                Seat Reservation — {busName}
+              </h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#475569" }}>
+                <span>Route: <strong>{fromLocation} ➔ {toLocation}</strong></span>
+                <span>•</span>
+                <span>Departure: <strong>{departureTime}</strong></span>
+                <span>•</span>
+                <span style={{ color: "#d97706", fontWeight: 700 }}>
+                  ⏱️ Takeoff Cutoff: Reservations lock at {bookingCloseTime || "5m before departure"}
+                </span>
+              </div>
+            </div>
+
+            {/* Error alert inside modal if booking was rejected by backend */}
+            {bookingError && (
+              <div
+                style={{
+                  background: "#fef2f2",
+                  border: "1.5px solid #fecaca",
+                  borderRadius: 12,
+                  padding: "12px 16px",
+                  marginBottom: 16,
+                  color: "#b91c1c",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <AlertCircle size={18} />
+                <div>{bookingError}</div>
+              </div>
+            )}
+
+            {/* Interactive Seat Layout & Booking Summary Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20, alignItems: "start" }}>
+              <div>
+                <SeatLayout
+                  totalSeats={freshTotalSeats || totalSeats || 32}
+                  bookedSeats={freshBookedSeats || bus?.bookedSeats || []}
+                  selectedSeats={selectedSeats}
+                  onSeatToggle={handleSeatToggle}
+                  pricePerSeat={price || 200}
+                />
+              </div>
+
+              <div>
+                <BookingSummary
+                  bus={bus}
+                  selectedSeats={selectedSeats}
+                  searchFrom={searchFrom}
+                  searchTo={searchTo}
+                  travelDate={travelDate}
+                  currentUser={getStoredUser()}
+                  onConfirmBooking={handleConfirmBooking}
+                  onSeatToggle={handleSeatToggle}
+                  isSubmitting={isSubmittingBooking}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Booking Confirmation Pass Modal */}
+      {confirmedBookingData && (
+        <BookingSuccess
+          booking={confirmedBookingData}
+          onClose={() => {
+            setConfirmedBookingData(null);
+            setShowSeatModal(false);
+            setSelectedSeats([]);
+          }}
+          onGoToDashboard={() => {
+            setConfirmedBookingData(null);
+            setShowSeatModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

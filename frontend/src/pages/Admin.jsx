@@ -126,7 +126,7 @@ export default function Admin({ defaultTab = "overview" }) {
       return;
     }
   }, [navigate]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
   const [darkMode, setDarkMode] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
 
@@ -222,7 +222,7 @@ export default function Admin({ defaultTab = "overview" }) {
       setLiveFleetLoading(true);
       const res = await axios.get("/api/buses/live-fleet");
       if (res.data?.success) {
-        setLiveFleetBuses(res.data.buses || []);
+        setLiveFleetBuses(res.data.buses || res.data.fleet || []);
       }
     } catch (err) {
       console.error("Error fetching live fleet:", err);
@@ -398,7 +398,7 @@ export default function Admin({ defaultTab = "overview" }) {
 
   const fetchLiveAlerts = useCallback(async () => {
     try {
-      const res = await axios.get("/api/monitoring/alerts?status=All");
+      const res = await axios.get("/api/monitoring/alerts?status=All&includeResolved=true");
       setLiveAlerts(res.data.alerts || []);
     } catch (err) {
       console.error("Error fetching live alerts:", err);
@@ -759,75 +759,47 @@ export default function Admin({ defaultTab = "overview" }) {
     });
 
     // Real-Time Live Bus Fleet GPS Tracking Listeners
-    socket.on("bus:locationUpdate", (payload) => {
-      setLiveFleetBuses((prev) =>
-        prev.map((bus) => {
-          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
-            return {
-              ...bus,
-              isLive: true,
-              trackingStatus: payload.trackingStatus || "LIVE",
-              activeLocation: payload
-            };
-          }
-          return bus;
-        })
-      );
-    });
+    const updateFleetBus = (payload, isLiveOverride = null, statusOverride = null) => {
+      if (!payload || (!payload.busId && !payload.busNumber)) return;
+      const targetId = payload.busId ? String(payload.busId) : null;
+      const targetNumber = payload.busNumber ? String(payload.busNumber) : null;
 
-    socket.on("bus:trackingStarted", (payload) => {
       setLiveFleetBuses((prev) =>
         prev.map((bus) => {
-          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
-            return {
-              ...bus,
-              isLive: true,
-              trackingStatus: "LIVE",
-              activeLocation: payload
-            };
-          }
-          return bus;
-        })
-      );
-    });
+          const match = (targetId && String(bus._id) === targetId) || (targetNumber && bus.busNumber === targetNumber);
+          if (!match) return bus;
 
-    socket.on("bus:trackingStopped", (payload) => {
-      setLiveFleetBuses((prev) =>
-        prev.map((bus) => {
-          if (bus._id === payload.busId || bus.busNumber === payload.busNumber) {
-            return {
-              ...bus,
-              isLive: false,
-              trackingStatus: "OFFLINE",
-              activeLocation: null
-            };
-          }
-          return bus;
-        })
-      );
-    });
+          const isLive = isLiveOverride !== null
+            ? isLiveOverride
+            : payload.isTracking !== false && payload.status !== "OFFLINE" && payload.status !== "COMPLETED";
 
-    socket.on("bus:trackingDelayed", (payload) => {
-      setLiveFleetBuses((prev) =>
-        prev.map((bus) => {
-          if (bus._id === payload.busId) {
-            return { ...bus, trackingStatus: "DELAYED" };
-          }
-          return bus;
-        })
-      );
-    });
+          const trackingStatus = statusOverride || payload.status || (isLive ? "LIVE" : "OFFLINE");
 
-    socket.on("bus:trackingOffline", (payload) => {
-      setLiveFleetBuses((prev) =>
-        prev.map((bus) => {
-          if (bus._id === payload.busId) {
-            return { ...bus, isLive: false, trackingStatus: "OFFLINE", activeLocation: null };
-          }
-          return bus;
+          return {
+            ...bus,
+            isLive,
+            trackingStatus,
+            activeLocation: isLive ? {
+              ...payload,
+              latitude: Number(payload.latitude || bus.latitude),
+              longitude: Number(payload.longitude || bus.longitude),
+              speed: Number(payload.speed || 0),
+              heading: Number(payload.heading || 0),
+              driverName: payload.driverName || bus.driverName,
+              currentStopName: payload.currentStopName || bus.currentStopName || "",
+              lastUpdated: payload.lastUpdated || Date.now(),
+            } : null
+          };
         })
       );
-    });
+    };
+
+    socket.on("bus:locationUpdate", (payload) => updateFleetBus(payload));
+    socket.on("admin:fleet-location", (payload) => updateFleetBus(payload));
+    socket.on("bus:trackingStarted", (payload) => updateFleetBus(payload, true, "LIVE"));
+    socket.on("bus:trackingStopped", (payload) => updateFleetBus(payload, false, "OFFLINE"));
+    socket.on("bus:trackingDelayed", (payload) => updateFleetBus(payload, true, "DELAYED"));
+    socket.on("bus:trackingOffline", (payload) => updateFleetBus(payload, false, "OFFLINE"));
 
     return () => {
       socket.disconnect();
@@ -1357,12 +1329,25 @@ export default function Admin({ defaultTab = "overview" }) {
   const filteredLiveFleet = liveFleetBuses.filter((bus) => {
     const q = liveFleetSearch.toLowerCase().trim();
     if (!q) return true;
-    return (
+    const directMatch =
       (bus.busNumber && bus.busNumber.toLowerCase().includes(q)) ||
       (bus.busName && bus.busName.toLowerCase().includes(q)) ||
       (bus.route && bus.route.toLowerCase().includes(q)) ||
-      (bus.driverName && bus.driverName.toLowerCase().includes(q))
-    );
+      (bus.driverName && bus.driverName.toLowerCase().includes(q));
+    if (directMatch) return true;
+
+    const stopsMatch =
+      (Array.isArray(bus.intermediateStops) &&
+        bus.intermediateStops.some((s) => {
+          const sName = typeof s === "object" && s !== null ? (s.name || s.stationName || s.station) : s;
+          return sName && String(sName).toLowerCase().includes(q);
+        })) ||
+      (Array.isArray(bus.stops) &&
+        bus.stops.some((s) => {
+          const sName = typeof s === "object" && s !== null ? (s.name || s.stopName || s.station) : s;
+          return sName && String(sName).toLowerCase().includes(q);
+        }));
+    return Boolean(stopsMatch);
   });
 
   const pendingAppsCount = adminApplications.filter(a => (a.status || "").toLowerCase() === "pending").length;
@@ -1388,6 +1373,47 @@ export default function Admin({ defaultTab = "overview" }) {
 
   return (
     <div style={{ minHeight: "100vh", background: bgMain, color: textPrimary, fontFamily: "'Inter', 'Segoe UI', sans-serif", display: "flex", flexDirection: "column" }}>
+      <style>{`
+        @media (max-width: 900px) {
+          .admin-sidebar {
+            position: fixed !important;
+            top: 52px !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            z-index: 1050 !important;
+            width: 250px !important;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3) !important;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease !important;
+          }
+          .admin-sidebar.mobile-open {
+            transform: translateX(0) !important;
+          }
+          .admin-sidebar-backdrop {
+            display: block !important;
+            position: fixed;
+            top: 52px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+            backdrop-filter: blur(2px);
+          }
+          .admin-main-content {
+            padding: 12px 10px !important;
+            width: 100% !important;
+          }
+          .admin-user-pill-text {
+            display: none !important;
+          }
+        }
+        @media (min-width: 901px) {
+          .admin-sidebar-backdrop {
+            display: none !important;
+          }
+        }
+      `}</style>
 
       {/* Toast Notification Container */}
       {toast && (
@@ -1511,7 +1537,7 @@ export default function Admin({ defaultTab = "overview" }) {
 
           {/* Admin Profile & Logout */}
           <div style={{ display: "flex", alignItems: "center", gap: "10px", borderLeft: `1px solid ${borderCol}`, paddingLeft: "12px" }}>
-            <div style={{ textAlign: "right" }}>
+            <div style={{ textAlign: "right" }} className="admin-user-pill-text">
               <div style={{ fontSize: "12px", fontWeight: "800", color: textPrimary }}>{user?.fullName || user?.name || "System Admin"}</div>
               <div style={{ fontSize: "10px", color: textSecondary }}>{user?.email || "admin@movesmart.com"}</div>
             </div>
@@ -1527,20 +1553,31 @@ export default function Admin({ defaultTab = "overview" }) {
       </header>
 
       {/* BODY LAYOUT: SIDEBAR + MAIN CONTENT */}
-      <div style={{ display: "flex", flex: 1 }}>
+      <div style={{ display: "flex", flex: 1, position: "relative" }}>
+
+        {/* MOBILE SIDEBAR BACKDROP */}
+        {!sidebarCollapsed && (
+          <div
+            className="admin-sidebar-backdrop"
+            onClick={() => setSidebarCollapsed(true)}
+          />
+        )}
 
         {/* LEFT SIDEBAR NAVIGATION */}
-        <aside style={{
-          width: sidebarCollapsed ? "56px" : "215px",
-          transition: "all 0.22s ease",
-          background: darkMode ? "#1e293b" : "#ffffff",
-          borderRight: `1px solid ${borderCol}`,
-          padding: "10px 6px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "2px",
-          flexShrink: 0
-        }}>
+        <aside
+          className={`admin-sidebar ${!sidebarCollapsed ? "mobile-open" : ""}`}
+          style={{
+            width: sidebarCollapsed ? "56px" : "215px",
+            transition: "all 0.22s ease",
+            background: darkMode ? "#1e293b" : "#ffffff",
+            borderRight: `1px solid ${borderCol}`,
+            padding: "10px 6px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+            flexShrink: 0
+          }}
+        >
           {[
             { id: "overview", label: "Dashboard Overview", Icon: LayoutDashboard },
             { id: "tripHistory", label: "Bus Trips & RFID Reports", Icon: RouteIcon, badge: activeTripsCount },
@@ -1564,7 +1601,12 @@ export default function Admin({ defaultTab = "overview" }) {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (typeof window !== "undefined" && window.innerWidth <= 900) {
+                    setSidebarCollapsed(true);
+                  }
+                }}
                 title={item.badge !== undefined && item.badge > 0 ? `${item.label} (${item.badge})` : item.label}
                 style={{
                   width: "100%",
@@ -1614,7 +1656,7 @@ export default function Admin({ defaultTab = "overview" }) {
         </aside>
 
         {/* MAIN DASHBOARD CONTENT AREA */}
-        <main style={{ flex: 1, minWidth: 0, padding: "14px 18px", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box" }}>
+        <main className="admin-main-content" style={{ flex: 1, minWidth: 0, padding: "14px 18px", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box" }}>
 
           {/* CRITICAL LIVE EMERGENCY SAFETY BANNER */}
           {activeEmergencyAlert && (
@@ -1860,7 +1902,7 @@ export default function Admin({ defaultTab = "overview" }) {
                     <div style={{ fontSize: "11px", marginTop: "2px" }}>When a driver clicks START DRIVE, their session ID, GPS, and RFID taps appear here.</div>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "14px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: "14px" }}>
                     {activeTripSessions.map((act) => (
                       <div
                         key={act._id || act.tripSessionId}
@@ -2159,14 +2201,31 @@ export default function Admin({ defaultTab = "overview" }) {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <h4 style={{ fontSize: "14px", fontWeight: "900", margin: 0, color: textPrimary, display: "flex", alignItems: "center", gap: "6px" }}>
                         <Flame size={16} style={{ color: "#ef4444" }} />
-                        Recent Driver Safety Incidents &amp; Alerts ({liveAlerts.filter(a => a.status === "Active").length} Active)
+                        Recent Safety Incidents &amp; Alerts ({liveAlerts.filter(a => a.status === "Active").length} Active, {liveAlerts.filter(a => a.status === "Acknowledged").length} Ack)
                       </h4>
-                      <button
-                        onClick={fetchLiveAlerts}
-                        style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "800", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
-                      >
-                        <RefreshCw size={12} /> Refresh
-                      </button>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <button
+                          onClick={() => setActiveTab("driverSafety")}
+                          style={{
+                            background: "rgba(124, 58, 237, 0.1)",
+                            border: "1px solid rgba(124, 58, 237, 0.3)",
+                            color: "#7c3aed",
+                            fontSize: "11px",
+                            fontWeight: "800",
+                            padding: "3px 8px",
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          📊 Action Chart
+                        </button>
+                        <button
+                          onClick={fetchLiveAlerts}
+                          style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "800", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                        >
+                          <RefreshCw size={12} /> Refresh
+                        </button>
+                      </div>
                     </div>
 
                     {/* Alerts Scrollable Box */}
@@ -2190,9 +2249,11 @@ export default function Admin({ defaultTab = "overview" }) {
                           <span style={{ fontSize: "12px" }}>Operating drivers are currently verified and operating safely.</span>
                         </div>
                       ) : (
-                        liveAlerts.slice(0, 5).map((alert) => {
+                        liveAlerts.slice(0, 6).map((alert) => {
                           const isCritical = alert.severity === "Critical";
                           const isResolved = alert.status === "Resolved";
+                          const isAcknowledged = alert.status === "Acknowledged";
+                          const isOffline = alert.eventType === "MONITORING_DEVICE_OFFLINE";
                           return (
                             <div
                               key={alert._id}
@@ -2214,15 +2275,15 @@ export default function Admin({ defaultTab = "overview" }) {
                                     width: "32px",
                                     height: "32px",
                                     borderRadius: "10px",
-                                    background: isCritical ? "rgba(239, 68, 68, 0.15)" : "rgba(249, 115, 22, 0.15)",
-                                    color: isCritical ? "#dc2626" : "#ea580c",
+                                    background: isOffline ? "rgba(234, 88, 12, 0.15)" : (isCritical ? "rgba(239, 68, 68, 0.15)" : "rgba(249, 115, 22, 0.15)"),
+                                    color: isOffline ? "#ea580c" : (isCritical ? "#dc2626" : "#ea580c"),
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
                                     flexShrink: 0,
                                   }}
                                 >
-                                  {isCritical ? <Flame size={18} /> : <AlertTriangle size={18} />}
+                                  {isOffline ? <WifiOff size={18} /> : (isCritical ? <Flame size={18} /> : <AlertTriangle size={18} />)}
                                 </div>
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
@@ -2231,6 +2292,20 @@ export default function Admin({ defaultTab = "overview" }) {
                                     </strong>
                                     <span style={{ fontSize: "10px", fontWeight: "900", padding: "1px 6px", borderRadius: "4px", background: isCritical ? "#ef4444" : "#f97316", color: "#ffffff" }}>
                                       {alert.severity}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: "10px",
+                                        fontWeight: "800",
+                                        padding: "1px 6px",
+                                        borderRadius: "4px",
+                                        background: isResolved
+                                          ? "rgba(34, 197, 94, 0.15)"
+                                          : (isAcknowledged ? "rgba(14, 165, 233, 0.15)" : "rgba(239, 68, 68, 0.15)"),
+                                        color: isResolved ? "#16a34a" : (isAcknowledged ? "#0284c7" : "#ef4444"),
+                                      }}
+                                    >
+                                      ● {alert.status}
                                     </span>
                                   </div>
                                   <div style={{ fontSize: "11.5px", color: textSecondary, marginTop: "2px" }}>
@@ -2259,21 +2334,40 @@ export default function Admin({ defaultTab = "overview" }) {
                                   </button>
                                 )}
                                 {!isResolved && (
-                                  <button
-                                    onClick={() => handleResolveAlert(alert._id)}
-                                    style={{
-                                      padding: "5px 10px",
-                                      borderRadius: "8px",
-                                      background: "#16a34a",
-                                      color: "#ffffff",
-                                      border: "none",
-                                      fontWeight: "800",
-                                      fontSize: "11px",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    Resolve
-                                  </button>
+                                  alert.eventType === "MONITORING_DEVICE_OFFLINE" ? (
+                                    <span
+                                      style={{
+                                        padding: "4px 8px",
+                                        borderRadius: "6px",
+                                        background: "rgba(14, 165, 233, 0.12)",
+                                        color: "#0284c7",
+                                        border: "1px solid rgba(14, 165, 233, 0.3)",
+                                        fontSize: "10.5px",
+                                        fontWeight: "800",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "3px",
+                                      }}
+                                    >
+                                      ● Oversight Active (No Resolve Needed)
+                                    </span>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleResolveAlert(alert._id)}
+                                      style={{
+                                        padding: "5px 10px",
+                                        borderRadius: "8px",
+                                        background: "#16a34a",
+                                        color: "#ffffff",
+                                        border: "none",
+                                        fontWeight: "800",
+                                        fontSize: "11px",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Resolve
+                                    </button>
+                                  )
                                 )}
                               </div>
                             </div>
@@ -2727,12 +2821,16 @@ export default function Admin({ defaultTab = "overview" }) {
                         <button onClick={() => { setSelectedDriverForVerify(d); setDriverVerifyNote(d.verificationNote || ""); }} style={{ flex: 1, padding: "10px", borderRadius: "12px", background: "linear-gradient(135deg, #2e1065, #4c1d95)", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
                           🔍 Inspect License
                         </button>
-                        <button onClick={() => handleUpdateDriverVerification(d._id, "Approved")} style={{ padding: "10px 14px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                          ✓ Accept
-                        </button>
-                        <button onClick={() => handleUpdateDriverVerification(d._id, "Rejected")} style={{ padding: "10px 14px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-                          ❌ Reject
-                        </button>
+                        {d.verificationStatus !== "Approved" && (
+                          <button onClick={() => handleUpdateDriverVerification(d._id, "Approved")} style={{ padding: "10px 14px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                            ✓ Accept
+                          </button>
+                        )}
+                        {d.verificationStatus !== "Rejected" && (
+                          <button onClick={() => handleUpdateDriverVerification(d._id, "Rejected")} style={{ padding: "10px 14px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+                            ❌ Reject
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -3117,12 +3215,12 @@ export default function Admin({ defaultTab = "overview" }) {
                             </div>
                           );
                         })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* SECTION 10: SETTINGS & TOOLS */}
           {activeTab === "settings" && (
@@ -3930,7 +4028,7 @@ export default function Admin({ defaultTab = "overview" }) {
               </div>
 
               {/* Main Fleet Tracking Workspace: Left Bus List & Right Live Map */}
-              <div style={{ display: "grid", gridTemplateColumns: selectedLiveFleetBus ? "380px 1fr" : "1fr", gap: "24px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: selectedLiveFleetBus ? "repeat(auto-fit, minmax(min(100%, 360px), 1fr))" : "1fr", gap: "24px" }}>
                 {/* Fleet Roster */}
                 <div style={{ background: bgCard, borderRadius: "24px", padding: "20px", border: `1px solid ${borderCol}`, boxShadow: "0 8px 24px rgba(0,0,0,0.04)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -4264,18 +4362,22 @@ export default function Admin({ defaultTab = "overview" }) {
 
             {/* Action Buttons */}
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <button
-                onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Approved", driverVerifyNote)}
-                style={{ flex: 1, padding: "13px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.3)" }}
-              >
-                ✓ Accept &amp; Approve Driver
-              </button>
-              <button
-                onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Rejected", driverVerifyNote)}
-                style={{ padding: "13px 22px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
-              >
-                ❌ Reject Driver
-              </button>
+              {selectedDriverForVerify.verificationStatus !== "Approved" && (
+                <button
+                  onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Approved", driverVerifyNote)}
+                  style={{ flex: 1, padding: "13px", borderRadius: "12px", background: "#16a34a", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer", boxShadow: "0 4px 14px rgba(22, 163, 74, 0.3)" }}
+                >
+                  ✓ Accept &amp; Approve Driver
+                </button>
+              )}
+              {selectedDriverForVerify.verificationStatus !== "Rejected" && (
+                <button
+                  onClick={() => handleUpdateDriverVerification(selectedDriverForVerify._id, "Rejected", driverVerifyNote)}
+                  style={{ padding: "13px 22px", borderRadius: "12px", background: "rgba(225, 29, 72, 0.1)", color: "#dc2626", border: "1px solid rgba(225, 29, 72, 0.3)", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}
+                >
+                  ❌ Reject Driver
+                </button>
+              )}
               <button
                 onClick={() => setSelectedDriverForVerify(null)}
                 style={{ padding: "13px 20px", borderRadius: "12px", background: darkMode ? "#334155" : "#f1f5f9", color: textPrimary, border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}

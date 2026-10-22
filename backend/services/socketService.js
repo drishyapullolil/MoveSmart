@@ -3,6 +3,7 @@ const MonitoringSession = require("../models/MonitoringSession");
 const MonitoringConfig = require("../models/MonitoringConfig");
 const SafetyEvent = require("../models/SafetyEvent");
 const Bus = require("../models/Bus");
+const TripSession = require("../models/TripSession");
 
 let io = null;
 let heartbeatCheckInterval = null;
@@ -58,7 +59,7 @@ const initSocketService = (httpServer) => {
     // =========================================================
     // 1. PASSENGER & ADMIN LIVE BUS TRACKING ROOM SUBSCRIPTION
     // =========================================================
-    socket.on("joinBusTracking", (data) => {
+    socket.on("joinBusTracking", async (data) => {
       const busId = typeof data === "string" ? data : data?.busId;
       if (!busId) return;
 
@@ -68,7 +69,45 @@ const initSocketService = (httpServer) => {
       console.log(`📍 Socket ${socket.id} joined live tracking for ${roomKey}`);
 
       // Immediately send latest known live location if available
-      const currentLoc = activeBusLocations.get(String(busId));
+      let currentLoc = activeBusLocations.get(String(busId));
+
+      // Fallback: If not found in memory, query active TripSession from DB
+      if (!currentLoc || !currentLoc.isTracking) {
+        try {
+          const activeTrip = await TripSession.findOne({
+            busId,
+            status: { $in: ["ACTIVE", "PAUSED"] }
+          }).sort({ createdAt: -1 }).lean();
+
+          if (activeTrip) {
+            const busDoc = await Bus.findById(busId).lean();
+            const lat = Number(activeTrip.currentStop?.latitude) || 9.9658;
+            const lng = Number(activeTrip.currentStop?.longitude) || 76.3204;
+            currentLoc = {
+              busId: String(busId),
+              busNumber: activeTrip.busNumber || busDoc?.busNumber || "Bus",
+              busName: activeTrip.busName || busDoc?.busName || "MoveSmart Express",
+              routeName: activeTrip.routeName || (busDoc ? `${busDoc.fromLocation} ➔ ${busDoc.toLocation}` : ""),
+              driverName: activeTrip.driverName || busDoc?.driverName || "Driver",
+              tripSessionId: activeTrip.tripSessionId,
+              currentStopName: activeTrip.currentStop?.name || "",
+              currentStopCode: activeTrip.currentStop?.code || "",
+              latitude: lat,
+              longitude: lng,
+              speed: 25,
+              heading: 45,
+              isTracking: true,
+              status: activeTrip.status === "PAUSED" ? "PAUSED" : "LIVE",
+              lastUpdated: activeTrip.updatedAt ? new Date(activeTrip.updatedAt).getTime() : Date.now(),
+              timestamp: activeTrip.updatedAt ? new Date(activeTrip.updatedAt).toISOString() : new Date().toISOString()
+            };
+            activeBusLocations.set(String(busId), currentLoc);
+          }
+        } catch (e) {
+          console.warn("Fallback TripSession fetch failed in joinBusTracking:", e.message);
+        }
+      }
+
       if (currentLoc) {
         socket.emit("bus:locationUpdate", currentLoc);
         socket.emit("bus:initialLocation", currentLoc);
@@ -306,6 +345,38 @@ const getAllActiveBusLocations = () => {
   return list;
 };
 
+const setActiveBusLocation = (busId, data) => {
+  if (!busId || !data) return null;
+  const stringBusId = String(busId);
+  const existing = activeBusLocations.get(stringBusId) || {};
+  const merged = {
+    ...existing,
+    ...data,
+    busId: stringBusId,
+    lastUpdated: data.lastUpdated || Date.now(),
+    isTracking: data.isTracking !== undefined ? Boolean(data.isTracking) : true,
+    status: data.status || "LIVE",
+  };
+  activeBusLocations.set(stringBusId, merged);
+  return merged;
+};
+
+const removeActiveBusLocation = (busId) => {
+  if (!busId) return;
+  const stringBusId = String(busId);
+  const existing = activeBusLocations.get(stringBusId);
+  if (existing) {
+    activeBusLocations.set(stringBusId, {
+      ...existing,
+      isTracking: false,
+      status: "OFFLINE",
+      lastUpdated: Date.now(),
+    });
+  } else {
+    activeBusLocations.delete(stringBusId);
+  }
+};
+
 // Real-time Event Broadcasters
 const emitSafetyAlert = (eventDoc) => {
   if (!io) return;
@@ -439,6 +510,8 @@ module.exports = {
   initSocketService,
   getIO,
   getActiveBusLocation,
+  setActiveBusLocation,
+  removeActiveBusLocation,
   getAllActiveBusLocations,
   emitSafetyAlert,
   emitTelemetryUpdate,

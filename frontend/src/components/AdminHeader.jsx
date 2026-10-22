@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Shield, Bus, LayoutDashboard, LogOut, ExternalLink, User, Bell, Package, Clock } from "lucide-react";
+import { Shield, Bus, LayoutDashboard, LogOut, ExternalLink, User, Bell, Package, Clock, Menu, X, Image as ImageIcon } from "lucide-react";
 import { getStoredUser, clearStoredSession } from "../utils/session";
 
 export default function AdminHeader() {
@@ -8,6 +8,7 @@ export default function AdminHeader() {
   const location = useLocation();
   const [user, setUser] = useState(() => getStoredUser());
   const [showNotif, setShowNotif] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
     if (window.confirm("Are you sure you want to sign out of the Admin Console?")) {
@@ -32,16 +33,34 @@ export default function AdminHeader() {
         boxShadow: "0 4px 30px rgba(88, 28, 135, 0.4)",
       }}
     >
+      <style>{`
+        .admin-desktop-nav {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .admin-mobile-toggle {
+          display: none !important;
+        }
+        @media (max-width: 1080px) {
+          .admin-desktop-nav {
+            display: none !important;
+          }
+          .admin-mobile-toggle {
+            display: flex !important;
+          }
+        }
+      `}</style>
       <div
         style={{
           maxWidth: "1380px",
           margin: "0 auto",
-          padding: "16px 24px",
+          padding: "12px 16px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: "16px",
+          flexWrap: "nowrap",
+          gap: "12px",
         }}
       >
         {/* Brand Logo & Admin Badge */}
@@ -113,7 +132,7 @@ export default function AdminHeader() {
         </div>
 
         {/* Admin Navigation Links */}
-        <nav style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <nav className="admin-desktop-nav" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <Link
             to="/admin"
             style={{
@@ -421,10 +440,177 @@ export default function AdminHeader() {
             }}
           >
             <LogOut size={16} />
-            <span>Sign Out</span>
+            <span style={{ display: "inline-block" }}>Sign Out</span>
+          </button>
+
+          {/* Mobile Hamburger Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="admin-mobile-toggle"
+            title="Toggle Admin Navigation"
+            style={{
+              background: "rgba(255, 255, 255, 0.12)",
+              border: "1px solid rgba(255, 255, 255, 0.25)",
+              borderRadius: "10px",
+              padding: "8px",
+              cursor: "pointer",
+              color: "#ffffff",
+              display: "none",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
         </div>
       </div>
+
+      {/* Mobile Navigation Drawer */}
+      {mobileMenuOpen && (
+        <div
+          style={{
+            background: "rgba(30, 10, 60, 0.98)",
+            borderTop: "1px solid rgba(255, 255, 255, 0.12)",
+            padding: "16px 20px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            boxShadow: "0 14px 30px rgba(0, 0, 0, 0.5)",
+            backdropFilter: "blur(20px)",
+          }}
+        >
+          <Link
+            to="/admin"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <LayoutDashboard size={16} /> Overview
+          </Link>
+          <Link
+            to="/admin/bus-routes"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin/bus-routes") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin/bus-routes") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <Bus size={16} /> Bus Routes &amp; Schedules
+          </Link>
+          <Link
+            to="/admin/bus-fleet"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin/bus-fleet") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin/bus-fleet") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <Bus size={16} /> Bus Fleet
+          </Link>
+          <Link
+            to="/admin/shift-roster"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin/shift-roster") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin/shift-roster") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <Clock size={16} /> 3-Shift Driver Roster
+          </Link>
+          <Link
+            to="/admin/bus-gallery"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin/bus-gallery") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin/bus-gallery") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <ImageIcon size={16} /> Bus Gallery
+          </Link>
+          <Link
+            to="/admin/lost-found"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: isActive("/admin/lost-found") ? "#4ade80" : "#e2e8f0",
+              background: isActive("/admin/lost-found") ? "rgba(74, 222, 128, 0.1)" : "transparent",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+            }}
+          >
+            <Package size={16} /> Lost &amp; Found
+          </Link>
+          <Link
+            to="/"
+            target="_blank"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              color: "#c4b5fd",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: "14px",
+              borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+              marginTop: "4px",
+              paddingTop: "12px",
+            }}
+          >
+            <ExternalLink size={16} /> Open Passenger Site
+          </Link>
+        </div>
+      )}
     </header>
   );
 }

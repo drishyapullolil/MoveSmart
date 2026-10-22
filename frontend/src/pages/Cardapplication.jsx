@@ -517,7 +517,7 @@ export default function CardApplication() {
           <div style={{
             background: "linear-gradient(135deg, #1e1b4b 0%, #2e1065 100%)",
             borderRadius: "24px",
-            padding: "36px 30px",
+            padding: "clamp(20px, 4vw, 36px) clamp(16px, 3vw, 30px)",
             color: "#ffffff",
             marginBottom: "28px",
             boxShadow: "0 15px 35px rgba(30, 27, 75, 0.25)",
@@ -656,7 +656,7 @@ export default function CardApplication() {
 
         {!existingCard && (
         /* Main Application Form Box */
-        <div style={{ background: "#ffffff", borderRadius: "24px", padding: "36px", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)" }}>
+        <div style={{ background: "#ffffff", borderRadius: "24px", padding: "clamp(20px, 4vw, 36px)", boxShadow: "var(--rta-shadow)", border: "1px solid var(--border-color)" }}>
 
           {submittedAppInfo ? (
             /* Submission Success Screen */
@@ -738,7 +738,7 @@ export default function CardApplication() {
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                     {/* First Name & Second Name */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "14px" }}>
                       <div>
                         <label htmlFor="firstName" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           First Name <span style={{ color: "#e11d48" }}>*</span>
@@ -838,7 +838,7 @@ export default function CardApplication() {
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "14px" }}>
                       <div>
                         <label htmlFor="dob" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           Date of Birth <span style={{ color: "#e11d48" }}>*</span>
@@ -1030,7 +1030,7 @@ export default function CardApplication() {
                       )}
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "14px" }}>
                       <div>
                         <label htmlFor="state" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           State <span style={{ color: "#e11d48" }}>*</span>
@@ -1103,7 +1103,7 @@ export default function CardApplication() {
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "14px" }}>
                       <div>
                         <label htmlFor="city" style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           City / Town <span style={{ color: "#e11d48" }}>*</span>
@@ -1225,7 +1225,7 @@ export default function CardApplication() {
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: formData.cardCategory === "Student" ? "1fr" : "1fr 1fr", gap: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: formData.cardCategory === "Student" ? "1fr" : "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "14px" }}>
                       <div>
                         <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "6px" }}>
                           Auto Required ID Type

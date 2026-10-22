@@ -1178,7 +1178,7 @@ export default function Landing() {
           {/* Role Preview Card Frame */}
           <div className="role-preview-card-frame">
             {activeRole === "passenger" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "36px", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: "36px", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: "11px", fontWeight: "800", color: "#059669", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "8px" }}>
                     Passenger App & Web Portal
@@ -1255,7 +1255,7 @@ export default function Landing() {
             )}
 
             {activeRole === "driver" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "36px", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: "36px", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "8px" }}>
                     Driver Console & Edge AI Vision
@@ -1328,7 +1328,7 @@ export default function Landing() {
             )}
 
             {activeRole === "admin" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "36px", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: "36px", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: "11px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "8px" }}>
                     Admin Command & Fleet Management

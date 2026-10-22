@@ -35,6 +35,7 @@ import {
   FileText,
   Video
 } from "lucide-react";
+import AlertActionAnalyticsChart from "./AlertActionAnalyticsChart";
 
 export default function DriverSafetyMonitoring({ darkMode = false, showToast = () => {} }) {
   // Theme Variables
@@ -74,6 +75,12 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
   const [resolvingAlert, setResolvingAlert] = useState(null);
   const [resolutionNote, setResolutionNote] = useState("");
   const [submittingResolve, setSubmittingResolve] = useState(false);
+
+  // Alert Action Analytics & Inspection States
+  const [actionAnalytics, setActionAnalytics] = useState(null);
+  const [actionFilter, setActionFilter] = useState("All"); // 'All' | 'Active' | 'Acknowledged' | 'Resolved' | 'MONITORING_DEVICE_OFFLINE'
+  const [alertSearchQuery, setAlertSearchQuery] = useState("");
+  const [selectedFocusAlert, setSelectedFocusAlert] = useState(null);
 
   // History State & Filters
   const [historyEvents, setHistoryEvents] = useState([]);
@@ -149,10 +156,21 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const res = await axios.get("/api/monitoring/alerts?status=All");
+      const res = await axios.get("/api/monitoring/alerts?status=All&includeResolved=true");
       setAlerts(res.data.alerts || []);
     } catch (err) {
       console.error("Error fetching safety alerts:", err);
+    }
+  }, []);
+
+  const fetchActionAnalytics = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/monitoring/action-analytics");
+      if (res.data?.analytics) {
+        setActionAnalytics(res.data.analytics);
+      }
+    } catch (err) {
+      console.error("Error fetching alert action analytics:", err);
     }
   }, []);
 
@@ -198,16 +216,18 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
       fetchAlerts(),
       fetchStats(),
       fetchConfig(),
+      fetchActionAnalytics(),
     ]).finally(() => setLoading(false));
 
     const interval = setInterval(() => {
       fetchActiveSessions();
       fetchAlerts();
       fetchStats();
+      fetchActionAnalytics();
     }, 8000);
 
     return () => clearInterval(interval);
-  }, [fetchActiveSessions, fetchAlerts, fetchStats, fetchConfig]);
+  }, [fetchActiveSessions, fetchAlerts, fetchStats, fetchConfig, fetchActionAnalytics]);
 
   useEffect(() => {
     if (subTab === "history") {
@@ -264,6 +284,7 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
 
       fetchStats();
       fetchActiveSessions();
+      fetchActionAnalytics();
 
       if (alertDoc.severity === "Critical" || alertDoc.severity === "High") {
         playAlertChime(alertDoc.severity);
@@ -450,6 +471,7 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
         prev.map((a) => (a._id === alertId ? { ...a, status: "Acknowledged" } : a))
       );
       fetchStats();
+      fetchActionAnalytics();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to acknowledge alert", "error");
     }
@@ -474,6 +496,7 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
       );
       setResolvingAlert(null);
       fetchStats();
+      fetchActionAnalytics();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to resolve alert", "error");
     } finally {
@@ -685,10 +708,10 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
         </div>
 
         {/* Quick Tabs Toggle */}
-        <div style={{ display: "flex", gap: "8px", background: "rgba(255,255,255,0.08)", padding: "4px", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.15)" }}>
+        <div style={{ display: "flex", gap: "8px", background: "rgba(255,255,255,0.08)", padding: "4px", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.15)", flexWrap: "wrap" }}>
           {[
             { id: "live", label: "Live Fleet View", icon: Activity, count: activeSessions.length },
-            { id: "alerts", label: "Active Alerts", icon: AlertTriangle, count: alerts.filter((a) => a.status === "Active").length, alert: true },
+            { id: "alerts", label: "Alerts & Action Chart", icon: AlertTriangle, count: alerts.filter((a) => a.status === "Active").length, alert: true },
             { id: "history", label: "Safety Logs", icon: Clock },
             { id: "config", label: "Thresholds & Tools", icon: Sliders },
           ].map((t) => {
@@ -727,7 +750,7 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
       </div>
 
       {/* KPI METRIC CARDS ROW */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: "16px" }}>
         <div style={{ background: bgCard, padding: "18px 20px", borderRadius: "16px", border: `1px solid ${borderCol}`, boxShadow: "0 4px 14px rgba(0,0,0,0.03)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
             <span style={{ fontSize: "12.5px", fontWeight: "800", color: textSecondary, textTransform: "uppercase" }}>Monitored Trips</span>
@@ -915,7 +938,7 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
                 </button>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: "18px" }}>
                 {/* Active Sessions Real Video Cards */}
                 {activeSessions.map((session) => {
                   const frame =
@@ -1181,154 +1204,350 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
       )}
 
       {/* ==================================================== */}
-      {/* SUBTAB 2: REAL-TIME SAFETY ALERTS & RESOLUTION       */}
+      {/* SUBTAB 2: REAL-TIME SAFETY ALERTS & ACTION CHARTS    */}
       {/* ==================================================== */}
       {subTab === "alerts" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* SECTION 1: VISUAL ACTION CHARTS & METRICS */}
+          <AlertActionAnalyticsChart
+            analytics={actionAnalytics}
+            activeFilter={actionFilter}
+            onFilterChange={(filterKey) => setActionFilter(filterKey)}
+            selectedAlert={selectedFocusAlert}
+            onSelectAlert={(a) => setSelectedFocusAlert(a)}
+            selectedDriver={alertSearchQuery}
+            onSelectDriver={(driverName) => {
+              setAlertSearchQuery(driverName || "");
+              showToast(`Filtered safety records for ${driverName || "all drivers"}`);
+            }}
+            darkMode={darkMode}
+            onRefresh={() => {
+              fetchAlerts();
+              fetchActionAnalytics();
+            }}
+            onAcknowledgeAlert={handleAcknowledgeAlert}
+          />
+
+          {/* SECTION 2: INTERACTIVE ACTION FILTER BAR & ALERTS LIST */}
           <div style={{ background: bgCard, borderRadius: "18px", border: `1px solid ${borderCol}`, overflow: "hidden", boxShadow: "0 4px 14px rgba(0,0,0,0.03)" }}>
-            <div style={{ padding: "18px 24px", borderBottom: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ padding: "18px 24px", borderBottom: `1px solid ${borderCol}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px" }}>
               <div>
-                <h3 style={{ fontSize: "16px", fontWeight: "900", margin: 0, color: textPrimary }}>
-                  Active Driver Safety Alerts &amp; Incidents
+                <h3 style={{ fontSize: "16px", fontWeight: "900", margin: 0, color: textPrimary, display: "flex", alignItems: "center", gap: "8px" }}>
+                  <ShieldAlert size={18} style={{ color: "#7c3aed" }} />
+                  Fleet Safety Alert Records &amp; Action Management
                 </h3>
                 <p style={{ fontSize: "12.5px", color: textSecondary, margin: "3px 0 0 0" }}>
-                  Real-time feed of drowsiness, driver absence, identity mismatch, and offline events.
+                  Filter, inspect diagnostics, acknowledge telemetry interruptions, and review audit resolutions.
                 </p>
               </div>
-              <button
-                onClick={fetchAlerts}
-                style={{ display: "flex", alignItems: "center", gap: "6px", background: "none", border: `1px solid ${borderCol}`, padding: "6px 14px", borderRadius: "10px", fontSize: "12.5px", fontWeight: "700", color: textPrimary, cursor: "pointer" }}
-              >
-                <RefreshCw size={13} /> Refresh Alerts
-              </button>
+
+              {/* Search Box */}
+              <div style={{ position: "relative", minWidth: "240px" }}>
+                <Search size={14} style={{ position: "absolute", left: "12px", top: "11px", color: textSecondary }} />
+                <input
+                  type="text"
+                  placeholder="Filter by Bus (e.g. KL-06-345) or Driver..."
+                  value={alertSearchQuery}
+                  onChange={(e) => setAlertSearchQuery(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px 8px 34px",
+                    borderRadius: "10px",
+                    border: `1px solid ${borderCol}`,
+                    background: bgCardSecondary,
+                    color: textPrimary,
+                    fontSize: "12.5px",
+                    fontWeight: "600",
+                    outline: "none",
+                  }}
+                />
+              </div>
             </div>
 
-            {alerts.length === 0 ? (
-              <div style={{ padding: "60px 20px", textAlign: "center", color: textSecondary }}>
-                <CheckCircle size={48} style={{ color: "#16a34a", margin: "0 auto 12px auto", display: "block" }} />
-                <h4 style={{ fontSize: "15px", fontWeight: "800", color: textPrimary, margin: "0 0 4px 0" }}>
-                  All Clear! No Active Safety Alerts
-                </h4>
-                <p style={{ fontSize: "13px", maxWidth: "450px", margin: "0 auto" }}>
-                  All operating drivers are currently verified, alert, and streaming heartbeat signals normally.
-                </p>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", divideY: `1px solid ${borderCol}` }}>
-                {alerts.map((alert) => {
-                  const isCritical = alert.severity === "Critical";
-                  const isHigh = alert.severity === "High";
-                  const isAcknowledged = alert.status === "Acknowledged";
-                  const isResolved = alert.status === "Resolved";
+            {/* Filter Pills Bar */}
+            <div style={{ padding: "12px 24px", borderBottom: `1px solid ${borderCol}`, background: bgCardSecondary, display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: "11.5px", fontWeight: "900", color: textSecondary, textTransform: "uppercase", marginRight: "4px" }}>
+                ACTION FILTER:
+              </span>
 
-                  return (
-                    <div
-                      key={alert._id}
+              {[
+                { id: "All", label: "All Alerts", count: alerts.length },
+                { id: "Active", label: "🔴 Action Needed", count: alerts.filter(a => a.status === "Active").length, color: "#ef4444" },
+                { id: "Acknowledged", label: "🔵 Acknowledged", count: alerts.filter(a => a.status === "Acknowledged").length, color: "#0284c7" },
+                { id: "Resolved", label: "🟢 Resolved", count: alerts.filter(a => a.status === "Resolved").length, color: "#16a34a" },
+                { id: "MONITORING_DEVICE_OFFLINE", label: "📡 Device Offline", count: alerts.filter(a => a.eventType === "MONITORING_DEVICE_OFFLINE").length, color: "#ea580c" },
+              ].map((pill) => {
+                const isSel = actionFilter === pill.id;
+                return (
+                  <button
+                    key={pill.id}
+                    onClick={() => setActionFilter(pill.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "6px 12px",
+                      borderRadius: "8px",
+                      border: isSel ? `1.5px solid ${pill.color || "#7c3aed"}` : `1px solid ${borderCol}`,
+                      background: isSel ? (darkMode ? "rgba(124, 58, 237, 0.2)" : "#ede9fe") : bgCard,
+                      color: isSel ? (pill.color || "#7c3aed") : textPrimary,
+                      fontWeight: isSel ? "900" : "700",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span>{pill.label}</span>
+                    <span
                       style={{
-                        padding: "18px 24px",
-                        borderBottom: `1px solid ${borderCol}`,
-                        background: isCritical && !isResolved ? "rgba(239, 68, 68, 0.04)" : "transparent",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        flexWrap: "wrap",
-                        gap: "16px",
+                        padding: "1px 6px",
+                        borderRadius: "10px",
+                        fontSize: "11px",
+                        fontWeight: "900",
+                        background: isSel ? (pill.color || "#7c3aed") : (darkMode ? "rgba(255,255,255,0.08)" : "#e2e8f0"),
+                        color: isSel ? "#ffffff" : textSecondary,
                       }}
                     >
-                      <div style={{ display: "flex", gap: "16px", alignItems: "flex-start" }}>
-                        <div
-                          style={{
-                            width: "42px",
-                            height: "42px",
-                            borderRadius: "12px",
-                            background: isCritical ? "rgba(239, 68, 68, 0.15)" : (isHigh ? "rgba(249, 115, 22, 0.15)" : "rgba(109, 40, 217, 0.1)"),
-                            color: isCritical ? "#dc2626" : (isHigh ? "#ea580c" : "#7c3aed"),
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {isCritical ? <Flame size={22} /> : (isHigh ? <AlertTriangle size={22} /> : <Info size={22} />)}
-                        </div>
+                      {pill.count}
+                    </span>
+                  </button>
+                );
+              })}
 
-                        <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                            <strong style={{ color: textPrimary, fontSize: "14.5px" }}>{alert.title}</strong>
-                            <span style={{ fontSize: "11px", fontWeight: "900", padding: "2px 8px", borderRadius: "6px", background: isCritical ? "#ef4444" : (isHigh ? "#f97316" : "#6d28d9"), color: "#ffffff" }}>
-                              {alert.severity}
-                            </span>
-                            <span style={{ fontSize: "11px", fontWeight: "800", padding: "2px 8px", borderRadius: "6px", background: isResolved ? "rgba(34, 197, 94, 0.2)" : (isAcknowledged ? "rgba(14, 165, 233, 0.2)" : "rgba(239, 68, 68, 0.2)"), color: isResolved ? "#16a34a" : (isAcknowledged ? "#0284c7" : "#dc2626") }}>
-                              ● {alert.status}
-                            </span>
-                          </div>
+              {(actionFilter !== "All" || alertSearchQuery) && (
+                <button
+                  onClick={() => {
+                    setActionFilter("All");
+                    setAlertSearchQuery("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#ef4444",
+                    fontSize: "11.5px",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                    marginLeft: "auto",
+                  }}
+                >
+                  Reset Filters ✕
+                </button>
+              )}
+            </div>
 
-                          <p style={{ color: textPrimary, fontSize: "13px", margin: "6px 0 8px 0" }}>
-                            {alert.description}
-                          </p>
+            {/* Alerts List */}
+            {(() => {
+              const filteredAlerts = alerts.filter((alert) => {
+                if (actionFilter === "Active" && alert.status !== "Active") return false;
+                if (actionFilter === "Acknowledged" && alert.status !== "Acknowledged") return false;
+                if (actionFilter === "Resolved" && alert.status !== "Resolved") return false;
+                if (actionFilter === "MONITORING_DEVICE_OFFLINE" && alert.eventType !== "MONITORING_DEVICE_OFFLINE") return false;
 
-                          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", fontSize: "12px", color: textSecondary }}>
-                            <span><strong>Bus:</strong> {alert.busNumber}</span>
-                            <span><strong>Driver:</strong> {alert.driverName}</span>
-                            {alert.routeName && <span><strong>Route:</strong> {alert.routeName}</span>}
-                            <span><strong>Time:</strong> {new Date(alert.createdAt).toLocaleTimeString()} ({new Date(alert.createdAt).toLocaleDateString()})</span>
-                            {alert.acknowledgedByName && (
-                              <span style={{ color: "#0284c7" }}>
-                                <strong>Ack by:</strong> {alert.acknowledgedByName} ({new Date(alert.acknowledgedAt).toLocaleTimeString()})
-                              </span>
-                            )}
-                            {alert.resolvedByName && (
-                              <span style={{ color: "#16a34a" }}>
-                                <strong>Resolved by:</strong> {alert.resolvedByName}: <em>"{alert.resolutionNote}"</em>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                if (alertSearchQuery.trim()) {
+                  const q = alertSearchQuery.toLowerCase();
+                  const matchBus = (alert.busNumber || "").toLowerCase().includes(q);
+                  const matchDriver = (alert.driverName || "").toLowerCase().includes(q);
+                  const matchTitle = (alert.title || "").toLowerCase().includes(q);
+                  const matchDesc = (alert.description || "").toLowerCase().includes(q);
+                  const matchStatus = (alert.status || "").toLowerCase().includes(q);
+                  if (!matchBus && !matchDriver && !matchTitle && !matchDesc && !matchStatus) return false;
+                }
 
-                      {/* Action Buttons */}
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        {!isAcknowledged && !isResolved && (
-                          <button
-                            onClick={() => handleAcknowledgeAlert(alert._id)}
+                return true;
+              });
+
+              if (filteredAlerts.length === 0) {
+                return (
+                  <div style={{ padding: "60px 20px", textAlign: "center", color: textSecondary }}>
+                    <CheckCircle size={44} style={{ color: "#16a34a", margin: "0 auto 12px auto", display: "block" }} />
+                    <h4 style={{ fontSize: "15px", fontWeight: "800", color: textPrimary, margin: "0 0 4px 0" }}>
+                      No Alerts Found Matching Filter
+                    </h4>
+                    <p style={{ fontSize: "13px", maxWidth: "420px", margin: "0 auto" }}>
+                      There are no safety alerts matching the selected filter state (<strong>{actionFilter}</strong>).
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {filteredAlerts.map((alert) => {
+                    const isCritical = alert.severity === "Critical";
+                    const isHigh = alert.severity === "High";
+                    const isAcknowledged = alert.status === "Acknowledged";
+                    const isResolved = alert.status === "Resolved";
+                    const isOffline = alert.eventType === "MONITORING_DEVICE_OFFLINE";
+
+                    return (
+                      <div
+                        key={alert._id}
+                        style={{
+                          padding: "18px 24px",
+                          borderBottom: `1px solid ${borderCol}`,
+                          background: isOffline && isAcknowledged
+                            ? (darkMode ? "rgba(14, 165, 233, 0.05)" : "rgba(240, 249, 255, 0.7)")
+                            : (isCritical && !isResolved ? "rgba(239, 68, 68, 0.04)" : "transparent"),
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          flexWrap: "wrap",
+                          gap: "16px",
+                          transition: "background 0.2s ease",
+                        }}
+                      >
+                        <div style={{ display: "flex", gap: "16px", alignItems: "flex-start", flex: 1, minWidth: "280px" }}>
+                          <div
                             style={{
-                              background: "rgba(14, 165, 233, 0.1)",
-                              color: "#0284c7",
-                              border: "1px solid rgba(14, 165, 233, 0.3)",
-                              padding: "8px 14px",
-                              borderRadius: "10px",
-                              fontWeight: "800",
-                              fontSize: "12.5px",
-                              cursor: "pointer",
+                              width: "42px",
+                              height: "42px",
+                              borderRadius: "12px",
+                              background: isOffline
+                                ? "rgba(234, 88, 12, 0.15)"
+                                : (isCritical ? "rgba(239, 68, 68, 0.15)" : (isHigh ? "rgba(249, 115, 22, 0.15)" : "rgba(109, 40, 217, 0.1)")),
+                              color: isOffline ? "#ea580c" : (isCritical ? "#dc2626" : (isHigh ? "#ea580c" : "#7c3aed")),
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              flexShrink: 0,
                             }}
                           >
-                            Acknowledge
-                          </button>
-                        )}
+                            {isOffline ? <WifiOff size={22} /> : (isCritical ? <Flame size={22} /> : (isHigh ? <AlertTriangle size={22} /> : <Info size={22} />))}
+                          </div>
 
-                        {!isResolved && (
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                              <strong style={{ color: textPrimary, fontSize: "14.5px" }}>{alert.title}</strong>
+                              <span style={{ fontSize: "11px", fontWeight: "900", padding: "2px 8px", borderRadius: "6px", background: isCritical ? "#ef4444" : (isHigh ? "#f97316" : "#6d28d9"), color: "#ffffff" }}>
+                                {alert.severity}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: "800",
+                                  padding: "2px 8px",
+                                  borderRadius: "6px",
+                                  background: isResolved
+                                    ? "rgba(34, 197, 94, 0.2)"
+                                    : (isAcknowledged ? "rgba(14, 165, 233, 0.2)" : "rgba(239, 68, 68, 0.2)"),
+                                  color: isResolved ? "#16a34a" : (isAcknowledged ? "#0284c7" : "#dc2626"),
+                                  border: `1px solid ${isResolved ? "rgba(34, 197, 94, 0.4)" : (isAcknowledged ? "rgba(14, 165, 233, 0.4)" : "rgba(239, 68, 68, 0.4)")}`,
+                                }}
+                              >
+                                ● {alert.status}
+                              </span>
+                              {isOffline && (
+                                <span style={{ fontSize: "10.5px", fontWeight: "900", padding: "2px 7px", borderRadius: "6px", background: "rgba(234, 88, 12, 0.15)", color: "#ea580c" }}>
+                                  📡 Telemetry Offline
+                                </span>
+                              )}
+                            </div>
+
+                            <p style={{ color: textPrimary, fontSize: "13px", margin: "6px 0 8px 0", fontWeight: "600", lineHeight: 1.4 }}>
+                              {alert.description}
+                            </p>
+
+                            <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", fontSize: "12px", color: textSecondary }}>
+                              <span><strong>Bus:</strong> <span style={{ color: textPrimary, fontWeight: "800" }}>{alert.busNumber}</span></span>
+                              <span><strong>Driver:</strong> <span style={{ color: textPrimary, fontWeight: "700" }}>{alert.driverName}</span></span>
+                              {alert.routeName && <span><strong>Route:</strong> {alert.routeName}</span>}
+                              <span><strong>Detected:</strong> {new Date(alert.createdAt).toLocaleTimeString()} ({new Date(alert.createdAt).toLocaleDateString()})</span>
+                              {alert.acknowledgedByName && (
+                                <span style={{ color: "#0284c7", fontWeight: "700" }}>
+                                  <strong>Ack by:</strong> {alert.acknowledgedByName} ({new Date(alert.acknowledgedAt || alert.updatedAt).toLocaleTimeString()})
+                                </span>
+                              )}
+                              {alert.resolvedByName && (
+                                <span style={{ color: "#16a34a" }}>
+                                  <strong>Resolved by:</strong> {alert.resolvedByName}: <em>"{alert.resolutionNote}"</em>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fast Action Buttons */}
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexShrink: 0 }}>
                           <button
-                            onClick={() => handleOpenResolveModal(alert)}
+                            onClick={() => setSelectedFocusAlert(alert)}
                             style={{
-                              background: "linear-gradient(135deg, #16a34a, #15803d)",
-                              color: "#ffffff",
-                              border: "none",
-                              padding: "8px 16px",
+                              background: bgCardSecondary,
+                              color: textPrimary,
+                              border: `1px solid ${borderCol}`,
+                              padding: "7px 12px",
                               borderRadius: "10px",
-                              fontWeight: "800",
-                              fontSize: "12.5px",
+                              fontWeight: "700",
+                              fontSize: "12px",
                               cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "5px",
                             }}
                           >
-                            Resolve Alert
+                            <Eye size={13} /> Inspect Alert
                           </button>
-                        )}
+
+                          {!isAcknowledged && !isResolved && (
+                            <button
+                              onClick={() => handleAcknowledgeAlert(alert._id)}
+                              style={{
+                                background: "rgba(14, 165, 233, 0.12)",
+                                color: "#0284c7",
+                                border: "1px solid rgba(14, 165, 233, 0.35)",
+                                padding: "7px 14px",
+                                borderRadius: "10px",
+                                fontWeight: "800",
+                                fontSize: "12px",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Acknowledge
+                            </button>
+                          )}
+
+                          {!isResolved && (
+                            alert.eventType === "MONITORING_DEVICE_OFFLINE" ? (
+                              <span
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "10px",
+                                  background: "rgba(14, 165, 233, 0.12)",
+                                  color: "#0284c7",
+                                  border: "1px solid rgba(14, 165, 233, 0.3)",
+                                  fontSize: "12px",
+                                  fontWeight: "800",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                }}
+                              >
+                                <Info size={13} /> Continuous Oversight (No Resolve Needed)
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenResolveModal(alert)}
+                                style={{
+                                  background: "linear-gradient(135deg, #16a34a, #15803d)",
+                                  color: "#ffffff",
+                                  border: "none",
+                                  padding: "7px 14px",
+                                  borderRadius: "10px",
+                                  fontWeight: "800",
+                                  fontSize: "12px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Resolve Alert
+                              </button>
+                            )
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1779,6 +1998,103 @@ export default function DriverSafetyMonitoring({ darkMode = false, showToast = (
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL 1B: ALERT INSPECTOR & DEVICE DIAGNOSTICS      */}
+      {/* ==================================================== */}
+      {selectedFocusAlert && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: "20px" }}>
+          <div style={{ background: bgCard, width: "100%", maxWidth: "560px", borderRadius: "20px", border: `1px solid ${borderCol}`, padding: "26px", boxShadow: "0 24px 48px rgba(0,0,0,0.4)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: selectedFocusAlert.severity === "Critical" ? "rgba(239, 68, 68, 0.15)" : (selectedFocusAlert.eventType === "MONITORING_DEVICE_OFFLINE" ? "rgba(234, 88, 12, 0.15)" : "rgba(249, 115, 22, 0.15)"), color: selectedFocusAlert.severity === "Critical" ? "#dc2626" : (selectedFocusAlert.eventType === "MONITORING_DEVICE_OFFLINE" ? "#ea580c" : "#ea580c"), display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {selectedFocusAlert.eventType === "MONITORING_DEVICE_OFFLINE" ? <WifiOff size={22} /> : <AlertTriangle size={22} />}
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "17px", fontWeight: "900", margin: 0, color: textPrimary }}>
+                    {selectedFocusAlert.title}
+                  </h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: "900", padding: "1px 7px", borderRadius: "4px", background: selectedFocusAlert.severity === "Critical" ? "#ef4444" : "#f97316", color: "#fff" }}>
+                      {selectedFocusAlert.severity}
+                    </span>
+                    <span style={{ fontSize: "11px", fontWeight: "800", padding: "1px 7px", borderRadius: "4px", background: selectedFocusAlert.status === "Acknowledged" ? "rgba(2, 132, 199, 0.15)" : selectedFocusAlert.status === "Resolved" ? "rgba(22, 163, 74, 0.15)" : "rgba(239, 68, 68, 0.15)", color: selectedFocusAlert.status === "Acknowledged" ? "#0284c7" : selectedFocusAlert.status === "Resolved" ? "#16a34a" : "#dc2626" }}>
+                      ● {selectedFocusAlert.status}
+                    </span>
+                    {selectedFocusAlert.eventType === "MONITORING_DEVICE_OFFLINE" && (
+                      <span style={{ fontSize: "10.5px", fontWeight: "900", padding: "1px 6px", borderRadius: "4px", background: "rgba(234, 88, 12, 0.15)", color: "#ea580c" }}>
+                        Telemetry Offline
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setSelectedFocusAlert(null)} style={{ background: "none", border: "none", color: textSecondary, cursor: "pointer", padding: "4px" }}>
+                <XCircle size={22} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: "13.5px", color: textPrimary, margin: "0 0 16px 0", lineHeight: 1.5, background: bgCardSecondary, padding: "12px 14px", borderRadius: "12px", border: `1px solid ${borderCol}`, fontWeight: "600" }}>
+              {selectedFocusAlert.description}
+            </p>
+
+            {/* Diagnostic Parameters Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "12.5px", marginBottom: "16px" }}>
+              <div style={{ background: bgCardSecondary, padding: "10px 12px", borderRadius: "10px", border: `1px solid ${borderCol}` }}>
+                <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "800" }}>BUS VEHICLE</div>
+                <div style={{ color: textPrimary, fontWeight: "900", fontSize: "14px", marginTop: "2px" }}>{selectedFocusAlert.busNumber}</div>
+              </div>
+              <div style={{ background: bgCardSecondary, padding: "10px 12px", borderRadius: "10px", border: `1px solid ${borderCol}` }}>
+                <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "800" }}>ASSIGNED DRIVER</div>
+                <div style={{ color: textPrimary, fontWeight: "900", fontSize: "14px", marginTop: "2px" }}>{selectedFocusAlert.driverName}</div>
+              </div>
+              <div style={{ background: bgCardSecondary, padding: "10px 12px", borderRadius: "10px", border: `1px solid ${borderCol}` }}>
+                <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "800" }}>FIRST DETECTED</div>
+                <div style={{ color: textPrimary, fontWeight: "700", marginTop: "2px" }}>{new Date(selectedFocusAlert.createdAt).toLocaleString()}</div>
+              </div>
+              <div style={{ background: bgCardSecondary, padding: "10px 12px", borderRadius: "10px", border: `1px solid ${borderCol}` }}>
+                <div style={{ color: textSecondary, fontSize: "11px", fontWeight: "800" }}>ADMIN ACTION STATUS</div>
+                <div style={{ color: selectedFocusAlert.status === "Acknowledged" ? "#0284c7" : selectedFocusAlert.status === "Resolved" ? "#16a34a" : "#ef4444", fontWeight: "900", marginTop: "2px" }}>
+                  {selectedFocusAlert.status} {selectedFocusAlert.acknowledgedByName ? `(${selectedFocusAlert.acknowledgedByName})` : ""}
+                </div>
+              </div>
+            </div>
+
+            {/* Telemetry Oversight Policy Banner */}
+            <div style={{ padding: "12px 14px", borderRadius: "12px", background: "rgba(14, 165, 233, 0.08)", border: "1px solid rgba(14, 165, 233, 0.25)", fontSize: "12px", color: textPrimary, marginBottom: "18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#0284c7", fontWeight: "800", marginBottom: "4px" }}>
+                <Info size={14} /> Admin Telemetry Oversight Policy
+              </div>
+              <div style={{ lineHeight: 1.4 }}>
+                Device and safety alerts in <strong>{selectedFocusAlert.status}</strong> state are preserved in the active audit log. Manual resolution is not required unless the physical device or vehicle run has terminated.
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => setSelectedFocusAlert(null)}
+                style={{ padding: "8px 18px", borderRadius: "10px", border: `1px solid ${borderCol}`, background: bgCardSecondary, color: textPrimary, fontWeight: "700", cursor: "pointer", fontSize: "13px" }}
+              >
+                Close Inspector
+              </button>
+              {selectedFocusAlert.status === "Active" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleAcknowledgeAlert(selectedFocusAlert._id);
+                    setSelectedFocusAlert(prev => prev ? { ...prev, status: "Acknowledged" } : null);
+                  }}
+                  style={{ padding: "8px 18px", borderRadius: "10px", border: "none", background: "linear-gradient(135deg, #0ea5e9, #0284c7)", color: "#fff", fontWeight: "800", cursor: "pointer", fontSize: "13px" }}
+                >
+                  Acknowledge Alert
+                </button>
+              )}
             </div>
           </div>
         </div>

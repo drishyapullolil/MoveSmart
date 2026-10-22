@@ -477,31 +477,17 @@ function Driver({ defaultTab = "dashboard" }) {
   const driverPhoneDigits = String(user?.phone || verificationData?.phone || "").replace(/\D/g, "");
   const driverLicenseStr = (user?.licenseNumber || verificationData?.licenseNumber || "").toLowerCase().trim();
 
-  const filteredBuses = dbBuses.filter((b) => {
-    const busDriverId = String(b.driverId || b.driver_id || "");
-    const busDriverName = (b.driverName || "").toLowerCase().trim();
-    const busDriverEmail = (b.driverEmail || "").toLowerCase().trim();
-    const busDriverPhoneDigits = String(b.driverPhone || "").replace(/\D/g, "");
-    const busDriverLicense = (b.driverLicense || "").toLowerCase().trim();
-
-    const isAssignedToMe = Boolean(
-      b.isReplacementDuty ||
-      (driverIdStr && busDriverId && busDriverId === driverIdStr) ||
-      (driverEmailStr && busDriverEmail && busDriverEmail === driverEmailStr) ||
-      (driverNameStr && busDriverName && busDriverName === driverNameStr) ||
-      (driverLicenseStr && busDriverLicense && busDriverLicense === driverLicenseStr) ||
-      (driverPhoneDigits.length >= 7 && busDriverPhoneDigits.length >= 7 && (busDriverPhoneDigits === driverPhoneDigits || busDriverPhoneDigits.endsWith(driverPhoneDigits.slice(-10))))
-    );
-
-    const matchesQuery =
-      !safeQuery ||
-      (b.busName || "").toLowerCase().includes(safeQuery) ||
-      (b.busNumber || "").toLowerCase().includes(safeQuery) ||
-      (b.fromLocation || "").toLowerCase().includes(safeQuery) ||
-      (b.toLocation || "").toLowerCase().includes(safeQuery);
-
-    return isAssignedToMe && matchesQuery;
-  });
+  const filteredBuses = useMemo(() => {
+    return (dbBuses || []).filter((b) => {
+      if (!safeQuery) return true;
+      return (
+        (b.busName || "").toLowerCase().includes(safeQuery) ||
+        (b.busNumber || "").toLowerCase().includes(safeQuery) ||
+        (b.fromLocation || "").toLowerCase().includes(safeQuery) ||
+        (b.toLocation || "").toLowerCase().includes(safeQuery)
+      );
+    });
+  }, [dbBuses, safeQuery]);
 
   const assignedBus = filteredBuses[activeTripIndex] || filteredBuses[0] || null;
   const drvLfBusNumber = assignedBus?.busNumber || user?.busNumber || "";
@@ -515,16 +501,16 @@ function Driver({ defaultTab = "dashboard" }) {
       const trips = (bus.assignedTrips && bus.assignedTrips.length > 0)
         ? bus.assignedTrips
         : [{
-            id: bus._id || `TRIP-${busIdx + 1}`,
-            departureTime: bus.departureTime || "08:00 AM",
-            arrivalTime: bus.arrivalTime || "10:00 AM",
-            routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
-            fromLocation: bus.fromLocation,
-            toLocation: bus.toLocation,
-            stops: bus.stops || [],
-            shift: bus.assignedShift || bus.shift || "Morning",
-            price: bus.price || 35,
-          }];
+          id: bus._id || `TRIP-${busIdx + 1}`,
+          departureTime: bus.departureTime || "08:00 AM",
+          arrivalTime: bus.arrivalTime || "10:00 AM",
+          routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+          fromLocation: bus.fromLocation,
+          toLocation: bus.toLocation,
+          stops: bus.stops || [],
+          shift: bus.assignedShift || bus.shift || "Morning",
+          price: bus.price || 35,
+        }];
 
       trips.forEach((tr, tripIdx) => {
         const bookedCount = bus.bookedSeats ? bus.bookedSeats.length : Math.max(0, (bus.totalSeats || 32) - (bus.availableSeats ?? 32));
@@ -2216,7 +2202,23 @@ function Driver({ defaultTab = "dashboard" }) {
   const fetchDbBuses = async () => {
     setLoadingBuses(true);
     try {
-      const res = await axios.get("/api/driver/buses");
+      const token = getStoredToken();
+      const stored = getStoredUser() || {};
+      const currentDrvId = user?._id || user?.id || stored._id || stored.id || "";
+      const currentEmail = user?.email || stored.email || "";
+      const currentName = user?.name || stored.name || "";
+      const currentPhone = user?.phone || stored.phone || verificationData?.phone || "";
+      const currentLicense = user?.licenseNumber || stored.licenseNumber || verificationData?.licenseNumber || "";
+
+      const params = {};
+      if (currentDrvId) params.driverId = currentDrvId;
+      if (currentEmail) params.driverEmail = currentEmail;
+      if (currentName) params.driverName = currentName;
+      if (currentPhone) params.driverPhone = currentPhone;
+      if (currentLicense) params.driverLicense = currentLicense;
+
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get("/api/driver/buses", { params, headers, timeout: 15000 });
       setDbBuses(res.data.buses || []);
       fetchDriverDuty();
     } catch (err) {
@@ -2278,7 +2280,7 @@ function Driver({ defaultTab = "dashboard" }) {
   };
 
   useEffect(() => {
-    if (user && authStatus !== "loading") {
+    if (authStatus !== "loading") {
       Promise.allSettled([
         fetchDbBuses(),
         fetchDriverDuty(),
@@ -2287,7 +2289,7 @@ function Driver({ defaultTab = "dashboard" }) {
         fetchRecentRfidTaps(),
       ]);
     }
-  }, [user?.email, authStatus]);
+  }, [user?._id, user?.id, user?.email, user?.name, authStatus]);
 
   // Real-Time Socket.IO Listener for RFID Tap Events & Hardware Device Telemetry
   useEffect(() => {
@@ -4251,1544 +4253,1546 @@ function Driver({ defaultTab = "dashboard" }) {
               </div>
             )}
 
-        {/* LIVE STATUS / KPI MINI-STATS SUMMARY ROW */}
-        {activeTab === "dashboard" && authStatus !== "Unverified" && (
-          <div className="anim-entry-4" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "16px" }}>
-            {/* 1. Today's Trips */}
-            <div className="kpi-mini-card">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="kpi-mini-label">SCHEDULED TRIPS</span>
-                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569" }}>
-                  <Bus size={14} />
-                </div>
-              </div>
-              <div className="kpi-mini-val" style={{ color: "#0F172A" }}>
-                {dynamicSchedules.length || (assignedBus ? 1 : 0)}
-              </div>
-              <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
-                {assignedBus ? `Assigned to ${assignedBus.busNumber}` : "No bus assigned"}
-              </div>
-            </div>
-
-            {/* 2. Passengers Onboard */}
-            <div className="kpi-mini-card">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="kpi-mini-label">PASSENGERS ONBOARD</span>
-                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#ECFDF5", display: "flex", alignItems: "center", justifyContent: "center", color: "#059669" }}>
-                  <Users size={14} />
-                </div>
-              </div>
-              <div className="kpi-mini-val" style={{ color: "#059669" }}>
-                {passengersOnboard || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>/ {totalCapacity}</span>
-              </div>
-              <div style={{ fontSize: "11px", color: "#059669", fontWeight: "700", marginTop: "2px" }}>
-                {totalCapacity > 0 ? `${Math.round(((passengersOnboard || 0) / totalCapacity) * 100)}% Occupancy` : "Live Count"}
-              </div>
-            </div>
-
-            {/* 3. RFID Taps Activity */}
-            <div className="kpi-mini-card">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="kpi-mini-label">RFID TAP ACTIVITY</span>
-                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563EB" }}>
-                  <Radio size={14} />
-                </div>
-              </div>
-              <div className="kpi-mini-val" style={{ color: "#2563EB" }}>
-                {paymentsLog.length || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>taps</span>
-              </div>
-              <div style={{ fontSize: "11px", color: "#2563EB", fontWeight: "700", marginTop: "2px" }}>
-                {rfidDevice?.status === "Connected" ? "● ESP32 Online" : "Ready for Taps"}
-              </div>
-            </div>
-
-            {/* 4. Today's Collections */}
-            <div className="kpi-mini-card">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span className="kpi-mini-label">TODAY'S COLLECTIONS</span>
-                <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EEF2FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#4F46E5" }}>
-                  <Wallet size={14} />
-                </div>
-              </div>
-              <div className="kpi-mini-val" style={{ color: "#4F46E5" }}>
-                ₹{Number(dailyEarnings || 0).toFixed(2)}
-              </div>
-              <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
-                RFID Pass + Cash Tickets
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 7: DRIVER NOTIFICATIONS */}
-        {activeTab === "notifications" && (
-          <DriverNotifications isEmbedded={true} />
-        )}
-
-        {/* TAB 1: DASHBOARD OVERVIEW */}
-        {currentTab === "dashboard" && (
-          <div className="driver-grid-layout anim-entry-5">
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {/* PRIMARY TODAY'S DUTY COCKPIT SHOWCASE CARD */}
-              <div className="duty-cockpit-card">
-                <div className="duty-cockpit-header">
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#059669", background: "#ECFDF5", border: "1px solid #A7F3D0", padding: "3px 8px", borderRadius: "6px" }}>
-                      TODAY'S DUTY
-                    </span>
-                    <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#6366F1", background: "#EEF2FF", border: "1px solid #C7D2FE", padding: "3px 8px", borderRadius: "6px" }}>
-                      {assignedBus?.shift || driverDuty?.shift || "Morning"} SHIFT
-                    </span>
-                    {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
-                      <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", padding: "3px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                        ⚡ TEMPORARY REPLACEMENT
-                      </span>
-                    )}
-                    <span className="duty-badge-bus">
-                      <Bus size={15} color="#059669" />
-                      <span>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</span>
-                    </span>
-                  </div>
-
-                  <span
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: "12px",
-                      fontSize: "12px",
-                      fontWeight: "800",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "5px",
-                      background: tripStatus === "in_progress" ? "#ECFDF5" : "#F1F5F9",
-                      color: tripStatus === "in_progress" ? "#065F46" : "#475569",
-                      border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`,
-                    }}
-                  >
-                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: tripStatus === "in_progress" ? "#10B981" : "#94A3B8" }}></span>
-                    <span>{tripStatus === "in_progress" ? "TRIP IN PROGRESS" : "READY FOR DEPARTURE"}</span>
-                  </span>
-                </div>
-
-                {/* Replacement Notification Banner */}
-                {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
-                  <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#6d28d9", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span>🔄</span>
-                    <span>
-                      You are operating this duty as a temporary replacement for <strong>{assignedBus?.originalDriverName || driverDuty?.originalDriverName || "Regular Driver"}</strong> (Date: {assignedBus?.dutyDate || driverDuty?.date || "Today"}, Shift: {assignedBus?.shift || driverDuty?.shift || "N/A"}).
-                    </span>
-                  </div>
-                )}
-
-                {/* Approved Leave Safety Notice */}
-                {(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave) && (
-                  <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#fef2f2", border: "1.5px solid #fecaca", color: "#dc2626", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <AlertCircle size={16} />
-                    <span>You are currently on approved leave for this shift. Trip departure is disabled by system policy.</span>
-                  </div>
-                )}
-
-                {/* Visual Route Corridor Stepper */}
-                <div className="route-corridor-box">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <span className="route-point-label">ORIGIN TERMINAL</span>
-                    <span style={{ fontSize: "10.5px", fontWeight: "800", color: "#6366F1", letterSpacing: "0.5px" }}>TRANSIT CORRIDOR</span>
-                    <span className="route-point-label">DESTINATION TERMINAL</span>
-                  </div>
-
-                  <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0" }}>
-                    {/* Background Connecting Line */}
-                    <div style={{ position: "absolute", left: "20px", right: "20px", height: "3px", background: tripStatus === "in_progress" ? "linear-gradient(90deg, #059669, #6366F1, #2563EB)" : "#E2E8F0", borderRadius: "3px", zIndex: 1, overflow: "hidden" }}>
-                      {tripStatus === "in_progress" && (
-                        <div style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          width: "30%",
-                          background: "linear-gradient(90deg, transparent, #ffffff, transparent)",
-                          animation: "routeLineGlow 2s infinite linear",
-                        }} />
-                      )}
+            {/* LIVE STATUS / KPI MINI-STATS SUMMARY ROW */}
+            {activeTab === "dashboard" && authStatus !== "Unverified" && (
+              <div className="anim-entry-4" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+                {/* 1. Today's Trips */}
+                <div className="kpi-mini-card">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span className="kpi-mini-label">SCHEDULED TRIPS</span>
+                    <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569" }}>
+                      <Bus size={14} />
                     </div>
+                  </div>
+                  <div className="kpi-mini-val" style={{ color: "#0F172A" }}>
+                    {dynamicSchedules.length || (assignedBus ? 1 : 0)}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
+                    {assignedBus ? `Assigned to ${assignedBus.busNumber}` : "No bus assigned"}
+                  </div>
+                </div>
 
-                    {/* Origin Stop */}
-                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                      <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#059669", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(5, 150, 105, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
+                {/* 2. Passengers Onboard */}
+                <div className="kpi-mini-card">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span className="kpi-mini-label">PASSENGERS ONBOARD</span>
+                    <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#ECFDF5", display: "flex", alignItems: "center", justifyContent: "center", color: "#059669" }}>
+                      <Users size={14} />
+                    </div>
+                  </div>
+                  <div className="kpi-mini-val" style={{ color: "#059669" }}>
+                    {passengersOnboard || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>/ {totalCapacity}</span>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#059669", fontWeight: "700", marginTop: "2px" }}>
+                    {totalCapacity > 0 ? `${Math.round(((passengersOnboard || 0) / totalCapacity) * 100)}% Occupancy` : "Live Count"}
+                  </div>
+                </div>
+
+                {/* 3. RFID Taps Activity */}
+                <div className="kpi-mini-card">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span className="kpi-mini-label">RFID TAP ACTIVITY</span>
+                    <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563EB" }}>
+                      <Radio size={14} />
+                    </div>
+                  </div>
+                  <div className="kpi-mini-val" style={{ color: "#2563EB" }}>
+                    {paymentsLog.length || 0} <span style={{ fontSize: "12px", fontWeight: "600", color: "#64748B" }}>taps</span>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#2563EB", fontWeight: "700", marginTop: "2px" }}>
+                    {rfidDevice?.status === "Connected" ? "● ESP32 Online" : "Ready for Taps"}
+                  </div>
+                </div>
+
+                {/* 4. Today's Collections */}
+                <div className="kpi-mini-card">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span className="kpi-mini-label">TODAY'S COLLECTIONS</span>
+                    <div style={{ width: "26px", height: "26px", borderRadius: "7px", background: "#EEF2FF", display: "flex", alignItems: "center", justifyContent: "center", color: "#4F46E5" }}>
+                      <Wallet size={14} />
+                    </div>
+                  </div>
+                  <div className="kpi-mini-val" style={{ color: "#4F46E5" }}>
+                    ₹{Number(dailyEarnings || 0).toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
+                    RFID Pass + Cash Tickets
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 7: DRIVER NOTIFICATIONS */}
+            {activeTab === "notifications" && (
+              <DriverNotifications isEmbedded={true} />
+            )}
+
+            {/* TAB 1: DASHBOARD OVERVIEW */}
+            {currentTab === "dashboard" && (
+              <div className="driver-grid-layout anim-entry-5">
+                <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                  {/* PRIMARY TODAY'S DUTY COCKPIT SHOWCASE CARD */}
+                  <div className="duty-cockpit-card">
+                    <div className="duty-cockpit-header">
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#059669", background: "#ECFDF5", border: "1px solid #A7F3D0", padding: "3px 8px", borderRadius: "6px" }}>
+                          TODAY'S DUTY
+                        </span>
+                        <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#6366F1", background: "#EEF2FF", border: "1px solid #C7D2FE", padding: "3px 8px", borderRadius: "6px" }}>
+                          {assignedBus?.shift || driverDuty?.shift || "Morning"} SHIFT
+                        </span>
+                        {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
+                          <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.6px", color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", padding: "3px 8px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                            ⚡ TEMPORARY REPLACEMENT
+                          </span>
+                        )}
+                        <span className="duty-badge-bus">
+                          <Bus size={15} color="#059669" />
+                          <span>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</span>
+                        </span>
                       </div>
-                      <div className="route-point-city">
-                        {assignedBus?.fromLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[0]?.trim() : "Origin Terminal")}
-                      </div>
-                    </div>
 
-                    {/* Center Transit Badge */}
-                    <div style={{ position: "relative", zIndex: 2, background: tripStatus === "in_progress" ? "#ECFDF5" : "#FFFFFF", border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`, padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: "800", color: tripStatus === "in_progress" ? "#065F46" : "#64748B", boxShadow: "0 1px 3px rgba(0,0,0,0.03)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                      {tripStatus === "in_progress" ? (
-                        <>
-                          <Bus size={12} color="#059669" />
-                          <span>IN TRANSIT</span>
-                        </>
-                      ) : (
-                        <span>SCHEDULED CORRIDOR</span>
-                      )}
-                    </div>
-
-                    {/* Destination Stop */}
-                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                      <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#4F46E5", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(79, 70, 229, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
-                      </div>
-                      <div className="route-point-city" style={{ textAlign: "right" }}>
-                        {assignedBus?.toLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[1]?.trim() : "Destination Terminal")}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Duty Specifications Matrix */}
-                <div className="dashboard-metrics-grid" style={{ background: "#F8FAFC", padding: "12px 14px", borderRadius: "12px", border: "1px solid #E2E8F0", marginBottom: "16px" }}>
-                  <div>
-                    <div style={styles.metricLabel}>Assigned Bus</div>
-                    <div style={styles.metricVal}>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</div>
-                  </div>
-                  <div>
-                    <div style={styles.metricLabel}>Shift Window</div>
-                    <div style={styles.metricVal}>
-                      {assignedBus?.shift || driverDuty?.shift || "Morning"} ({assignedBus?.shiftStartTime || "06:00"} - {assignedBus?.shiftEndTime || "14:00"})
-                    </div>
-                  </div>
-                  <div>
-                    <div style={styles.metricLabel}>Scheduled Departure</div>
-                    <div style={styles.metricVal}>{assignedBus?.departureTime || "08:00 AM"}</div>
-                  </div>
-                  <div>
-                    <div style={styles.metricLabel}>Duty Mode</div>
-                    <div style={{ ...styles.metricVal, color: (assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "#7c3aed" : "#059669" }}>
-                      {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "⚡ Replacement Duty" : "Regular Schedule"}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Primary Action Controls */}
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <button
-                    className="btn-green-gradient touch-target"
-                    onClick={() => navigate("/driver/live-drive")}
-                    style={{ flex: 1.2, minWidth: "200px" }}
-                    title="Launch Live GPS Drive cockpit"
-                  >
-                    <Bus size={16} />
-                    <span>Open Live Drive</span>
-                    <ArrowRight size={14} />
-                  </button>
-
-                  {tripStatus !== "in_progress" ? (
-                    <button
-                      className="btn-purple-gradient touch-target"
-                      onClick={handleToggleTrip}
-                      disabled={Boolean(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty))}
-                      style={{
-                        flex: 1,
-                        minWidth: "140px",
-                        opacity: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? 0.6 : 1,
-                        cursor: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <Play size={14} style={{ fill: "currentColor" }} />
-                      <span>Start Trip</span>
-                    </button>
-                  ) : (
-                    <button className="btn-red-outline touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "140px", height: "38px" }}>
-                      <Square size={14} style={{ fill: "currentColor" }} />
-                      <span>End Trip</span>
-                    </button>
-                  )}
-
-                  <button className="btn-subtle-outline touch-target" onClick={handleSimulateTap} style={{ flex: 0.8, minWidth: "150px" }}>
-                    <Zap size={14} color="#6366F1" />
-                    <span>Simulate Tap</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 📡 ESP32 + RC522 RFID READER HARDWARE STATUS & LIVE TAP MONITOR */}
-              <div className="card-shadow" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(240,253,244,0.7) 100%)", border: "1.5px solid rgba(22, 163, 74, 0.3)", position: "relative", overflow: "hidden" }}>
-
-                {/* 1. RFID DEVICE STATUS HEADER */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Radio size={20} />
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
-                        MoveSmart RFID Device &amp; Tap Monitor
-                      </h3>
-                      <p style={{ margin: "2px 0 0", fontSize: "12.5px", color: "#64748b", fontWeight: "600" }}>
-                        Real-time ESP32 + RC522 passenger smart card boarding and tap-out validation feed
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                    <span
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: "12px",
-                        fontSize: "12.5px",
-                        fontWeight: "800",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        background:
-                          rfidDevice.status === "Connected"
-                            ? "#f0fdf4"
-                            : rfidDevice.status === "Connecting"
-                              ? "#fffbeb"
-                              : rfidDevice.status === "Connection Failed"
-                                ? "#fef2f2"
-                                : "#f1f5f9",
-                        color:
-                          rfidDevice.status === "Connected"
-                            ? "#15803d"
-                            : rfidDevice.status === "Connecting"
-                              ? "#b45309"
-                              : rfidDevice.status === "Connection Failed"
-                                ? "#dc2626"
-                                : "#64748b",
-                        border: `1.5px solid ${rfidDevice.status === "Connected"
-                          ? "#bbf7d0"
-                          : rfidDevice.status === "Connecting"
-                            ? "#fde68a"
-                            : rfidDevice.status === "Connection Failed"
-                              ? "#fecaca"
-                              : "#e2e8f0"
-                          }`,
-                      }}
-                    >
                       <span
                         style={{
-                          width: "8px",
-                          height: "8px",
-                          borderRadius: "50%",
-                          background:
-                            rfidDevice.status === "Connected"
-                              ? "#16a34a"
-                              : rfidDevice.status === "Connecting"
-                                ? "#f59e0b"
-                                : rfidDevice.status === "Connection Failed"
-                                  ? "#ef4444"
-                                  : "#94a3b8",
+                          padding: "4px 12px",
+                          borderRadius: "12px",
+                          fontSize: "12px",
+                          fontWeight: "800",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          background: tripStatus === "in_progress" ? "#ECFDF5" : "#F1F5F9",
+                          color: tripStatus === "in_progress" ? "#065F46" : "#475569",
+                          border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`,
                         }}
-                      ></span>
-                      {rfidDevice.status === "Connected"
-                        ? "CONNECTED (ONLINE)"
-                        : rfidDevice.status === "Connecting"
-                          ? "CONNECTING..."
-                          : rfidDevice.status === "Connection Failed"
-                            ? "CONNECTION FAILED"
-                            : "NOT CONNECTED"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* RFID Device Metrics Grid */}
-                <div className="dashboard-metrics-grid" style={{ background: "rgba(255, 255, 255, 0.8)", padding: "16px", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
-                  <div>
-                    <div style={styles.metricLabel}>Device Hardware ID</div>
-                    <div style={{ ...styles.metricVal, fontFamily: "monospace", color: "#6d28d9" }}>{rfidDevice.deviceId || "MS-RFID-5326"}</div>
-                  </div>
-                  <div>
-                    <div style={styles.metricLabel}>Assigned Bus</div>
-                    <div style={styles.metricVal}>{assignedBus?.busNumber || rfidDevice.busNumber || user?.busNumber || "KL-07-MS-1008"}</div>
-                  </div>
-                  <div>
-                    <div style={styles.metricLabel}>Current Stop</div>
-                    <div style={{ ...styles.metricVal, color: "#166534" }}>{rfidDevice.stopCode ? rfidDevice.stopCode.replace("STOP_", "") : "Vyttila Mobility Hub"}</div>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px", marginBottom: "18px", fontSize: "12.5px" }}>
-                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                    <span style={{ color: "#64748b", fontWeight: "600" }}>Reader Sensor: </span>
-                    <strong style={{ color: rfidDevice.status === "Connected" ? "#15803d" : "#64748b" }}>
-                      {rfidDevice.status === "Connected" ? "RC522 Scanning Active" : "Sensor Inactive"}
-                    </strong>
-                  </div>
-                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                    <span style={{ color: "#64748b", fontWeight: "600" }}>Device IP: </span>
-                    <strong style={{ fontFamily: "monospace" }}>{rfidDevice.ipAddress || "192.168.1.5"}</strong>
-                  </div>
-                  <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                    <span style={{ color: "#64748b", fontWeight: "600" }}>Last Communication: </span>
-                    <strong>{rfidDevice.lastHeartbeat ? new Date(rfidDevice.lastHeartbeat).toLocaleTimeString() : "Just now (Live)"}</strong>
-                  </div>
-                </div>
-
-                {/* 2. LATEST RFID TAP SECTION */}
-                <div style={{ marginBottom: "20px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                      <Zap size={15} color="#6337D9" /> Latest RFID Tap
-                    </h4>
-                    {latestRfidTap && (
-                      <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
-                        {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString() : "Live"}
+                      >
+                        <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: tripStatus === "in_progress" ? "#10B981" : "#94A3B8" }}></span>
+                        <span>{tripStatus === "in_progress" ? "TRIP IN PROGRESS" : "READY FOR DEPARTURE"}</span>
                       </span>
+                    </div>
+
+                    {/* Replacement Notification Banner */}
+                    {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) && (
+                      <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#6d28d9", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span>🔄</span>
+                        <span>
+                          You are operating this duty as a temporary replacement for <strong>{assignedBus?.originalDriverName || driverDuty?.originalDriverName || "Regular Driver"}</strong> (Date: {assignedBus?.dutyDate || driverDuty?.date || "Today"}, Shift: {assignedBus?.shift || driverDuty?.shift || "N/A"}).
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Approved Leave Safety Notice */}
+                    {(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave) && (
+                      <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "12px", background: "#fef2f2", border: "1.5px solid #fecaca", color: "#dc2626", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <AlertCircle size={16} />
+                        <span>You are currently on approved leave for this shift. Trip departure is disabled by system policy.</span>
+                      </div>
+                    )}
+
+                    {/* Visual Route Corridor Stepper */}
+                    <div className="route-corridor-box">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                        <span className="route-point-label">ORIGIN TERMINAL</span>
+                        <span style={{ fontSize: "10.5px", fontWeight: "800", color: "#6366F1", letterSpacing: "0.5px" }}>TRANSIT CORRIDOR</span>
+                        <span className="route-point-label">DESTINATION TERMINAL</span>
+                      </div>
+
+                      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0" }}>
+                        {/* Background Connecting Line */}
+                        <div style={{ position: "absolute", left: "20px", right: "20px", height: "3px", background: tripStatus === "in_progress" ? "linear-gradient(90deg, #059669, #6366F1, #2563EB)" : "#E2E8F0", borderRadius: "3px", zIndex: 1, overflow: "hidden" }}>
+                          {tripStatus === "in_progress" && (
+                            <div style={{
+                              position: "absolute",
+                              top: 0,
+                              bottom: 0,
+                              width: "30%",
+                              background: "linear-gradient(90deg, transparent, #ffffff, transparent)",
+                              animation: "routeLineGlow 2s infinite linear",
+                            }} />
+                          )}
+                        </div>
+
+                        {/* Origin Stop */}
+                        <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#059669", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(5, 150, 105, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
+                          </div>
+                          <div className="route-point-city">
+                            {assignedBus?.fromLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[0]?.trim() : "Origin Terminal")}
+                          </div>
+                        </div>
+
+                        {/* Center Transit Badge */}
+                        <div style={{ position: "relative", zIndex: 2, background: tripStatus === "in_progress" ? "#ECFDF5" : "#FFFFFF", border: `1px solid ${tripStatus === "in_progress" ? "#A7F3D0" : "#E2E8F0"}`, padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: "800", color: tripStatus === "in_progress" ? "#065F46" : "#64748B", boxShadow: "0 1px 3px rgba(0,0,0,0.03)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                          {tripStatus === "in_progress" ? (
+                            <>
+                              <Bus size={12} color="#059669" />
+                              <span>IN TRANSIT</span>
+                            </>
+                          ) : (
+                            <span>SCHEDULED CORRIDOR</span>
+                          )}
+                        </div>
+
+                        {/* Destination Stop */}
+                        <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                          <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#4F46E5", border: "3px solid #ffffff", boxShadow: "0 2px 6px rgba(79, 70, 229, 0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#ffffff" }}></div>
+                          </div>
+                          <div className="route-point-city" style={{ textAlign: "right" }}>
+                            {assignedBus?.toLocation || (assignedBus?.routeName ? assignedBus.routeName.split("➔")[1]?.trim() : "Destination Terminal")}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Duty Specifications Matrix */}
+                    <div className="dashboard-metrics-grid" style={{ background: "#F8FAFC", padding: "12px 14px", borderRadius: "12px", border: "1px solid #E2E8F0", marginBottom: "16px" }}>
+                      <div>
+                        <div style={styles.metricLabel}>Assigned Bus</div>
+                        <div style={styles.metricVal}>{assignedBus?.busNumber || user?.busNumber || "KL-07-2024"}</div>
+                      </div>
+                      <div>
+                        <div style={styles.metricLabel}>Shift Window</div>
+                        <div style={styles.metricVal}>
+                          {assignedBus?.shift || driverDuty?.shift || "Morning"} ({assignedBus?.shiftStartTime || "06:00"} - {assignedBus?.shiftEndTime || "14:00"})
+                        </div>
+                      </div>
+                      <div>
+                        <div style={styles.metricLabel}>Scheduled Departure</div>
+                        <div style={styles.metricVal}>{assignedBus?.departureTime || "08:00 AM"}</div>
+                      </div>
+                      <div>
+                        <div style={styles.metricLabel}>Duty Mode</div>
+                        <div style={{ ...styles.metricVal, color: (assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "#7c3aed" : "#059669" }}>
+                          {(assignedBus?.isReplacementDuty || driverDuty?.isReplacementDuty) ? "⚡ Replacement Duty" : "Regular Schedule"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Primary Action Controls */}
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <button
+                        className="btn-green-gradient touch-target"
+                        onClick={() => navigate("/driver/live-drive")}
+                        style={{ flex: 1.2, minWidth: "200px" }}
+                        title="Launch Live GPS Drive cockpit"
+                      >
+                        <Bus size={16} />
+                        <span>Open Live Drive</span>
+                        <ArrowRight size={14} />
+                      </button>
+
+                      {tripStatus !== "in_progress" ? (
+                        <button
+                          className="btn-purple-gradient touch-target"
+                          onClick={handleToggleTrip}
+                          disabled={Boolean(assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty))}
+                          style={{
+                            flex: 1,
+                            minWidth: "140px",
+                            opacity: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? 0.6 : 1,
+                            cursor: (assignedBus?.isOnApprovedLeave || driverDuty?.isOnApprovedLeave || (!assignedBus && !driverDuty?.hasDuty)) ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          <Play size={14} style={{ fill: "currentColor" }} />
+                          <span>Start Trip</span>
+                        </button>
+                      ) : (
+                        <button className="btn-red-outline touch-target" onClick={handleToggleTrip} style={{ flex: 1, minWidth: "140px", height: "38px" }}>
+                          <Square size={14} style={{ fill: "currentColor" }} />
+                          <span>End Trip</span>
+                        </button>
+                      )}
+
+                      <button className="btn-subtle-outline touch-target" onClick={handleSimulateTap} style={{ flex: 0.8, minWidth: "150px" }}>
+                        <Zap size={14} color="#6366F1" />
+                        <span>Simulate Tap</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 📡 ESP32 + RC522 RFID READER HARDWARE STATUS & LIVE TAP MONITOR */}
+                  <div className="card-shadow" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(240,253,244,0.7) 100%)", border: "1.5px solid rgba(22, 163, 74, 0.3)", position: "relative", overflow: "hidden" }}>
+
+                    {/* 1. RFID DEVICE STATUS HEADER */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: "linear-gradient(135deg, #16a34a, #059669)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Radio size={20} />
+                        </div>
+                        <div>
+                          <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a", margin: 0 }}>
+                            MoveSmart RFID Device &amp; Tap Monitor
+                          </h3>
+                          <p style={{ margin: "2px 0 0", fontSize: "12.5px", color: "#64748b", fontWeight: "600" }}>
+                            Real-time ESP32 + RC522 passenger smart card boarding and tap-out validation feed
+                          </p>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            padding: "6px 14px",
+                            borderRadius: "12px",
+                            fontSize: "12.5px",
+                            fontWeight: "800",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            background:
+                              rfidDevice.status === "Connected"
+                                ? "#f0fdf4"
+                                : rfidDevice.status === "Connecting"
+                                  ? "#fffbeb"
+                                  : rfidDevice.status === "Connection Failed"
+                                    ? "#fef2f2"
+                                    : "#f1f5f9",
+                            color:
+                              rfidDevice.status === "Connected"
+                                ? "#15803d"
+                                : rfidDevice.status === "Connecting"
+                                  ? "#b45309"
+                                  : rfidDevice.status === "Connection Failed"
+                                    ? "#dc2626"
+                                    : "#64748b",
+                            border: `1.5px solid ${rfidDevice.status === "Connected"
+                              ? "#bbf7d0"
+                              : rfidDevice.status === "Connecting"
+                                ? "#fde68a"
+                                : rfidDevice.status === "Connection Failed"
+                                  ? "#fecaca"
+                                  : "#e2e8f0"
+                              }`,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              background:
+                                rfidDevice.status === "Connected"
+                                  ? "#16a34a"
+                                  : rfidDevice.status === "Connecting"
+                                    ? "#f59e0b"
+                                    : rfidDevice.status === "Connection Failed"
+                                      ? "#ef4444"
+                                      : "#94a3b8",
+                            }}
+                          ></span>
+                          {rfidDevice.status === "Connected"
+                            ? "CONNECTED (ONLINE)"
+                            : rfidDevice.status === "Connecting"
+                              ? "CONNECTING..."
+                              : rfidDevice.status === "Connection Failed"
+                                ? "CONNECTION FAILED"
+                                : "NOT CONNECTED"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* RFID Device Metrics Grid */}
+                    <div className="dashboard-metrics-grid" style={{ background: "rgba(255, 255, 255, 0.8)", padding: "16px", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                      <div>
+                        <div style={styles.metricLabel}>Device Hardware ID</div>
+                        <div style={{ ...styles.metricVal, fontFamily: "monospace", color: "#6d28d9" }}>{rfidDevice.deviceId || "MS-RFID-5326"}</div>
+                      </div>
+                      <div>
+                        <div style={styles.metricLabel}>Assigned Bus</div>
+                        <div style={styles.metricVal}>{assignedBus?.busNumber || rfidDevice.busNumber || user?.busNumber || "KL-07-MS-1008"}</div>
+                      </div>
+                      <div>
+                        <div style={styles.metricLabel}>Current Stop</div>
+                        <div style={{ ...styles.metricVal, color: "#166534" }}>{rfidDevice.stopCode ? rfidDevice.stopCode.replace("STOP_", "") : "Vyttila Mobility Hub"}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px", marginBottom: "18px", fontSize: "12.5px" }}>
+                      <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                        <span style={{ color: "#64748b", fontWeight: "600" }}>Reader Sensor: </span>
+                        <strong style={{ color: rfidDevice.status === "Connected" ? "#15803d" : "#64748b" }}>
+                          {rfidDevice.status === "Connected" ? "RC522 Scanning Active" : "Sensor Inactive"}
+                        </strong>
+                      </div>
+                      <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                        <span style={{ color: "#64748b", fontWeight: "600" }}>Device IP: </span>
+                        <strong style={{ fontFamily: "monospace" }}>{rfidDevice.ipAddress || "192.168.1.5"}</strong>
+                      </div>
+                      <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                        <span style={{ color: "#64748b", fontWeight: "600" }}>Last Communication: </span>
+                        <strong>{rfidDevice.lastHeartbeat ? new Date(rfidDevice.lastHeartbeat).toLocaleTimeString() : "Just now (Live)"}</strong>
+                      </div>
+                    </div>
+
+                    {/* 2. LATEST RFID TAP SECTION */}
+                    <div style={{ marginBottom: "20px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                        <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                          <Zap size={15} color="#6337D9" /> Latest RFID Tap
+                        </h4>
+                        {latestRfidTap && (
+                          <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
+                            {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString() : "Live"}
+                          </span>
+                        )}
+                      </div>
+
+                      {latestRfidTap ? (
+                        <div
+                          style={{
+                            background: latestRfidTap.action === "TAP_IN"
+                              ? "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)"
+                              : latestRfidTap.action === "TAP_OUT"
+                                ? "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)"
+                                : "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)",
+                            border: `1.5px solid ${latestRfidTap.action === "TAP_IN"
+                              ? "#86efac"
+                              : latestRfidTap.action === "TAP_OUT"
+                                ? "#c4b5fd"
+                                : "#fca5a5"
+                              }`,
+                            borderRadius: "16px",
+                            padding: "16px 20px",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a" }}>
+                                  {latestRfidTap.passengerName || latestRfidTap.passenger?.name || "Passenger"}
+                                </span>
+                                <span
+                                  style={{
+                                    padding: "4px 10px",
+                                    borderRadius: "8px",
+                                    fontSize: "12px",
+                                    fontWeight: "800",
+                                    background: latestRfidTap.action === "TAP_IN" ? "#16a34a" : latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#dc2626",
+                                    color: "#ffffff",
+                                  }}
+                                >
+                                  {latestRfidTap.action === "TAP_IN" ? "TAP-IN" : latestRfidTap.action === "TAP_OUT" ? "TAP-OUT" : "REJECTED"}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: "12.5px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>
+                                {latestRfidTap.passengerEmail || latestRfidTap.passenger?.email || ""}
+                              </div>
+                            </div>
+
+                            <div style={{ textAlign: "right" }}>
+                              <span style={{ padding: "4px 10px", borderRadius: "10px", background: "rgba(255,255,255,0.8)", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: "800", color: "#1e293b", fontFamily: "monospace" }}>
+                                Card: {latestRfidTap.card?.rfidTag ? `****${latestRfidTap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}` : (latestRfidTap.card?.cardNumber ? `****${latestRfidTap.card.cardNumber.slice(-4)}` : "RFID Card")}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px", background: "rgba(255,255,255,0.7)", padding: "12px 16px", borderRadius: "12px", border: "1px solid rgba(0,0,0,0.06)" }}>
+                            <div>
+                              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Stop</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                                {latestRfidTap.stop?.name || (latestRfidTap.stop?.code ? latestRfidTap.stop.code.replace("STOP_", "") : "Vyttila Mobility Hub")}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Time</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
+                                {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now"}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Fare Charged</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#64748b", marginTop: "2px" }}>
+                                {latestRfidTap.action === "TAP_OUT" && latestRfidTap.fare !== undefined ? `₹${Number(latestRfidTap.fare).toFixed(2)}` : "—"}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Card Balance</div>
+                              <div style={{ fontSize: "14px", fontWeight: "800", color: "#15803d", marginTop: "2px" }}>
+                                {latestRfidTap.balance !== undefined ? `₹${Number(latestRfidTap.balance).toFixed(2)}` : (latestRfidTap.card?.balance ? `₹${Number(latestRfidTap.card.balance).toFixed(2)}` : "₹86.88")}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Status</div>
+                              <div style={{ fontSize: "13px", fontWeight: "800", color: latestRfidTap.status === "Rejected" ? "#dc2626" : "#15803d", marginTop: "2px" }}>
+                                {latestRfidTap.status === "Rejected" ? (latestRfidTap.reason || "Rejected") : "Tap Accepted"}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ background: "#f8fafc", borderRadius: "14px", padding: "20px", border: "1.5px dashed #cbd5e1", textAlign: "center", color: "#64748b" }}>
+                          <div style={{ fontWeight: "700", fontSize: "14px", color: "#334155" }}>Ready for passenger card taps</div>
+                          <div style={{ fontSize: "12.5px", marginTop: "4px" }}>Tap an authorized MoveSmart RFID pass on the reader to view passenger details</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. RECENT RFID TAPS TABLE */}
+                    <div style={{ marginBottom: "16px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                        <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                          <FileText size={15} color="#6337D9" /> Recent RFID Taps ({recentRfidTaps.length})
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={fetchRecentRfidTaps}
+                          style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                        >
+                          {loadingRecentTaps ? "Refreshing..." : (
+                            <>
+                              <RotateCw size={12} /> Refresh Feed
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div style={{ overflowX: "auto", borderRadius: "14px", border: "1px solid #e2e8f0", background: "#ffffff" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+                          <thead>
+                            <tr style={{ background: "#f8fafc", borderBottom: "1.5px solid #e2e8f0", color: "#475569", fontWeight: "800", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                              <th style={{ padding: "10px 14px" }}>Time</th>
+                              <th style={{ padding: "10px 14px" }}>Passenger</th>
+                              <th style={{ padding: "10px 14px" }}>Card</th>
+                              <th style={{ padding: "10px 14px" }}>Action</th>
+                              <th style={{ padding: "10px 14px" }}>Stop</th>
+                              <th style={{ padding: "10px 14px" }}>Fare</th>
+                              <th style={{ padding: "10px 14px" }}>Balance</th>
+                              <th style={{ padding: "10px 14px" }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentRfidTaps.length === 0 ? (
+                              <tr>
+                                <td colSpan={8} style={{ padding: "24px", textAlign: "center", color: "#64748b", fontWeight: "600" }}>
+                                  No recent RFID tap records logged yet.
+                                </td>
+                              </tr>
+                            ) : (
+                              recentRfidTaps.map((tap, idx) => {
+                                const pName = tap.passengerName || tap.passenger?.name || "Passenger";
+                                const cardId = tap.card?.rfidTag
+                                  ? `****${tap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}`
+                                  : (tap.card?.cardNumber ? `****${tap.card.cardNumber.slice(-4)}` : "RFID Card");
+                                const timeStr = tap.timestamp ? new Date(tap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+                                const stopName = tap.stop?.name || (tap.stop?.code ? tap.stop.code.replace("STOP_", "") : "Station Stop");
+                                const isTapIn = tap.action === "TAP_IN";
+                                const isTapOut = tap.action === "TAP_OUT";
+
+                                return (
+                                  <tr
+                                    key={tap.id || idx}
+                                    style={{
+                                      borderBottom: "1px solid #f1f5f9",
+                                      background: idx % 2 === 0 ? "#ffffff" : "#fbfcfe",
+                                      transition: "background 0.15s ease",
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 0 ? "#ffffff" : "#fbfcfe")}
+                                  >
+                                    <td style={{ padding: "10px 14px", fontWeight: "700", color: "#64748b", whiteSpace: "nowrap" }}>
+                                      {timeStr}
+                                    </td>
+                                    <td style={{ padding: "10px 14px", fontWeight: "800", color: "#0f172a" }}>
+                                      {pName}
+                                    </td>
+                                    <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#6d28d9", fontWeight: "700" }}>
+                                      {cardId}
+                                    </td>
+                                    <td style={{ padding: "10px 14px" }}>
+                                      <span
+                                        style={{
+                                          padding: "3px 8px",
+                                          borderRadius: "6px",
+                                          fontSize: "11px",
+                                          fontWeight: "800",
+                                          background: isTapIn ? "#dcfce7" : isTapOut ? "#ede9fe" : "#fee2e2",
+                                          color: isTapIn ? "#15803d" : isTapOut ? "#6d28d9" : "#be123c",
+                                          border: `1px solid ${isTapIn ? "#bbf7d0" : isTapOut ? "#ddd6fe" : "#fecaca"}`,
+                                        }}
+                                      >
+                                        {isTapIn ? "TAP-IN" : isTapOut ? "TAP-OUT" : "REJECTED"}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: "10px 14px", color: "#334155", fontWeight: "600" }}>
+                                      {stopName}
+                                    </td>
+                                    <td style={{ padding: "10px 14px", fontWeight: "800", color: isTapOut ? "#7c3aed" : "#94a3b8" }}>
+                                      {isTapOut && tap.fare !== undefined ? `₹${Number(tap.fare).toFixed(2)}` : "—"}
+                                    </td>
+                                    <td style={{ padding: "10px 14px", fontWeight: "700", color: "#15803d" }}>
+                                      {tap.balance !== undefined ? `₹${Number(tap.balance).toFixed(2)}` : (tap.card?.balance ? `₹${Number(tap.card.balance).toFixed(2)}` : "—")}
+                                    </td>
+                                    <td style={{ padding: "10px 14px" }}>
+                                      <span style={{ fontSize: "12px", fontWeight: "700", color: tap.status === "Rejected" ? "#dc2626" : "#15803d", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                                        {tap.status === "Rejected" ? "Rejected" : <>Accepted <Check size={13} /></>}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Device Configuration & Action Buttons */}
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #e2e8f0", paddingTop: "14px" }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRfidForm((prev) => ({
+                            ...prev,
+                            busNumber: assignedBus?.busNumber || user?.busNumber || prev.busNumber,
+                            deviceId: rfidDevice.deviceId || prev.deviceId,
+                            stopCode: rfidDevice.stopCode || prev.stopCode,
+                          }));
+                          setShowRfidModal(true);
+                        }}
+                        className="btn-green-gradient touch-target"
+                        style={{ padding: "10px 18px", fontSize: "13.5px", borderRadius: "12px", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}
+                      >
+                        <Radio size={15} />
+                        {rfidDevice.status === "Connected" ? "Reconfigure RFID Device" : "Connect RFID Device"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSimulateTap}
+                        className="touch-target"
+                        style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#334155", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                      >
+                        <Zap size={14} color="#6337D9" /> Test Tap (53262A56)
+                      </button>
+
+                      {rfidDevice.status !== "Not Connected" && (
+                        <button
+                          type="button"
+                          onClick={handleUnlinkRfidDevice}
+                          className="touch-target"
+                          style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                        >
+                          <XCircle size={14} /> Unlink Device
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column (Today's Trips Schedule & Live Alerts) */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                  {/* TODAY'S TRIPS SCHEDULE TIMELINE */}
+                  <div className="card-shadow">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Clock size={16} color="#4F46E5" />
+                        <h3 style={{ ...styles.cardTitle, fontSize: "15px" }}>Today's Trips</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("trips")}
+                        style={{ background: "none", border: "none", color: "#4F46E5", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" }}
+                      >
+                        <span>View all</span>
+                        <ArrowRight size={12} />
+                      </button>
+                    </div>
+
+                    {dynamicSchedules.length === 0 ? (
+                      <div style={{ padding: "18px 14px", background: "#F8FAFC", borderRadius: "12px", border: "1px solid #E2E8F0", textAlign: "center", color: "#64748B", fontSize: "12.5px", fontWeight: "600" }}>
+                        No additional scheduled trips for today.
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {dynamicSchedules.map((tr, idx) => {
+                          const isSelected = idx === activeTripIndex;
+                          return (
+                            <div
+                              key={tr.id || idx}
+                              onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }}
+                              style={{
+                                padding: "10px 12px",
+                                borderRadius: "10px",
+                                background: isSelected ? "#EEF2FF" : "#F8FAFC",
+                                border: `1px solid ${isSelected ? "#C7D2FE" : "#E2E8F0"}`,
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "8px"
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", display: "flex", alignItems: "center", gap: "6px" }}>
+                                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isSelected ? "#4F46E5" : "#94A3B8" }}></span>
+                                  <span>{tr.routeName}</span>
+                                </div>
+                                <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
+                                  {tr.departure} ➔ {tr.arrival} • <span style={{ color: "#059669", fontWeight: "700" }}>{tr.passengers || 0} pax</span>
+                                </div>
+                              </div>
+
+                              <span
+                                style={{
+                                  fontSize: "10.5px",
+                                  fontWeight: "800",
+                                  padding: "2px 8px",
+                                  borderRadius: "6px",
+                                  background: isSelected ? "#4F46E5" : "#FFFFFF",
+                                  color: isSelected ? "#FFFFFF" : "#475569",
+                                  border: `1px solid ${isSelected ? "#4F46E5" : "#CBD5E1"}`,
+                                  whiteSpace: "nowrap"
+                                }}
+                              >
+                                {isSelected ? "Active" : "Select"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
 
-                  {latestRfidTap ? (
-                    <div
-                      style={{
-                        background: latestRfidTap.action === "TAP_IN"
-                          ? "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)"
-                          : latestRfidTap.action === "TAP_OUT"
-                            ? "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)"
-                            : "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)",
-                        border: `1.5px solid ${latestRfidTap.action === "TAP_IN"
-                          ? "#86efac"
-                          : latestRfidTap.action === "TAP_OUT"
-                            ? "#c4b5fd"
-                            : "#fca5a5"
-                          }`,
-                        borderRadius: "16px",
-                        padding: "16px 20px",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "12px" }}>
-                        <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a" }}>
-                              {latestRfidTap.passengerName || latestRfidTap.passenger?.name || "Passenger"}
-                            </span>
-                            <span
-                              style={{
-                                padding: "4px 10px",
-                                borderRadius: "8px",
-                                fontSize: "12px",
-                                fontWeight: "800",
-                                background: latestRfidTap.action === "TAP_IN" ? "#16a34a" : latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#dc2626",
-                                color: "#ffffff",
-                              }}
-                            >
-                              {latestRfidTap.action === "TAP_IN" ? "TAP-IN" : latestRfidTap.action === "TAP_OUT" ? "TAP-OUT" : "REJECTED"}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: "12.5px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>
-                            {latestRfidTap.passengerEmail || latestRfidTap.passenger?.email || ""}
-                          </div>
-                        </div>
-
-                        <div style={{ textAlign: "right" }}>
-                          <span style={{ padding: "4px 10px", borderRadius: "10px", background: "rgba(255,255,255,0.8)", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: "800", color: "#1e293b", fontFamily: "monospace" }}>
-                            Card: {latestRfidTap.card?.rfidTag ? `****${latestRfidTap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}` : (latestRfidTap.card?.cardNumber ? `****${latestRfidTap.card.cardNumber.slice(-4)}` : "RFID Card")}
-                          </span>
-                        </div>
+                  <div className="card-shadow">
+                    <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Fleet Notices & Alerts</h3>
+                    {alerts.length === 0 ? (
+                      <div style={{ padding: "16px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0", textAlign: "center", color: "#64748b", fontSize: "13.5px", fontWeight: "600" }}>
+                        No active route delay alerts or fleet notices.
                       </div>
-
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px", background: "rgba(255,255,255,0.7)", padding: "12px 16px", borderRadius: "12px", border: "1px solid rgba(0,0,0,0.06)" }}>
-                        <div>
-                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Stop</div>
-                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
-                            {latestRfidTap.stop?.name || (latestRfidTap.stop?.code ? latestRfidTap.stop.code.replace("STOP_", "") : "Vyttila Mobility Hub")}
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {alerts.map((alt, idx) => (
+                          <div key={alt.id || idx} style={{ padding: "14px 16px", borderRadius: "14px", background: alt.severity === "warning" || alt.type === "warning" ? "#fffbeb" : "#f0f9ff", border: `1.5px solid ${alt.severity === "warning" || alt.type === "warning" ? "#fde68a" : "#bae6fd"}`, fontSize: "14px" }}>
+                            <div style={{ fontWeight: "800", color: alt.severity === "warning" || alt.type === "warning" ? "#b45309" : "#0369a1" }}>{alt.title || "Fleet Alert"}</div>
+                            <div style={{ fontSize: "13.5px", color: alt.severity === "warning" || alt.type === "warning" ? "#78350f" : "#0c4a6e", marginTop: "4px", fontWeight: "600" }}>{alt.message || alt.text || ""}</div>
+                            {alt.createdAt && <div style={{ fontSize: "12px", color: "#64748b", marginTop: "6px", fontWeight: "600" }}>Time: {new Date(alt.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>}
                           </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Time</div>
-                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", marginTop: "2px" }}>
-                            {latestRfidTap.timestamp ? new Date(latestRfidTap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now"}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Fare Charged</div>
-                          <div style={{ fontSize: "14px", fontWeight: "800", color: latestRfidTap.action === "TAP_OUT" ? "#7c3aed" : "#64748b", marginTop: "2px" }}>
-                            {latestRfidTap.action === "TAP_OUT" && latestRfidTap.fare !== undefined ? `₹${Number(latestRfidTap.fare).toFixed(2)}` : "—"}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Card Balance</div>
-                          <div style={{ fontSize: "14px", fontWeight: "800", color: "#15803d", marginTop: "2px" }}>
-                            {latestRfidTap.balance !== undefined ? `₹${Number(latestRfidTap.balance).toFixed(2)}` : (latestRfidTap.card?.balance ? `₹${Number(latestRfidTap.card.balance).toFixed(2)}` : "₹86.88")}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: "700", textTransform: "uppercase" }}>Status</div>
-                          <div style={{ fontSize: "13px", fontWeight: "800", color: latestRfidTap.status === "Rejected" ? "#dc2626" : "#15803d", marginTop: "2px" }}>
-                            {latestRfidTap.status === "Rejected" ? (latestRfidTap.reason || "Rejected") : "Tap Accepted"}
-                          </div>
-                        </div>
+                        ))}
                       </div>
-                    </div>
-                  ) : (
-                    <div style={{ background: "#f8fafc", borderRadius: "14px", padding: "20px", border: "1.5px dashed #cbd5e1", textAlign: "center", color: "#64748b" }}>
-                      <div style={{ fontWeight: "700", fontSize: "14px", color: "#334155" }}>Ready for passenger card taps</div>
-                      <div style={{ fontSize: "12.5px", marginTop: "4px" }}>Tap an authorized MoveSmart RFID pass on the reader to view passenger details</div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 3. RECENT RFID TAPS TABLE */}
-                <div style={{ marginBottom: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <h4 style={{ fontSize: "14px", fontWeight: "800", color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                      <FileText size={15} color="#6337D9" /> Recent RFID Taps ({recentRfidTaps.length})
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={fetchRecentRfidTaps}
-                      style={{ background: "none", border: "none", color: "#6d28d9", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
-                    >
-                      {loadingRecentTaps ? "Refreshing..." : (
-                        <>
-                          <RotateCw size={12} /> Refresh Feed
-                        </>
-                      )}
-                    </button>
+                    )}
                   </div>
-
-                  <div style={{ overflowX: "auto", borderRadius: "14px", border: "1px solid #e2e8f0", background: "#ffffff" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
-                      <thead>
-                        <tr style={{ background: "#f8fafc", borderBottom: "1.5px solid #e2e8f0", color: "#475569", fontWeight: "800", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
-                          <th style={{ padding: "10px 14px" }}>Time</th>
-                          <th style={{ padding: "10px 14px" }}>Passenger</th>
-                          <th style={{ padding: "10px 14px" }}>Card</th>
-                          <th style={{ padding: "10px 14px" }}>Action</th>
-                          <th style={{ padding: "10px 14px" }}>Stop</th>
-                          <th style={{ padding: "10px 14px" }}>Fare</th>
-                          <th style={{ padding: "10px 14px" }}>Balance</th>
-                          <th style={{ padding: "10px 14px" }}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentRfidTaps.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} style={{ padding: "24px", textAlign: "center", color: "#64748b", fontWeight: "600" }}>
-                              No recent RFID tap records logged yet.
-                            </td>
-                          </tr>
-                        ) : (
-                          recentRfidTaps.map((tap, idx) => {
-                            const pName = tap.passengerName || tap.passenger?.name || "Passenger";
-                            const cardId = tap.card?.rfidTag
-                              ? `****${tap.card.rfidTag.replace(/[^A-F0-9]/gi, "").slice(-4)}`
-                              : (tap.card?.cardNumber ? `****${tap.card.cardNumber.slice(-4)}` : "RFID Card");
-                            const timeStr = tap.timestamp ? new Date(tap.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
-                            const stopName = tap.stop?.name || (tap.stop?.code ? tap.stop.code.replace("STOP_", "") : "Station Stop");
-                            const isTapIn = tap.action === "TAP_IN";
-                            const isTapOut = tap.action === "TAP_OUT";
-
-                            return (
-                              <tr
-                                key={tap.id || idx}
-                                style={{
-                                  borderBottom: "1px solid #f1f5f9",
-                                  background: idx % 2 === 0 ? "#ffffff" : "#fbfcfe",
-                                  transition: "background 0.15s ease",
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
-                                onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 0 ? "#ffffff" : "#fbfcfe")}
-                              >
-                                <td style={{ padding: "10px 14px", fontWeight: "700", color: "#64748b", whiteSpace: "nowrap" }}>
-                                  {timeStr}
-                                </td>
-                                <td style={{ padding: "10px 14px", fontWeight: "800", color: "#0f172a" }}>
-                                  {pName}
-                                </td>
-                                <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#6d28d9", fontWeight: "700" }}>
-                                  {cardId}
-                                </td>
-                                <td style={{ padding: "10px 14px" }}>
-                                  <span
-                                    style={{
-                                      padding: "3px 8px",
-                                      borderRadius: "6px",
-                                      fontSize: "11px",
-                                      fontWeight: "800",
-                                      background: isTapIn ? "#dcfce7" : isTapOut ? "#ede9fe" : "#fee2e2",
-                                      color: isTapIn ? "#15803d" : isTapOut ? "#6d28d9" : "#be123c",
-                                      border: `1px solid ${isTapIn ? "#bbf7d0" : isTapOut ? "#ddd6fe" : "#fecaca"}`,
-                                    }}
-                                  >
-                                    {isTapIn ? "TAP-IN" : isTapOut ? "TAP-OUT" : "REJECTED"}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "10px 14px", color: "#334155", fontWeight: "600" }}>
-                                  {stopName}
-                                </td>
-                                <td style={{ padding: "10px 14px", fontWeight: "800", color: isTapOut ? "#7c3aed" : "#94a3b8" }}>
-                                  {isTapOut && tap.fare !== undefined ? `₹${Number(tap.fare).toFixed(2)}` : "—"}
-                                </td>
-                                <td style={{ padding: "10px 14px", fontWeight: "700", color: "#15803d" }}>
-                                  {tap.balance !== undefined ? `₹${Number(tap.balance).toFixed(2)}` : (tap.card?.balance ? `₹${Number(tap.card.balance).toFixed(2)}` : "—")}
-                                </td>
-                                <td style={{ padding: "10px 14px" }}>
-                                  <span style={{ fontSize: "12px", fontWeight: "700", color: tap.status === "Rejected" ? "#dc2626" : "#15803d", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                                    {tap.status === "Rejected" ? "Rejected" : <>Accepted <Check size={13} /></>}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Device Configuration & Action Buttons */}
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #e2e8f0", paddingTop: "14px" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRfidForm((prev) => ({
-                        ...prev,
-                        busNumber: assignedBus?.busNumber || user?.busNumber || prev.busNumber,
-                        deviceId: rfidDevice.deviceId || prev.deviceId,
-                        stopCode: rfidDevice.stopCode || prev.stopCode,
-                      }));
-                      setShowRfidModal(true);
-                    }}
-                    className="btn-green-gradient touch-target"
-                    style={{ padding: "10px 18px", fontSize: "13.5px", borderRadius: "12px", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}
-                  >
-                    <Radio size={15} />
-                    {rfidDevice.status === "Connected" ? "Reconfigure RFID Device" : "Connect RFID Device"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSimulateTap}
-                    className="touch-target"
-                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#334155", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
-                  >
-                    <Zap size={14} color="#6337D9" /> Test Tap (53262A56)
-                  </button>
-
-                  {rfidDevice.status !== "Not Connected" && (
-                    <button
-                      type="button"
-                      onClick={handleUnlinkRfidDevice}
-                      className="touch-target"
-                      style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", background: "#ffffff", color: "#64748b", fontWeight: "700", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}
-                    >
-                      <XCircle size={14} /> Unlink Device
-                    </button>
-                  )}
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Right Column (Today's Trips Schedule & Live Alerts) */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-              {/* TODAY'S TRIPS SCHEDULE TIMELINE */}
-              <div className="card-shadow">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <Clock size={16} color="#4F46E5" />
-                    <h3 style={{ ...styles.cardTitle, fontSize: "15px" }}>Today's Trips</h3>
+            {/* TAB 2: MY ASSIGNED BUS & VEHICLE SLOTS */}
+            {currentTab === "buses" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {/* Header with Stats Strip */}
+                <div className="card-shadow" style={{ padding: "22px 26px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "16px" }}>
+                    <div>
+                      <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span>🚌</span> My Assigned Bus Slots &amp; Scheduled Trips
+                      </h2>
+                      <p style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
+                        Below are your assigned vehicle slots (bus &amp; shift) and the specific route departures scheduled on each bus.
+                      </p>
+                    </div>
+
+                    {filteredBuses.length > 0 && (
+                      <input
+                        type="text"
+                        placeholder="Search by bus number, name, or route..."
+                        value={busSearchQuery}
+                        onChange={(e) => setBusSearchQuery(e.target.value)}
+                        style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", fontSize: "13.5px", minWidth: "260px", outline: "none", fontWeight: "600" }}
+                      />
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("trips")}
-                    style={{ background: "none", border: "none", color: "#4F46E5", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" }}
-                  >
-                    <span>View all</span>
-                    <ArrowRight size={12} />
-                  </button>
+
+                  {/* Quick Roster Metrics Banner */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", background: "#f8fafc", padding: "14px 18px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+                    <div>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Assigned Bus Slots</span>
+                      <div style={{ fontSize: "20px", fontWeight: "900", color: "#10b981", marginTop: "2px" }}>
+                        {filteredBuses.length} Vehicle Slot{filteredBuses.length !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+
+                    <div>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Total Scheduled Trips</span>
+                      <div style={{ fontSize: "20px", fontWeight: "900", color: "#6366f1", marginTop: "2px" }}>
+                        {dynamicSchedules.length} Departure{dynamicSchedules.length !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+
+                    <div>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Driver On Duty</span>
+                      <div style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", marginTop: "2px" }}>
+                        {user?.name || "Silpa"} (You)
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {dynamicSchedules.length === 0 ? (
-                  <div style={{ padding: "18px 14px", background: "#F8FAFC", borderRadius: "12px", border: "1px solid #E2E8F0", textAlign: "center", color: "#64748B", fontSize: "12.5px", fontWeight: "600" }}>
-                    No additional scheduled trips for today.
+                {loadingBuses ? (
+                  <div style={{ textAlign: "center", padding: "40px", fontSize: "15px", fontWeight: "700", color: "#64748b" }}>Loading assigned bus slots...</div>
+                ) : filteredBuses.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "50px 24px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
+                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#334155", maxWidth: "460px", margin: "0 auto 6px" }}>
+                      No bus slots currently assigned to your roster.
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
+                      When Admin assigns your shift in the 3-Shift Driver Roster, your vehicle slot and trips will appear here.
+                    </div>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {dynamicSchedules.map((tr, idx) => {
-                      const isSelected = idx === activeTripIndex;
+                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    {filteredBuses.map((bus, busIdx) => {
+                      const driverShift = bus.assignedShift || bus.shift || "Morning";
+                      const shiftDisplay = bus.shiftBadge || (
+                        driverShift === "Morning" ? "🌅 Morning Shift (06:00 AM – 02:00 PM)"
+                        : driverShift === "Evening" ? "🌆 Evening Shift (02:00 PM – 10:00 PM)"
+                        : "🌙 Night Shift (10:00 PM – 06:00 AM)"
+                      );
+
+                      const tripsForThisBus = (bus.assignedTrips && bus.assignedTrips.length > 0)
+                        ? bus.assignedTrips
+                        : [{
+                          id: `BASE-${bus._id}`,
+                          scheduleId: null,
+                          departureTime: bus.departureTime || "08:00 AM",
+                          arrivalTime: bus.arrivalTime || "10:00 AM",
+                          routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+                          fromLocation: bus.fromLocation,
+                          toLocation: bus.toLocation,
+                          stops: bus.stops || [],
+                          shift: driverShift,
+                          price: bus.price || 35,
+                        }];
+
                       return (
                         <div
-                          key={tr.id || idx}
-                          onClick={() => { setActiveTripIndex(idx); setActiveTab("dashboard"); showToast(`Selected ${tr.routeName}`); }}
+                          key={bus._id}
                           style={{
-                            padding: "10px 12px",
-                            borderRadius: "10px",
-                            background: isSelected ? "#EEF2FF" : "#F8FAFC",
-                            border: `1px solid ${isSelected ? "#C7D2FE" : "#E2E8F0"}`,
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
+                            background: "#ffffff",
+                            borderRadius: "20px",
+                            padding: "24px",
+                            border: bus.isReplacementDuty ? "2px solid #c4b5fd" : "2px solid #bbf7d0",
+                            boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
                             display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "8px"
+                            flexDirection: "column",
+                            gap: "18px",
                           }}
                         >
-                          <div>
-                            <div style={{ fontSize: "12.5px", fontWeight: "800", color: "#0F172A", display: "flex", alignItems: "center", gap: "6px" }}>
-                              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isSelected ? "#4F46E5" : "#94A3B8" }}></span>
-                              <span>{tr.routeName}</span>
+                          {/* LEVEL 1: BUS SLOT & SHIFT SPECIFICATIONS */}
+                          <div style={{ borderBottom: "1.5px solid #f1f5f9", paddingBottom: "16px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "8px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: "15px", fontFamily: "monospace", fontWeight: "900", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "6px 14px", borderRadius: "10px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#86efac"}`, color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", letterSpacing: "0.5px" }}>
+                                  🚌 {bus.busNumber}
+                                </span>
+                                <h3 style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", margin: 0 }}>
+                                  {bus.busName}
+                                </h3>
+                              </div>
+
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: "12px", fontWeight: "800", color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "5px 12px", borderRadius: "20px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#bbf7d0"}` }}>
+                                  {bus.isReplacementDuty ? "⚡ Temporary Replacement" : "● Assigned to You ✓"}
+                                </span>
+
+                                <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "5px 12px", borderRadius: "20px", border: "1.5px solid #c7d2fe" }}>
+                                  {shiftDisplay}
+                                </span>
+                              </div>
                             </div>
-                            <div style={{ fontSize: "11px", color: "#64748B", fontWeight: "600", marginTop: "2px" }}>
-                              {tr.departure} ➔ {tr.arrival} • <span style={{ color: "#059669", fontWeight: "700" }}>{tr.passengers || 0} pax</span>
+
+                            {/* Bus Specs Strip */}
+                            <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "12.5px", color: "#64748b", marginTop: "10px", fontWeight: "600" }}>
+                              <span>💺 Capacity: <strong style={{ color: "#0f172a" }}>{bus.totalSeats} Seats</strong></span>
+                              <span>🚍 Type: <strong style={{ color: "#0f172a" }}>{bus.busType}</strong></span>
+                              {bus.driverPhone && <span>📱 Contact: <strong style={{ color: "#0f172a" }}>{bus.driverPhone}</strong></span>}
+                              <span>🧑✈️ Driver: <strong style={{ color: "#15803d" }}>{(!bus.driverName || bus.driverName === "Not Assigned" || bus.driverName.includes("Unassigned") || bus.driverName.includes("Replacement Driver Required")) ? (user?.name || "Silpa") : bus.driverName} (You)</strong></span>
                             </div>
                           </div>
 
-                          <span
-                            style={{
-                              fontSize: "10.5px",
-                              fontWeight: "800",
-                              padding: "2px 8px",
-                              borderRadius: "6px",
-                              background: isSelected ? "#4F46E5" : "#FFFFFF",
-                              color: isSelected ? "#FFFFFF" : "#475569",
-                              border: `1px solid ${isSelected ? "#4F46E5" : "#CBD5E1"}`,
-                              whiteSpace: "nowrap"
-                            }}
-                          >
-                            {isSelected ? "Active" : "Select"}
-                          </span>
+                          {/* LEVEL 2: TRIPS ASSIGNED TO THIS BUS */}
+                          <div style={{ background: "#f8fafc", borderRadius: "16px", padding: "18px", border: "1px solid #e2e8f0" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
+                              <div style={{ fontSize: "14px", fontWeight: "900", color: "#0f172a", display: "flex", alignItems: "center", gap: "7px" }}>
+                                <Clock size={16} color="#6366f1" />
+                                <span>Trips Assigned to this Bus ({tripsForThisBus.length})</span>
+                              </div>
+                              <span style={{ fontSize: "11.5px", fontWeight: "700", color: "#64748b" }}>
+                                Scheduled departures for your {driverShift} duty shift
+                              </span>
+                            </div>
+
+                            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                              {tripsForThisBus.map((tr, tIdx) => (
+                                <div
+                                  key={tr.id || tIdx}
+                                  style={{
+                                    background: "#ffffff",
+                                    borderRadius: "14px",
+                                    padding: "14px 18px",
+                                    border: "1.5px solid #e2e8f0",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    flexWrap: "wrap",
+                                    gap: "12px",
+                                    boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                                  }}
+                                >
+                                  <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                                      <span style={{ fontSize: "13.5px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "3px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+                                        ⏰ {tr.departureTime}
+                                      </span>
+                                      <span style={{ fontSize: "15px", fontWeight: "800", color: "#0f172a" }}>
+                                        {tr.routeName}
+                                      </span>
+                                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "2px 8px", borderRadius: "6px" }}>
+                                        {tr.shift} Departure
+                                      </span>
+                                    </div>
+
+                                    <div style={{ fontSize: "12px", color: "#64748b", marginTop: "5px", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
+                                      <span>🏁 Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrivalTime}</strong></span>
+                                      {tr.stops && tr.stops.length > 0 && <span>🛑 Route Stops: <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
+                                      <span>💰 Base Fare: <strong style={{ color: "#059669" }}>₹{tr.price || bus.price || 35}</strong></span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveTripIndex(busIdx);
+                                      navigate("/driver/live-drive", {
+                                        state: {
+                                          selectedBusId: bus._id,
+                                          selectedBusNumber: bus.busNumber,
+                                          selectedScheduleId: tr.scheduleId,
+                                          departureTime: tr.departureTime,
+                                          routeName: tr.routeName,
+                                          fromLocation: tr.fromLocation,
+                                          toLocation: tr.toLocation,
+                                          stops: tr.stops,
+                                        }
+                                      });
+                                    }}
+                                    style={{
+                                      padding: "9px 18px",
+                                      borderRadius: "10px",
+                                      background: "linear-gradient(135deg, #16a34a, #059669)",
+                                      color: "#ffffff",
+                                      fontSize: "13px",
+                                      fontWeight: "800",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: "6px",
+                                      boxShadow: "0 2px 8px rgba(22, 163, 74, 0.25)",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    <Navigation size={14} /> Start This Trip →
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
               </div>
+            )}
 
+            {/* TAB 3: APPLY FOR LEAVE */}
+            {currentTab === "leave" && (
+              <div className="driver-leave-grid">
+                <div className="card-shadow">
+                  <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 6px" }}>Apply for Driver Leave</h2>
+                  <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Select Full Day, Specific Shift, or Half Day leave and submit for Admin approval.</p>
+
+                  <form onSubmit={handleApplyLeaveSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div>
+                      <label style={styles.formLabel}>Driver Name & Email</label>
+                      <input type="text" value={`${user?.name || "Driver"} (${user?.email || "driver@movesmart.in"})`} readOnly style={{ ...styles.formInput, background: "#f1f5f9", color: "#64748b", fontWeight: "700" }} />
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>Leave Scope / Shift <span style={{ color: "#e11d48" }}>*</span></label>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+                        {[
+                          { id: "ALL", label: "Full Day (All Shifts)", type: "Full Day" },
+                          { id: "Morning", label: "Morning Shift (06:00-14:00)", type: "Shift" },
+                          { id: "Evening", label: "Evening Shift (14:00-22:00)", type: "Shift" },
+                          { id: "Night", label: "Night Shift (22:00-06:00)", type: "Shift" },
+                          { id: "Half Day", label: "Half Day Slot", type: "Half Day" },
+                        ].map((opt) => {
+                          const isSelected = opt.id === "Half Day"
+                            ? leaveForm.leaveType === "Half Day"
+                            : (leaveForm.leaveType === "Full Day" && (leaveForm.shiftSlot === opt.id || (!leaveForm.shiftSlot && opt.id === "ALL")));
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              className="touch-target"
+                              onClick={() => {
+                                if (opt.id === "Half Day") {
+                                  setLeaveForm({ ...leaveForm, leaveType: "Half Day", shiftSlot: "Morning" });
+                                } else {
+                                  setLeaveForm({ ...leaveForm, leaveType: "Full Day", shiftSlot: opt.id });
+                                }
+                              }}
+                              style={{
+                                padding: "10px 12px",
+                                borderRadius: "12px",
+                                border: `2px solid ${isSelected ? "#16a34a" : "#cbd5e1"}`,
+                                background: isSelected ? "#f0fdf4" : "#ffffff",
+                                color: isSelected ? "#15803d" : "#475569",
+                                fontWeight: "800",
+                                fontSize: "12.5px",
+                                cursor: "pointer",
+                                textAlign: "center",
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {leaveForm.leaveType === "Half Day" && (
+                      <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "14px", border: "1px solid #cbd5e1" }}>
+                        <label style={styles.formLabel}>Half-Day Slot <span style={{ color: "#e11d48" }}>*</span></label>
+                        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                          {["Forenoon (AM)", "Afternoon (PM)"].map((slot) => (
+                            <label key={slot} className="touch-target" style={{ flex: 1, minWidth: "130px", display: "flex", alignItems: "center", gap: "8px", background: "#fff", padding: "10px 14px", borderRadius: "10px", border: "1px solid #cbd5e1", cursor: "pointer", fontSize: "13px", fontWeight: "700" }}>
+                              <input
+                                type="radio"
+                                name="halfDaySlot"
+                                checked={leaveForm.halfDaySlot === slot}
+                                onChange={() => setLeaveForm({ ...leaveForm, halfDaySlot: slot, shiftSlot: slot === "Afternoon (PM)" ? "Evening" : "Morning" })}
+                              />
+                              {slot === "Forenoon (AM)" ? "Forenoon (AM) - Morning" : "Afternoon (PM) - Evening"}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Leave Date <span style={{ color: "#e11d48" }}>*</span>
+                        <span style={{ fontSize: "11.5px", fontWeight: "600", color: "#64748b", marginLeft: "6px" }}>
+                          (Tomorrow onwards, up to 90 days)
+                        </span>
+                      </label>
+                      <input
+                        type="date"
+                        min={getMinLeaveDate()}
+                        max={getMaxLeaveDate()}
+                        value={leaveForm.leaveDate}
+                        onChange={(e) => setLeaveForm({ ...leaveForm, leaveDate: e.target.value })}
+                        style={styles.formInput}
+                        required
+                      />
+                      <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <AlertCircle size={12} color="#64748b" /> Same-day leave is disabled. Please select tomorrow or an upcoming date.
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>Reason for Leave <span style={{ color: "#e11d48" }}>*</span></label>
+                      <textarea
+                        rows="3"
+                        value={leaveForm.reason}
+                        onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
+                        placeholder="Enter reason for leave..."
+                        style={{ ...styles.formInput, resize: "none" }}
+                        required
+                      />
+                    </div>
+
+                    <button type="submit" className="btn-green-gradient touch-target" disabled={submittingLeave} style={{ justifyContent: "center", padding: "14px" }}>
+                      {submittingLeave ? "Submitting..." : "Submit Leave Application"}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Leave Applications History */}
+                <div className="card-shadow">
+                  <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Leave History & Status</h2>
+
+                  {loadingLeaves ? (
+                    <div style={{ fontSize: "14px", fontWeight: "700", color: "#64748b" }}>Loading leave history...</div>
+                  ) : driverLeaves.length === 0 ? (
+                    <div style={{ color: "#64748b", padding: "16px 0", fontSize: "14px", fontWeight: "600" }}>No leave requests submitted yet.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      {driverLeaves.map((l) => (
+                        <div key={l._id} style={{ background: "rgba(248, 250, 252, 0.85)", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                            <span style={{ fontSize: "14.5px", fontWeight: "800", color: "#0f172a" }}>
+                              {l.leaveDate} • {l.shiftSlot ? `${l.shiftSlot} Shift` : l.leaveType}
+                            </span>
+
+                            <span className={l.status === "Approved" ? "status-badge-approved" : l.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
+                              {l.status === "Approved" ? "Approved by Admin" : l.status === "Rejected" ? "Rejected by Admin" : "Pending Review"}
+                            </span>
+                          </div>
+
+                          {l.shiftSlot && l.shiftSlot !== "ALL" && (
+                            <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
+                              Shift Slot: {l.shiftSlot} {l.halfDaySlot && l.halfDaySlot !== "N/A" ? `(${l.halfDaySlot})` : ""}
+                            </div>
+                          )}
+                          {l.leaveType === "Half Day" && (!l.shiftSlot || l.shiftSlot === "ALL") && (
+                            <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
+                              Slot: {l.halfDaySlot}
+                            </div>
+                          )}
+
+                          <div style={{ fontSize: "13.5px", color: "#475569", fontWeight: "600" }}>Reason: {l.reason}</div>
+
+                          {l.adminComment && (
+                            <div style={{ marginTop: "8px", background: "#f1f5f9", padding: "8px 12px", borderRadius: "8px", fontSize: "12.5px", color: "#334155", fontStyle: "italic", fontWeight: "600" }}>
+                              Admin Note: {l.adminComment}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: PROFILE & LICENSE VERIFICATION */}
+            {currentTab === "verification" && (
+              <div className="driver-two-col-grid">
+                <div className="card-shadow">
+                  <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 6px" }}>Driver Profile & License</h2>
+                  <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Provide your driving license details and profile picture for verification.</p>
+
+                  <form onSubmit={handleSubmitProfileVerification} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div>
+                      <label style={styles.formLabel}>Driving License Number <span style={{ color: "#e11d48" }}>*</span></label>
+                      <input
+                        type="text"
+                        value={verificationData?.licenseNumber || ""}
+                        onChange={(e) => setVerificationData({ ...verificationData, licenseNumber: e.target.value })}
+                        placeholder="Enter license number..."
+                        style={styles.formInput}
+                        required
+                      />
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      <div>
+                        <label style={styles.formLabel}>Contact Phone</label>
+                        <input
+                          type="text"
+                          value={verificationData?.phone || ""}
+                          onChange={(e) => setVerificationData({ ...verificationData, phone: e.target.value })}
+                          style={styles.formInput}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>Experience (Years)</label>
+                        <input
+                          type="number"
+                          value={verificationData?.experienceYears || 0}
+                          onChange={(e) => setVerificationData({ ...verificationData, experienceYears: e.target.value })}
+                          style={styles.formInput}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Profile Photo <span style={{ color: "#e11d48" }}>*</span>
+                      </label>
+                      <label
+                        className="touch-target"
+                        style={{
+                          padding: "10px 16px",
+                          borderRadius: "10px",
+                          background: "#f1f5f9",
+                          color: "#475569",
+                          border: "1.5px solid #cbd5e1",
+                          fontSize: "13px",
+                          fontWeight: "700",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        <Upload size={14} /> Upload Profile Photo
+                        <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ display: "none" }} />
+                      </label>
+
+                      {verificationData?.profilePic && (
+                        <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "12px", background: "#f0fdf4", padding: "10px 14px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                          <img src={verificationData?.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover", border: "2px solid #16a34a" }} />
+                          <div>
+                            <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "flex", alignItems: "center", gap: "4px" }}>
+                              <CheckCircle2 size={14} color="#15803d" /> Photo Attached
+                            </span>
+                            <span style={{ fontSize: "11.5px", color: "#64748b" }}>Ready for profile verification</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>Driving License Document</label>
+                      <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ fontSize: "13px", fontWeight: "600" }} />
+                      {verificationData?.licenseImage && (
+                        <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
+                          <img src={verificationData?.licenseImage} alt="License Preview" style={{ height: "64px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                          <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "700", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                            <CheckCircle2 size={14} color="#15803d" /> Document Attached
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <button type="submit" className="btn-purple-gradient touch-target" disabled={submittingVerification} style={{ justifyContent: "center", padding: "14px", marginTop: "4px" }}>
+                      {submittingVerification ? "Submitting..." : "Submit Profile for Verification"}
+                    </button>
+                  </form>
+                </div>
+
+                <div className="card-shadow" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div>
+                    <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Verification &amp; Account Status</h2>
+
+                    <div style={{ background: "rgba(248, 250, 252, 0.9)", padding: "20px", borderRadius: "16px", border: "1px solid #e2e8f0", textAlign: "center", marginBottom: "16px" }}>
+                      <div style={{ width: "80px", height: "80px", borderRadius: "50%", margin: "0 auto 12px", overflow: "hidden", background: "#e2e8f0", border: "3px solid #16a34a" }}>
+                        {verificationData?.profilePic ? (
+                          <img src={verificationData?.profilePic} alt="Driver Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: "800", color: "#16a34a" }}>
+                            {user?.name ? user.name[0] : "D"}
+                          </div>
+                        )}
+                      </div>
+
+                      <h3 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: 0 }}>{user?.name || "Driver"}</h3>
+                      <div style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 12px", fontWeight: "600" }}>{user?.email || "driver@movesmart.in"}</div>
+
+                      {verificationData?.verificationStatus === "Approved" ? (
+                        <div style={{ background: "#f0fdf4", color: "#15803d", border: "1.5px solid #bbf7d0", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "center", width: "100%" }}>
+                          <CheckCircle2 size={16} color="#15803d" /> Verified Driver
+                        </div>
+                      ) : verificationData?.verificationStatus === "Pending" ? (
+                        <div style={{ background: "#fffbeb", color: "#92400e", border: "1.5px solid #fde68a", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
+                          Pending Admin Review
+                        </div>
+                      ) : (
+                        <div style={{ background: "#fff1f2", color: "#be123c", border: "1.5px solid #fecdd3", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
+                          Unverified Driver
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ fontSize: "13.5px", color: "#475569", lineHeight: "1.8", fontWeight: "600", background: "#f8fafc", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+                      <div><strong style={{ color: "#0f172a" }}>License Number:</strong> {verificationData?.licenseNumber || "Not Provided"}</div>
+                      <div><strong style={{ color: "#0f172a" }}>Experience:</strong> {verificationData?.experienceYears || 0} Years</div>
+                      <div><strong style={{ color: "#0f172a" }}>Contact Phone:</strong> {verificationData?.phone || user?.phone || "Not Provided"}</div>
+                      <div><strong style={{ color: "#0f172a" }}>Admin Note:</strong> {verificationData?.verificationNote || "No notes from admin yet."}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#15803d", fontSize: "13px", fontWeight: "600", marginTop: "16px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <AlertCircle size={15} color="#15803d" /> Driver identity and biometric verifications are managed through the Central Admin Portal.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: TRIPS SCHEDULE TIMELINE */}
+            {activeTab === "trips" && (
+              <div className="card-shadow" style={{ padding: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "10px" }}>
+                  <div>
+                    <h3 style={{ ...styles.cardTitle, margin: 0, fontSize: "20px", fontWeight: "900" }}>
+                      🛣️ Today's Scheduled Departures Timeline
+                    </h3>
+                    <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
+                      Chronological list of all departures scheduled across your assigned bus slots.
+                    </p>
+                  </div>
+
+                  <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "6px 14px", borderRadius: "20px", border: "1px solid #c7d2fe" }}>
+                    {dynamicSchedules.length} Scheduled Trip{dynamicSchedules.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                {dynamicSchedules.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "40px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
+                    <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 4px" }}>
+                      No scheduled departures found for your assigned shifts today.
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
+                      When departures are scheduled on your assigned vehicles in Fleet Management, they will automatically appear here.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                    {dynamicSchedules.map((tr, idx) => {
+                      const isSelected = idx === activeTripIndex;
+                      return (
+                        <div
+                          key={tr.id}
+                          style={{
+                            padding: "18px 22px",
+                            borderRadius: "16px",
+                            background: isSelected ? "#f5f3ff" : "#ffffff",
+                            border: isSelected ? "2px solid #7c3aed" : "1.5px solid #e2e8f0",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "14px",
+                            boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
+                              <span style={{ fontSize: "14px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+                                ⏰ {tr.departure}
+                              </span>
+                              <span style={{ fontSize: "13px", fontFamily: "monospace", fontWeight: "900", background: "#f8fafc", padding: "4px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", color: "#0f172a" }}>
+                                🚌 {tr.busNumber} ({tr.busName})
+                              </span>
+                              <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: "6px" }}>
+                                {tr.shift} Shift
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a", marginBottom: "4px" }}>
+                              {tr.routeName}
+                            </div>
+
+                            <div style={{ fontSize: "12.5px", color: "#64748b", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
+                              <span>🏁 Expected Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrival}</strong></span>
+                              {tr.stops && tr.stops.length > 0 && <span>🛑 <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
+                              <span>👥 <strong style={{ color: "#059669" }}>{tr.passengers || 0} Pax Booked</strong></span>
+                              <span>💰 Fare: <strong>₹{tr.fareEarned.toFixed(2)}</strong></span>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveTripIndex(tr.busIndex || 0);
+                                navigate("/driver/live-drive", {
+                                  state: {
+                                    selectedBusId: tr.busId,
+                                    selectedBusNumber: tr.busNumber,
+                                    selectedScheduleId: tr.scheduleId,
+                                    departureTime: tr.departure,
+                                    routeName: tr.routeName,
+                                    fromLocation: tr.fromLocation,
+                                    toLocation: tr.toLocation,
+                                    stops: tr.stops,
+                                  }
+                                });
+                              }}
+                              style={{
+                                padding: "10px 18px",
+                                borderRadius: "10px",
+                                background: "linear-gradient(135deg, #7c3aed, #4c1d95)",
+                                color: "#ffffff",
+                                fontSize: "13px",
+                                fontWeight: "800",
+                                border: "none",
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                boxShadow: "0 2px 8px rgba(124, 58, 237, 0.25)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              <Navigation size={14} /> Start Live Drive →
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 6: PAYMENTS LOG */}
+            {activeTab === "payments" && (
               <div className="card-shadow">
-                <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Fleet Notices & Alerts</h3>
-                {alerts.length === 0 ? (
-                  <div style={{ padding: "16px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0", textAlign: "center", color: "#64748b", fontSize: "13.5px", fontWeight: "600" }}>
-                    No active route delay alerts or fleet notices.
+                <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Trip Collections & Payments Log</h3>
+                {paymentsLog.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "36px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
+                    <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 4px" }}>
+                      No passenger payment transactions recorded yet today.
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
+                      When passengers tap their Smart RFID passes or pay tickets on active trips, payments will be automatically logged here.
+                    </div>
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    {alerts.map((alt, idx) => (
-                      <div key={alt.id || idx} style={{ padding: "14px 16px", borderRadius: "14px", background: alt.severity === "warning" || alt.type === "warning" ? "#fffbeb" : "#f0f9ff", border: `1.5px solid ${alt.severity === "warning" || alt.type === "warning" ? "#fde68a" : "#bae6fd"}`, fontSize: "14px" }}>
-                        <div style={{ fontWeight: "800", color: alt.severity === "warning" || alt.type === "warning" ? "#b45309" : "#0369a1" }}>{alt.title || "Fleet Alert"}</div>
-                        <div style={{ fontSize: "13.5px", color: alt.severity === "warning" || alt.type === "warning" ? "#78350f" : "#0c4a6e", marginTop: "4px", fontWeight: "600" }}>{alt.message || alt.text || ""}</div>
-                        {alt.createdAt && <div style={{ fontSize: "12px", color: "#64748b", marginTop: "6px", fontWeight: "600" }}>Time: {new Date(alt.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>}
+                    {paymentsLog.map((p, idx) => (
+                      <div key={p.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderRadius: "14px", background: "rgba(248, 250, 252, 0.8)", border: "1px solid #e2e8f0", flexWrap: "wrap", gap: "8px" }}>
+                        <div>
+                          <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>{p.trip}</div>
+                          <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>Time: {p.time} • Payment Method: {p.method}</div>
+                        </div>
+                        <div style={{ fontSize: "18px", fontWeight: "800", color: "#15803d" }}>{p.amount}</div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: MY ASSIGNED BUS & VEHICLE SLOTS */}
-        {currentTab === "buses" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            {/* Header with Stats Strip */}
-            <div className="card-shadow" style={{ padding: "22px 26px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "16px" }}>
-                <div>
-                  <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#0f172a", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span>🚌</span> My Assigned Bus Slots &amp; Scheduled Trips
-                  </h2>
-                  <p style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
-                    Below are your assigned vehicle slots (bus &amp; shift) and the specific route departures scheduled on each bus.
-                  </p>
-                </div>
-
-                {filteredBuses.length > 0 && (
-                  <input
-                    type="text"
-                    placeholder="Search by bus number, name, or route..."
-                    value={busSearchQuery}
-                    onChange={(e) => setBusSearchQuery(e.target.value)}
-                    style={{ padding: "10px 16px", borderRadius: "12px", border: "1.5px solid #cbd5e1", fontSize: "13.5px", minWidth: "260px", outline: "none", fontWeight: "600" }}
-                  />
-                )}
-              </div>
-
-              {/* Quick Roster Metrics Banner */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", background: "#f8fafc", padding: "14px 18px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
-                <div>
-                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Assigned Bus Slots</span>
-                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#10b981", marginTop: "2px" }}>
-                    {filteredBuses.length} Vehicle Slot{filteredBuses.length !== 1 ? "s" : ""}
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Total Scheduled Trips</span>
-                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#6366f1", marginTop: "2px" }}>
-                    {dynamicSchedules.length} Departure{dynamicSchedules.length !== 1 ? "s" : ""}
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Driver On Duty</span>
-                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", marginTop: "2px" }}>
-                    {user?.name || "Silpa"} (You)
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {loadingBuses ? (
-              <div style={{ textAlign: "center", padding: "40px", fontSize: "15px", fontWeight: "700", color: "#64748b" }}>Loading assigned bus slots...</div>
-            ) : filteredBuses.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "50px 24px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
-                <div style={{ fontSize: "16px", fontWeight: "800", color: "#334155", maxWidth: "460px", margin: "0 auto 6px" }}>
-                  No bus slots currently assigned to your roster.
-                </div>
-                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
-                  When Admin assigns your shift in the 3-Shift Driver Roster, your vehicle slot and trips will appear here.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                {filteredBuses.map((bus, busIdx) => {
-                  const driverShift = bus.assignedShift || bus.shift || "Morning";
-                  const shiftDisplay = driverShift === "Morning" ? "🌅 Morning Shift (06:00 AM – 02:00 PM)"
-                    : driverShift === "Evening" ? "🌆 Evening Shift (02:00 PM – 10:00 PM)"
-                    : "🌙 Night Shift (10:00 PM – 06:00 AM)";
-
-                  const tripsForThisBus = (bus.assignedTrips && bus.assignedTrips.length > 0)
-                    ? bus.assignedTrips
-                    : [{
-                        id: `BASE-${bus._id}`,
-                        scheduleId: null,
-                        departureTime: bus.departureTime || "08:00 AM",
-                        arrivalTime: bus.arrivalTime || "10:00 AM",
-                        routeName: bus.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
-                        fromLocation: bus.fromLocation,
-                        toLocation: bus.toLocation,
-                        stops: bus.stops || [],
-                        shift: driverShift,
-                        price: bus.price || 35,
-                      }];
-
-                  return (
-                    <div
-                      key={bus._id}
-                      style={{
-                        background: "#ffffff",
-                        borderRadius: "20px",
-                        padding: "24px",
-                        border: bus.isReplacementDuty ? "2px solid #c4b5fd" : "2px solid #bbf7d0",
-                        boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "18px",
-                      }}
-                    >
-                      {/* LEVEL 1: BUS SLOT & SHIFT SPECIFICATIONS */}
-                      <div style={{ borderBottom: "1.5px solid #f1f5f9", paddingBottom: "16px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "8px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-                            <span style={{ fontSize: "15px", fontFamily: "monospace", fontWeight: "900", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "6px 14px", borderRadius: "10px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#86efac"}`, color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", letterSpacing: "0.5px" }}>
-                              🚌 {bus.busNumber}
-                            </span>
-                            <h3 style={{ fontSize: "20px", fontWeight: "900", color: "#0f172a", margin: 0 }}>
-                              {bus.busName}
-                            </h3>
-                          </div>
-
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                            <span style={{ fontSize: "12px", fontWeight: "800", color: bus.isReplacementDuty ? "#7c3aed" : "#15803d", background: bus.isReplacementDuty ? "#f5f3ff" : "#f0fdf4", padding: "5px 12px", borderRadius: "20px", border: `1.5px solid ${bus.isReplacementDuty ? "#ddd6fe" : "#bbf7d0"}` }}>
-                              {bus.isReplacementDuty ? "⚡ Temporary Replacement" : "● Assigned to You ✓"}
-                            </span>
-
-                            <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "5px 12px", borderRadius: "20px", border: "1.5px solid #c7d2fe" }}>
-                              {shiftDisplay}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Bus Specs Strip */}
-                        <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "12.5px", color: "#64748b", marginTop: "10px", fontWeight: "600" }}>
-                          <span>💺 Capacity: <strong style={{ color: "#0f172a" }}>{bus.totalSeats} Seats</strong></span>
-                          <span>🚍 Type: <strong style={{ color: "#0f172a" }}>{bus.busType}</strong></span>
-                          {bus.driverPhone && <span>📱 Contact: <strong style={{ color: "#0f172a" }}>{bus.driverPhone}</strong></span>}
-                          <span>🧑✈️ Driver: <strong style={{ color: "#15803d" }}>{(!bus.driverName || bus.driverName === "Not Assigned" || bus.driverName.includes("Unassigned") || bus.driverName.includes("Replacement Driver Required")) ? (user?.name || "Silpa") : bus.driverName} (You)</strong></span>
-                        </div>
-                      </div>
-
-                      {/* LEVEL 2: TRIPS ASSIGNED TO THIS BUS */}
-                      <div style={{ background: "#f8fafc", borderRadius: "16px", padding: "18px", border: "1px solid #e2e8f0" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
-                          <div style={{ fontSize: "14px", fontWeight: "900", color: "#0f172a", display: "flex", alignItems: "center", gap: "7px" }}>
-                            <Clock size={16} color="#6366f1" />
-                            <span>Trips Assigned to this Bus ({tripsForThisBus.length})</span>
-                          </div>
-                          <span style={{ fontSize: "11.5px", fontWeight: "700", color: "#64748b" }}>
-                            Scheduled departures for your {driverShift} duty shift
-                          </span>
-                        </div>
-
-                        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                          {tripsForThisBus.map((tr, tIdx) => (
-                            <div
-                              key={tr.id || tIdx}
-                              style={{
-                                background: "#ffffff",
-                                borderRadius: "14px",
-                                padding: "14px 18px",
-                                border: "1.5px solid #e2e8f0",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                flexWrap: "wrap",
-                                gap: "12px",
-                                boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
-                              }}
-                            >
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                                  <span style={{ fontSize: "13.5px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "3px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
-                                    ⏰ {tr.departureTime}
-                                  </span>
-                                  <span style={{ fontSize: "15px", fontWeight: "800", color: "#0f172a" }}>
-                                    {tr.routeName}
-                                  </span>
-                                  <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "2px 8px", borderRadius: "6px" }}>
-                                    {tr.shift} Departure
-                                  </span>
-                                </div>
-
-                                <div style={{ fontSize: "12px", color: "#64748b", marginTop: "5px", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
-                                  <span>🏁 Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrivalTime}</strong></span>
-                                  {tr.stops && tr.stops.length > 0 && <span>🛑 Route Stops: <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
-                                  <span>💰 Base Fare: <strong style={{ color: "#059669" }}>₹{tr.price || bus.price || 35}</strong></span>
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActiveTripIndex(busIdx);
-                                  navigate("/driver/live-drive", {
-                                    state: {
-                                      selectedBusId: bus._id,
-                                      selectedBusNumber: bus.busNumber,
-                                      selectedScheduleId: tr.scheduleId,
-                                      departureTime: tr.departureTime,
-                                      routeName: tr.routeName,
-                                      fromLocation: tr.fromLocation,
-                                      toLocation: tr.toLocation,
-                                      stops: tr.stops,
-                                    }
-                                  });
-                                }}
-                                style={{
-                                  padding: "9px 18px",
-                                  borderRadius: "10px",
-                                  background: "linear-gradient(135deg, #16a34a, #059669)",
-                                  color: "#ffffff",
-                                  fontSize: "13px",
-                                  fontWeight: "800",
-                                  border: "none",
-                                  cursor: "pointer",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "6px",
-                                  boxShadow: "0 2px 8px rgba(22, 163, 74, 0.25)",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                <Navigation size={14} /> Start This Trip →
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
             )}
-          </div>
-        )}
 
-        {/* TAB 3: APPLY FOR LEAVE */}
-        {currentTab === "leave" && (
-          <div className="driver-leave-grid">
-            <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 6px" }}>Apply for Driver Leave</h2>
-              <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Select Full Day, Specific Shift, or Half Day leave and submit for Admin approval.</p>
-
-              <form onSubmit={handleApplyLeaveSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                <div>
-                  <label style={styles.formLabel}>Driver Name & Email</label>
-                  <input type="text" value={`${user?.name || "Driver"} (${user?.email || "driver@movesmart.in"})`} readOnly style={{ ...styles.formInput, background: "#f1f5f9", color: "#64748b", fontWeight: "700" }} />
-                </div>
-
-                <div>
-                  <label style={styles.formLabel}>Leave Scope / Shift <span style={{ color: "#e11d48" }}>*</span></label>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
-                    {[
-                      { id: "ALL", label: "Full Day (All Shifts)", type: "Full Day" },
-                      { id: "Morning", label: "Morning Shift (06:00-14:00)", type: "Shift" },
-                      { id: "Evening", label: "Evening Shift (14:00-22:00)", type: "Shift" },
-                      { id: "Night", label: "Night Shift (22:00-06:00)", type: "Shift" },
-                      { id: "Half Day", label: "Half Day Slot", type: "Half Day" },
-                    ].map((opt) => {
-                      const isSelected = opt.id === "Half Day"
-                        ? leaveForm.leaveType === "Half Day"
-                        : (leaveForm.leaveType === "Full Day" && (leaveForm.shiftSlot === opt.id || (!leaveForm.shiftSlot && opt.id === "ALL")));
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          className="touch-target"
-                          onClick={() => {
-                            if (opt.id === "Half Day") {
-                              setLeaveForm({ ...leaveForm, leaveType: "Half Day", shiftSlot: "Morning" });
-                            } else {
-                              setLeaveForm({ ...leaveForm, leaveType: "Full Day", shiftSlot: opt.id });
-                            }
-                          }}
-                          style={{
-                            padding: "10px 12px",
-                            borderRadius: "12px",
-                            border: `2px solid ${isSelected ? "#16a34a" : "#cbd5e1"}`,
-                            background: isSelected ? "#f0fdf4" : "#ffffff",
-                            color: isSelected ? "#15803d" : "#475569",
-                            fontWeight: "800",
-                            fontSize: "12.5px",
-                            cursor: "pointer",
-                            textAlign: "center",
-                          }}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {leaveForm.leaveType === "Half Day" && (
-                  <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "14px", border: "1px solid #cbd5e1" }}>
-                    <label style={styles.formLabel}>Half-Day Slot <span style={{ color: "#e11d48" }}>*</span></label>
-                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                      {["Forenoon (AM)", "Afternoon (PM)"].map((slot) => (
-                        <label key={slot} className="touch-target" style={{ flex: 1, minWidth: "130px", display: "flex", alignItems: "center", gap: "8px", background: "#fff", padding: "10px 14px", borderRadius: "10px", border: "1px solid #cbd5e1", cursor: "pointer", fontSize: "13px", fontWeight: "700" }}>
-                          <input
-                            type="radio"
-                            name="halfDaySlot"
-                            checked={leaveForm.halfDaySlot === slot}
-                            onChange={() => setLeaveForm({ ...leaveForm, halfDaySlot: slot, shiftSlot: slot === "Afternoon (PM)" ? "Evening" : "Morning" })}
-                          />
-                          {slot === "Forenoon (AM)" ? "Forenoon (AM) - Morning" : "Afternoon (PM) - Evening"}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+            {/* TAB 8: DRIVER LOST & FOUND */}
+            {activeTab === "lostfound" && (
+              <div className="card-shadow">
+                {drvLfToast && (
+                  <div style={{ background: "#2e1065", color: "#fff", padding: "12px 18px", borderRadius: "12px", marginBottom: "16px", fontSize: "13.5px", fontWeight: "700" }}>{drvLfToast}</div>
                 )}
+                <h3 style={{ ...styles.cardTitle, marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <Package size={17} color="#6337D9" /> Lost &amp; Found — Report Found Item
+                </h3>
+                <p style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginBottom: "20px" }}>Found something on your bus? Report it here so passengers can claim it through MoveSmart.</p>
 
-                <div>
-                  <label style={styles.formLabel}>
-                    Leave Date <span style={{ color: "#e11d48" }}>*</span>
-                    <span style={{ fontSize: "11.5px", fontWeight: "600", color: "#64748b", marginLeft: "6px" }}>
-                      (Tomorrow onwards, up to 90 days)
-                    </span>
-                  </label>
-                  <input
-                    type="date"
-                    min={getMinLeaveDate()}
-                    max={getMaxLeaveDate()}
-                    value={leaveForm.leaveDate}
-                    onChange={(e) => setLeaveForm({ ...leaveForm, leaveDate: e.target.value })}
-                    style={styles.formInput}
-                    required
-                  />
-                  <div style={{ fontSize: "11.5px", color: "#64748b", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
-                    <AlertCircle size={12} color="#64748b" /> Same-day leave is disabled. Please select tomorrow or an upcoming date.
-                  </div>
-                </div>
-
-                <div>
-                  <label style={styles.formLabel}>Reason for Leave <span style={{ color: "#e11d48" }}>*</span></label>
-                  <textarea
-                    rows="3"
-                    value={leaveForm.reason}
-                    onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
-                    placeholder="Enter reason for leave..."
-                    style={{ ...styles.formInput, resize: "none" }}
-                    required
-                  />
-                </div>
-
-                <button type="submit" className="btn-green-gradient touch-target" disabled={submittingLeave} style={{ justifyContent: "center", padding: "14px" }}>
-                  {submittingLeave ? "Submitting..." : "Submit Leave Application"}
-                </button>
-              </form>
-            </div>
-
-            {/* Leave Applications History */}
-            <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Leave History & Status</h2>
-
-              {loadingLeaves ? (
-                <div style={{ fontSize: "14px", fontWeight: "700", color: "#64748b" }}>Loading leave history...</div>
-              ) : driverLeaves.length === 0 ? (
-                <div style={{ color: "#64748b", padding: "16px 0", fontSize: "14px", fontWeight: "600" }}>No leave requests submitted yet.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                  {driverLeaves.map((l) => (
-                    <div key={l._id} style={{ background: "rgba(248, 250, 252, 0.85)", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
-                        <span style={{ fontSize: "14.5px", fontWeight: "800", color: "#0f172a" }}>
-                          {l.leaveDate} • {l.shiftSlot ? `${l.shiftSlot} Shift` : l.leaveType}
-                        </span>
-
-                        <span className={l.status === "Approved" ? "status-badge-approved" : l.status === "Rejected" ? "status-badge-rejected" : "status-badge-pending"}>
-                          {l.status === "Approved" ? "Approved by Admin" : l.status === "Rejected" ? "Rejected by Admin" : "Pending Review"}
-                        </span>
-                      </div>
-
-                      {l.shiftSlot && l.shiftSlot !== "ALL" && (
-                        <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
-                          Shift Slot: {l.shiftSlot} {l.halfDaySlot && l.halfDaySlot !== "N/A" ? `(${l.halfDaySlot})` : ""}
-                        </div>
-                      )}
-                      {l.leaveType === "Half Day" && (!l.shiftSlot || l.shiftSlot === "ALL") && (
-                        <div style={{ fontSize: "13px", color: "#6d28d9", fontWeight: "700", marginBottom: "4px" }}>
-                          Slot: {l.halfDaySlot}
-                        </div>
-                      )}
-
-                      <div style={{ fontSize: "13.5px", color: "#475569", fontWeight: "600" }}>Reason: {l.reason}</div>
-
-                      {l.adminComment && (
-                        <div style={{ marginTop: "8px", background: "#f1f5f9", padding: "8px 12px", borderRadius: "8px", fontSize: "12.5px", color: "#334155", fontStyle: "italic", fontWeight: "600" }}>
-                          Admin Note: {l.adminComment}
-                        </div>
-                      )}
-                    </div>
+                {/* Sub-tabs */}
+                <div style={{ display: "flex", gap: "10px", marginBottom: "22px" }}>
+                  {[
+                    { id: "reportFound", label: "Report Found Item", icon: <Package size={14} /> },
+                    { id: "myFound", label: "My Found Reports", icon: <FileText size={14} /> }
+                  ].map(st => (
+                    <button key={st.id} type="button" onClick={() => { setDrvLfSubTab(st.id); if (st.id === "myFound") fetchDrvMyFound(); }}
+                      style={{ padding: "9px 18px", borderRadius: "12px", border: `2px solid ${drvLfSubTab === st.id ? "#7c3aed" : "#e2e8f0"}`, background: drvLfSubTab === st.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : "#f8fafc", color: drvLfSubTab === st.id ? "#fff" : "#475569", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      {st.icon}
+                      {st.label}
+                    </button>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* TAB 4: PROFILE & LICENSE VERIFICATION */}
-        {currentTab === "verification" && (
-          <div className="driver-two-col-grid">
-            <div className="card-shadow">
-              <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 6px" }}>Driver Profile & License</h2>
-              <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px", fontWeight: "600" }}>Provide your driving license details and profile picture for verification.</p>
-
-              <form onSubmit={handleSubmitProfileVerification} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                <div>
-                  <label style={styles.formLabel}>Driving License Number <span style={{ color: "#e11d48" }}>*</span></label>
-                  <input
-                    type="text"
-                    value={verificationData?.licenseNumber || ""}
-                    onChange={(e) => setVerificationData({ ...verificationData, licenseNumber: e.target.value })}
-                    placeholder="Enter license number..."
-                    style={styles.formInput}
-                    required
-                  />
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={styles.formLabel}>Contact Phone</label>
-                    <input
-                      type="text"
-                      value={verificationData?.phone || ""}
-                      onChange={(e) => setVerificationData({ ...verificationData, phone: e.target.value })}
-                      style={styles.formInput}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={styles.formLabel}>Experience (Years)</label>
-                    <input
-                      type="number"
-                      value={verificationData?.experienceYears || 0}
-                      onChange={(e) => setVerificationData({ ...verificationData, experienceYears: e.target.value })}
-                      style={styles.formInput}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={styles.formLabel}>
-                    Profile Photo <span style={{ color: "#e11d48" }}>*</span>
-                  </label>
-                  <label
-                    className="touch-target"
-                    style={{
-                      padding: "10px 16px",
-                      borderRadius: "10px",
-                      background: "#f1f5f9",
-                      color: "#475569",
-                      border: "1.5px solid #cbd5e1",
-                      fontSize: "13px",
-                      fontWeight: "700",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <Upload size={14} /> Upload Profile Photo
-                    <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "profilePic")} style={{ display: "none" }} />
-                  </label>
-
-                  {verificationData?.profilePic && (
-                    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "12px", background: "#f0fdf4", padding: "10px 14px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
-                      <img src={verificationData?.profilePic} alt="Profile Preview" style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover", border: "2px solid #16a34a" }} />
-                      <div>
-                        <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "800", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <CheckCircle2 size={14} color="#15803d" /> Photo Attached
-                        </span>
-                        <span style={{ fontSize: "11.5px", color: "#64748b" }}>Ready for profile verification</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label style={styles.formLabel}>Driving License Document</label>
-                  <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, "licenseImage")} style={{ fontSize: "13px", fontWeight: "600" }} />
-                  {verificationData?.licenseImage && (
-                    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
-                      <img src={verificationData?.licenseImage} alt="License Preview" style={{ height: "64px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                      <span style={{ fontSize: "13px", color: "#15803d", fontWeight: "700", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                        <CheckCircle2 size={14} color="#15803d" /> Document Attached
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <button type="submit" className="btn-purple-gradient touch-target" disabled={submittingVerification} style={{ justifyContent: "center", padding: "14px", marginTop: "4px" }}>
-                  {submittingVerification ? "Submitting..." : "Submit Profile for Verification"}
-                </button>
-              </form>
-            </div>
-
-            <div className="card-shadow" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-              <div>
-                <h2 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: "0 0 16px" }}>Verification &amp; Account Status</h2>
-
-                <div style={{ background: "rgba(248, 250, 252, 0.9)", padding: "20px", borderRadius: "16px", border: "1px solid #e2e8f0", textAlign: "center", marginBottom: "16px" }}>
-                  <div style={{ width: "80px", height: "80px", borderRadius: "50%", margin: "0 auto 12px", overflow: "hidden", background: "#e2e8f0", border: "3px solid #16a34a" }}>
-                    {verificationData?.profilePic ? (
-                      <img src={verificationData?.profilePic} alt="Driver Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ) : (
-                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: "800", color: "#16a34a" }}>
-                        {user?.name ? user.name[0] : "D"}
-                      </div>
-                    )}
-                  </div>
-
-                  <h3 style={{ fontSize: "20px", fontWeight: "800", color: "#0f172a", margin: 0 }}>{user?.name || "Driver"}</h3>
-                  <div style={{ fontSize: "13.5px", color: "#64748b", margin: "4px 0 12px", fontWeight: "600" }}>{user?.email || "driver@movesmart.in"}</div>
-
-                  {verificationData?.verificationStatus === "Approved" ? (
-                    <div style={{ background: "#f0fdf4", color: "#15803d", border: "1.5px solid #bbf7d0", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "center", width: "100%" }}>
-                      <CheckCircle2 size={16} color="#15803d" /> Verified Driver
-                    </div>
-                  ) : verificationData?.verificationStatus === "Pending" ? (
-                    <div style={{ background: "#fffbeb", color: "#92400e", border: "1.5px solid #fde68a", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      Pending Admin Review
+                {/* Report Found Form */}
+                {drvLfSubTab === "reportFound" && (
+                  drvFoundSuccess ? (
+                    <div style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid #93c5fd", borderRadius: "20px", padding: "32px", textAlign: "center", maxWidth: "480px" }}>
+                      <Package size={44} color="#1d4ed8" style={{ margin: "0 auto 10px", display: "block" }} />
+                      <h4 style={{ fontSize: "18px", fontWeight: "900", color: "#1d4ed8", marginBottom: "6px" }}>Found Report Submitted!</h4>
+                      <p style={{ fontSize: "13px", color: "#1e40af", marginBottom: "6px" }}>Report ID:</p>
+                      <div style={{ background: "#fff", border: "1px solid #93c5fd", borderRadius: "10px", padding: "12px 18px", fontSize: "18px", fontWeight: "900", color: "#1d4ed8", letterSpacing: "1px", marginBottom: "16px" }}>{drvFoundSuccess}</div>
+                      <p style={{ fontSize: "12.5px", color: "#3b5998", marginBottom: "16px" }}>Admin will publish this so the passenger can claim it.</p>
+                      <button type="button" onClick={() => { setDrvFoundSuccess(""); setDrvLfSubTab("myFound"); fetchDrvMyFound(); }}
+                        style={{ padding: "10px 24px", borderRadius: "10px", background: "#1d4ed8", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>View My Reports →</button>
                     </div>
                   ) : (
-                    <div style={{ background: "#fff1f2", color: "#be123c", border: "1.5px solid #fecdd3", padding: "10px", borderRadius: "12px", fontWeight: "800", fontSize: "14px" }}>
-                      Unverified Driver
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ fontSize: "13.5px", color: "#475569", lineHeight: "1.8", fontWeight: "600", background: "#f8fafc", padding: "16px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
-                  <div><strong style={{ color: "#0f172a" }}>License Number:</strong> {verificationData?.licenseNumber || "Not Provided"}</div>
-                  <div><strong style={{ color: "#0f172a" }}>Experience:</strong> {verificationData?.experienceYears || 0} Years</div>
-                  <div><strong style={{ color: "#0f172a" }}>Contact Phone:</strong> {verificationData?.phone || user?.phone || "Not Provided"}</div>
-                  <div><strong style={{ color: "#0f172a" }}>Admin Note:</strong> {verificationData?.verificationNote || "No notes from admin yet."}</div>
-                </div>
-              </div>
-
-              <div style={{ background: "#f0fdf4", padding: "14px", borderRadius: "12px", border: "1px solid #bbf7d0", color: "#15803d", fontSize: "13px", fontWeight: "600", marginTop: "16px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <AlertCircle size={15} color="#15803d" /> Driver identity and biometric verifications are managed through the Central Admin Portal.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: TRIPS SCHEDULE TIMELINE */}
-        {activeTab === "trips" && (
-          <div className="card-shadow" style={{ padding: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "10px" }}>
-              <div>
-                <h3 style={{ ...styles.cardTitle, margin: 0, fontSize: "20px", fontWeight: "900" }}>
-                  🛣️ Today's Scheduled Departures Timeline
-                </h3>
-                <p style={{ fontSize: "13px", color: "#64748b", margin: "4px 0 0", fontWeight: "600" }}>
-                  Chronological list of all departures scheduled across your assigned bus slots.
-                </p>
-              </div>
-
-              <span style={{ fontSize: "12px", fontWeight: "800", color: "#4f46e5", background: "#eef2ff", padding: "6px 14px", borderRadius: "20px", border: "1px solid #c7d2fe" }}>
-                {dynamicSchedules.length} Scheduled Trip{dynamicSchedules.length !== 1 ? "s" : ""}
-              </span>
-            </div>
-
-            {dynamicSchedules.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 4px" }}>
-                  No scheduled departures found for your assigned shifts today.
-                </div>
-                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
-                  When departures are scheduled on your assigned vehicles in Fleet Management, they will automatically appear here.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                {dynamicSchedules.map((tr, idx) => {
-                  const isSelected = idx === activeTripIndex;
-                  return (
-                    <div
-                      key={tr.id}
-                      style={{
-                        padding: "18px 22px",
-                        borderRadius: "16px",
-                        background: isSelected ? "#f5f3ff" : "#ffffff",
-                        border: isSelected ? "2px solid #7c3aed" : "1.5px solid #e2e8f0",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        gap: "14px",
-                        boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
-                      }}
-                    >
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "6px" }}>
-                          <span style={{ fontSize: "14px", fontWeight: "900", color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
-                            ⏰ {tr.departure}
-                          </span>
-                          <span style={{ fontSize: "13px", fontFamily: "monospace", fontWeight: "900", background: "#f8fafc", padding: "4px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", color: "#0f172a" }}>
-                            🚌 {tr.busNumber} ({tr.busName})
-                          </span>
-                          <span style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: "6px" }}>
-                            {tr.shift} Shift
-                          </span>
-                        </div>
-
-                        <div style={{ fontSize: "16px", fontWeight: "800", color: "#0f172a", marginBottom: "4px" }}>
-                          {tr.routeName}
-                        </div>
-
-                        <div style={{ fontSize: "12.5px", color: "#64748b", display: "flex", gap: "14px", flexWrap: "wrap", fontWeight: "600" }}>
-                          <span>🏁 Expected Arrival: <strong style={{ color: "#0f172a" }}>{tr.arrival}</strong></span>
-                          {tr.stops && tr.stops.length > 0 && <span>🛑 <strong style={{ color: "#0f172a" }}>{tr.stops.length} Stops</strong></span>}
-                          <span>👥 <strong style={{ color: "#059669" }}>{tr.passengers || 0} Pax Booked</strong></span>
-                          <span>💰 Fare: <strong>₹{tr.fareEarned.toFixed(2)}</strong></span>
-                        </div>
+                    <form onSubmit={handleDrvSubmitFound} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", maxWidth: "860px" }}>
+                      <div style={{ gridColumn: "1/-1" }}>
+                        <label style={styles.formLabel}>Item Name *</label>
+                        <input style={styles.formInput} type="text" placeholder="e.g. Black Samsung phone" required value={drvFoundForm.itemName} onChange={e => setDrvFoundForm(f => ({ ...f, itemName: e.target.value }))} />
                       </div>
-
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveTripIndex(tr.busIndex || 0);
-                            navigate("/driver/live-drive", {
-                              state: {
-                                selectedBusId: tr.busId,
-                                selectedBusNumber: tr.busNumber,
-                                selectedScheduleId: tr.scheduleId,
-                                departureTime: tr.departure,
-                                routeName: tr.routeName,
-                                fromLocation: tr.fromLocation,
-                                toLocation: tr.toLocation,
-                                stops: tr.stops,
-                              }
-                            });
-                          }}
-                          style={{
-                            padding: "10px 18px",
-                            borderRadius: "10px",
-                            background: "linear-gradient(135deg, #7c3aed, #4c1d95)",
-                            color: "#ffffff",
-                            fontSize: "13px",
-                            fontWeight: "800",
-                            border: "none",
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            boxShadow: "0 2px 8px rgba(124, 58, 237, 0.25)",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          <Navigation size={14} /> Start Live Drive →
+                      <div>
+                        <label style={styles.formLabel}>Category *</label>
+                        <select style={styles.formInput} value={drvFoundForm.category} onChange={e => setDrvFoundForm(f => ({ ...f, category: e.target.value }))}>
+                          {DRV_LF_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={styles.formLabel}>Date Found *</label>
+                        <input style={styles.formInput} type="date" required value={drvFoundForm.dateFound} onChange={e => setDrvFoundForm(f => ({ ...f, dateFound: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label style={styles.formLabel}>Approx. Time Found</label>
+                        <input style={styles.formInput} type="time" value={drvFoundForm.timeFound} onChange={e => setDrvFoundForm(f => ({ ...f, timeFound: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label style={styles.formLabel}>Bus Number {drvLfBusNumber && <span style={{ color: "#16a34a", fontSize: "11px" }}>(auto-filled)</span>}</label>
+                        <input style={styles.formInput} type="text" placeholder="e.g. KL-07-MS-1008" value={drvFoundForm.busNumber || drvLfBusNumber} onChange={e => setDrvFoundForm(f => ({ ...f, busNumber: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label style={styles.formLabel}>Location Found</label>
+                        <input style={styles.formInput} type="text" placeholder="e.g. Seat row 5, back compartment" value={drvFoundForm.locationFound} onChange={e => setDrvFoundForm(f => ({ ...f, locationFound: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label style={styles.formLabel}>Your Contact Info *</label>
+                        <input style={styles.formInput} type="text" placeholder="Phone or email" required value={drvFoundForm.contactInfo} onChange={e => setDrvFoundForm(f => ({ ...f, contactInfo: e.target.value }))} />
+                      </div>
+                      <div style={{ gridColumn: "1/-1" }}>
+                        <label style={styles.formLabel}>Description</label>
+                        <textarea style={{ ...styles.formInput, resize: "vertical" }} rows={3} placeholder="Colour, brand, condition, contents..." value={drvFoundForm.description} onChange={e => setDrvFoundForm(f => ({ ...f, description: e.target.value }))} />
+                      </div>
+                      <div style={{ gridColumn: "1/-1" }}>
+                        <label style={styles.formLabel}>Item Photo (optional, max 3 MB)</label>
+                        <input style={{ ...styles.formInput, padding: "10px" }} type="file" accept="image/*" onChange={handleDrvImageUpload} />
+                        {drvFoundImage && <img src={drvFoundImage} alt="preview" style={{ marginTop: "10px", maxHeight: "110px", borderRadius: "10px", objectFit: "cover" }} />}
+                      </div>
+                      <div style={{ gridColumn: "1/-1" }}>
+                        <button type="submit" disabled={drvLfLoading} className="btn-purple-gradient touch-target"
+                          style={{ padding: "13px 28px", fontSize: "14px", opacity: drvLfLoading ? 0.7 : 1, cursor: drvLfLoading ? "not-allowed" : "pointer" }}>
+                          {drvLfLoading ? "Submitting…" : "Submit Found Report →"}
                         </button>
                       </div>
+                    </form>
+                  )
+                )}
+
+                {/* My Found Reports */}
+                {drvLfSubTab === "myFound" && (
+                  drvMyFoundItems.length === 0
+                    ? <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", fontSize: "14px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0" }}>No found item reports yet. Use the &quot;Report Found Item&quot; tab to log one.</div>
+                    : <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            {["Report ID", "Item", "Category", "Date Found", "Bus No.", "Status"].map(h => (
+                              <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: "800", color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {drvMyFoundItems.map((item, i) => (
+                            <tr key={item._id} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                              <td style={{ padding: "12px 14px", fontWeight: "700", color: "#1d4ed8", fontFamily: "monospace" }}>{item.reportId}</td>
+                              <td style={{ padding: "12px 14px", fontWeight: "700", color: "#0f172a" }}>{item.itemName}</td>
+                              <td style={{ padding: "12px 14px", color: "#475569" }}>{item.category}</td>
+                              <td style={{ padding: "12px 14px", color: "#475569" }}>{item.dateFound}</td>
+                              <td style={{ padding: "12px 14px", color: "#475569" }}>{item.busNumber || "—"}</td>
+                              <td style={{ padding: "12px 14px" }}>
+                                <span style={{
+                                  padding: "4px 12px", borderRadius: "20px", fontSize: "11.5px", fontWeight: "800",
+                                  background: item.status === "Unclaimed" ? "rgba(59,130,246,0.12)" : item.status === "Claimed" ? "rgba(34,197,94,0.15)" : "rgba(167,139,250,0.15)",
+                                  color: item.status === "Unclaimed" ? "#1d4ed8" : item.status === "Claimed" ? "#15803d" : "#6d28d9"
+                                }}>
+                                  {item.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  );
-                })}
+                )}
               </div>
             )}
-          </div>
-        )}
-
-        {/* TAB 6: PAYMENTS LOG */}
-        {activeTab === "payments" && (
-          <div className="card-shadow">
-            <h3 style={{ ...styles.cardTitle, marginBottom: "16px" }}>Trip Collections & Payments Log</h3>
-            {paymentsLog.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "36px 20px", background: "rgba(248, 250, 252, 0.8)", borderRadius: "16px", border: "1.5px dashed #cbd5e1" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "#334155", maxWidth: "460px", margin: "0 auto 4px" }}>
-                  No passenger payment transactions recorded yet today.
-                </div>
-                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600" }}>
-                  When passengers tap their Smart RFID passes or pay tickets on active trips, payments will be automatically logged here.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                {paymentsLog.map((p, idx) => (
-                  <div key={p.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderRadius: "14px", background: "rgba(248, 250, 252, 0.8)", border: "1px solid #e2e8f0", flexWrap: "wrap", gap: "8px" }}>
-                    <div>
-                      <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>{p.trip}</div>
-                      <div style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginTop: "2px" }}>Time: {p.time} • Payment Method: {p.method}</div>
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: "800", color: "#15803d" }}>{p.amount}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 8: DRIVER LOST & FOUND */}
-        {activeTab === "lostfound" && (
-          <div className="card-shadow">
-            {drvLfToast && (
-              <div style={{ background: "#2e1065", color: "#fff", padding: "12px 18px", borderRadius: "12px", marginBottom: "16px", fontSize: "13.5px", fontWeight: "700" }}>{drvLfToast}</div>
-            )}
-            <h3 style={{ ...styles.cardTitle, marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
-              <Package size={17} color="#6337D9" /> Lost &amp; Found — Report Found Item
-            </h3>
-            <p style={{ fontSize: "13px", color: "#64748b", fontWeight: "600", marginBottom: "20px" }}>Found something on your bus? Report it here so passengers can claim it through MoveSmart.</p>
-
-            {/* Sub-tabs */}
-            <div style={{ display: "flex", gap: "10px", marginBottom: "22px" }}>
-              {[
-                { id: "reportFound", label: "Report Found Item", icon: <Package size={14} /> },
-                { id: "myFound", label: "My Found Reports", icon: <FileText size={14} /> }
-              ].map(st => (
-                <button key={st.id} type="button" onClick={() => { setDrvLfSubTab(st.id); if (st.id === "myFound") fetchDrvMyFound(); }}
-                  style={{ padding: "9px 18px", borderRadius: "12px", border: `2px solid ${drvLfSubTab === st.id ? "#7c3aed" : "#e2e8f0"}`, background: drvLfSubTab === st.id ? "linear-gradient(135deg,#4c1d95,#7c3aed)" : "#f8fafc", color: drvLfSubTab === st.id ? "#fff" : "#475569", fontWeight: "800", fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                  {st.icon}
-                  {st.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Report Found Form */}
-            {drvLfSubTab === "reportFound" && (
-              drvFoundSuccess ? (
-                <div style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid #93c5fd", borderRadius: "20px", padding: "32px", textAlign: "center", maxWidth: "480px" }}>
-                  <Package size={44} color="#1d4ed8" style={{ margin: "0 auto 10px", display: "block" }} />
-                  <h4 style={{ fontSize: "18px", fontWeight: "900", color: "#1d4ed8", marginBottom: "6px" }}>Found Report Submitted!</h4>
-                  <p style={{ fontSize: "13px", color: "#1e40af", marginBottom: "6px" }}>Report ID:</p>
-                  <div style={{ background: "#fff", border: "1px solid #93c5fd", borderRadius: "10px", padding: "12px 18px", fontSize: "18px", fontWeight: "900", color: "#1d4ed8", letterSpacing: "1px", marginBottom: "16px" }}>{drvFoundSuccess}</div>
-                  <p style={{ fontSize: "12.5px", color: "#3b5998", marginBottom: "16px" }}>Admin will publish this so the passenger can claim it.</p>
-                  <button type="button" onClick={() => { setDrvFoundSuccess(""); setDrvLfSubTab("myFound"); fetchDrvMyFound(); }}
-                    style={{ padding: "10px 24px", borderRadius: "10px", background: "#1d4ed8", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>View My Reports →</button>
-                </div>
-              ) : (
-                <form onSubmit={handleDrvSubmitFound} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", maxWidth: "860px" }}>
-                  <div style={{ gridColumn: "1/-1" }}>
-                    <label style={styles.formLabel}>Item Name *</label>
-                    <input style={styles.formInput} type="text" placeholder="e.g. Black Samsung phone" required value={drvFoundForm.itemName} onChange={e => setDrvFoundForm(f => ({ ...f, itemName: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Category *</label>
-                    <select style={styles.formInput} value={drvFoundForm.category} onChange={e => setDrvFoundForm(f => ({ ...f, category: e.target.value }))}>
-                      {DRV_LF_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Date Found *</label>
-                    <input style={styles.formInput} type="date" required value={drvFoundForm.dateFound} onChange={e => setDrvFoundForm(f => ({ ...f, dateFound: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Approx. Time Found</label>
-                    <input style={styles.formInput} type="time" value={drvFoundForm.timeFound} onChange={e => setDrvFoundForm(f => ({ ...f, timeFound: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Bus Number {drvLfBusNumber && <span style={{ color: "#16a34a", fontSize: "11px" }}>(auto-filled)</span>}</label>
-                    <input style={styles.formInput} type="text" placeholder="e.g. KL-07-MS-1008" value={drvFoundForm.busNumber || drvLfBusNumber} onChange={e => setDrvFoundForm(f => ({ ...f, busNumber: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Location Found</label>
-                    <input style={styles.formInput} type="text" placeholder="e.g. Seat row 5, back compartment" value={drvFoundForm.locationFound} onChange={e => setDrvFoundForm(f => ({ ...f, locationFound: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={styles.formLabel}>Your Contact Info *</label>
-                    <input style={styles.formInput} type="text" placeholder="Phone or email" required value={drvFoundForm.contactInfo} onChange={e => setDrvFoundForm(f => ({ ...f, contactInfo: e.target.value }))} />
-                  </div>
-                  <div style={{ gridColumn: "1/-1" }}>
-                    <label style={styles.formLabel}>Description</label>
-                    <textarea style={{ ...styles.formInput, resize: "vertical" }} rows={3} placeholder="Colour, brand, condition, contents..." value={drvFoundForm.description} onChange={e => setDrvFoundForm(f => ({ ...f, description: e.target.value }))} />
-                  </div>
-                  <div style={{ gridColumn: "1/-1" }}>
-                    <label style={styles.formLabel}>Item Photo (optional, max 3 MB)</label>
-                    <input style={{ ...styles.formInput, padding: "10px" }} type="file" accept="image/*" onChange={handleDrvImageUpload} />
-                    {drvFoundImage && <img src={drvFoundImage} alt="preview" style={{ marginTop: "10px", maxHeight: "110px", borderRadius: "10px", objectFit: "cover" }} />}
-                  </div>
-                  <div style={{ gridColumn: "1/-1" }}>
-                    <button type="submit" disabled={drvLfLoading} className="btn-purple-gradient touch-target"
-                      style={{ padding: "13px 28px", fontSize: "14px", opacity: drvLfLoading ? 0.7 : 1, cursor: drvLfLoading ? "not-allowed" : "pointer" }}>
-                      {drvLfLoading ? "Submitting…" : "Submit Found Report →"}
-                    </button>
-                  </div>
-                </form>
-              )
-            )}
-
-            {/* My Found Reports */}
-            {drvLfSubTab === "myFound" && (
-              drvMyFoundItems.length === 0
-                ? <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", fontSize: "14px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0" }}>No found item reports yet. Use the &quot;Report Found Item&quot; tab to log one.</div>
-                : <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc" }}>
-                        {["Report ID", "Item", "Category", "Date Found", "Bus No.", "Status"].map(h => (
-                          <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: "800", color: "#475569", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {drvMyFoundItems.map((item, i) => (
-                        <tr key={item._id} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                          <td style={{ padding: "12px 14px", fontWeight: "700", color: "#1d4ed8", fontFamily: "monospace" }}>{item.reportId}</td>
-                          <td style={{ padding: "12px 14px", fontWeight: "700", color: "#0f172a" }}>{item.itemName}</td>
-                          <td style={{ padding: "12px 14px", color: "#475569" }}>{item.category}</td>
-                          <td style={{ padding: "12px 14px", color: "#475569" }}>{item.dateFound}</td>
-                          <td style={{ padding: "12px 14px", color: "#475569" }}>{item.busNumber || "—"}</td>
-                          <td style={{ padding: "12px 14px" }}>
-                            <span style={{
-                              padding: "4px 12px", borderRadius: "20px", fontSize: "11.5px", fontWeight: "800",
-                              background: item.status === "Unclaimed" ? "rgba(59,130,246,0.12)" : item.status === "Claimed" ? "rgba(34,197,94,0.15)" : "rgba(167,139,250,0.15)",
-                              color: item.status === "Unclaimed" ? "#1d4ed8" : item.status === "Claimed" ? "#15803d" : "#6d28d9"
-                            }}>
-                              {item.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-            )}
-          </div>
-        )}
           </div>
         </div>
       </main>
@@ -5903,7 +5907,7 @@ function Driver({ defaultTab = "dashboard" }) {
             </div>
 
             {/* Modal Content: 2-Column Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "24px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: "20px", marginBottom: "24px" }}>
               {/* Left Column: Photo Preview & Face Reticle */}
               <div>
                 <div
@@ -6487,3 +6491,4 @@ const styles = {
 };
 
 export default Driver;
+

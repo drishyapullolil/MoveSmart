@@ -146,6 +146,9 @@ export default function DriverLiveDrive() {
 
   // Drive Lifecycle States: NOT STARTED | ACTIVE | PAUSED | COMPLETED
   const [driveStatus, setDriveStatus] = useState("NOT STARTED");
+  const isDriveActive = driveStatus === "ACTIVE";
+  const isDrivePaused = driveStatus === "PAUSED";
+  const isDriveRunning = isDriveActive || isDrivePaused;
   const [locationMode, setLocationMode] = useState("manual"); // manual | gps
   const [activeTrip, setActiveTrip] = useState(null);
 
@@ -952,6 +955,34 @@ export default function DriverLiveDrive() {
     };
   }, []);
 
+  // Helper to standardize and sanitize stop objects, filtering out placeholder 'Depot' entries
+  const normalizeStopList = (rawList) => {
+    if (!Array.isArray(rawList)) return [];
+    return rawList
+      .map((s, idx) => {
+        if (!s) return null;
+        if (typeof s === "object") {
+          const name = (s.name || s.stopName || s.code || "").trim();
+          if (!name || name.toLowerCase() === "depot") return null;
+          return {
+            name,
+            code: s.code || `STOP_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+            latitude: Number(s.latitude) || 9.5574 + idx * 0.025,
+            longitude: Number(s.longitude) || 76.7904 + idx * 0.015,
+          };
+        }
+        const name = String(s).trim();
+        if (!name || name.toLowerCase() === "depot") return null;
+        return {
+          name,
+          code: `STOP_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+          latitude: 9.5574 + idx * 0.025,
+          longitude: 76.7904 + idx * 0.015,
+        };
+      })
+      .filter(Boolean);
+  };
+
   // 1. Initial Load: Driver Profile, Assigned Bus from Database, Stops & Distance Data
   const loadInitialData = useCallback(async () => {
     setLoading(true);
@@ -971,11 +1002,20 @@ export default function DriverLiveDrive() {
 
     try {
       // 1. Fetch strictly the buses assigned to this driver in MongoDB
-      const driverIdParam = currentUser
-        ? `?driverId=${encodeURIComponent(currentUser._id || "")}&driverEmail=${encodeURIComponent(currentUser.email || "")}&driverName=${encodeURIComponent(currentUser.name || "")}`
-        : "";
+      const drvId = currentUser?._id || currentUser?.id || "";
+      const drvEmail = currentUser?.email || "";
+      const drvName = currentUser?.name || "";
+      const driverIdParam = `?driverId=${encodeURIComponent(drvId)}&driverEmail=${encodeURIComponent(drvEmail)}&driverName=${encodeURIComponent(drvName)}`;
 
-      const busRes = await axios.get(`/api/driver/buses${driverIdParam}`, { headers: authHeaders, timeout: 5000 }).catch(() => null);
+      let busRes = await axios.get(`/api/driver/buses${driverIdParam}`, { headers: authHeaders, timeout: 15000 }).catch((err) => {
+        console.warn("Retrying driver buses fetch without driverId:", err.message);
+        return null;
+      });
+
+      // If initial fetch returned 0 buses, fallback to query by email and name
+      if (!busRes?.data?.buses?.length && (drvEmail || drvName)) {
+        busRes = await axios.get(`/api/driver/buses?driverEmail=${encodeURIComponent(drvEmail)}&driverName=${encodeURIComponent(drvName)}`, { headers: authHeaders, timeout: 15000 }).catch(() => null);
+      }
 
       const fetchedAssigned = busRes?.data?.assignedBuses || busRes?.data?.buses || [];
 
@@ -1002,22 +1042,42 @@ export default function DriverLiveDrive() {
             toLocation: location.state.toLocation || currentBus.toLocation,
             stops: (location.state.stops && location.state.stops.length > 0) ? location.state.stops : currentBus.stops,
           };
+        } else if (currentBus.assignedTrips && currentBus.assignedTrips.length > 0) {
+          const defaultTrip = currentBus.assignedTrips.find(t => t.isCurrentDriverShift) || currentBus.assignedTrips[0];
+          if (defaultTrip) {
+            currentBus = {
+              ...currentBus,
+              selectedScheduleId: defaultTrip.scheduleId || currentBus.selectedScheduleId,
+              departureTime: defaultTrip.departureTime || currentBus.departureTime,
+              routeName: defaultTrip.routeName || currentBus.routeName,
+              fromLocation: defaultTrip.fromLocation || currentBus.fromLocation,
+              toLocation: defaultTrip.toLocation || currentBus.toLocation,
+              stops: (defaultTrip.stops && defaultTrip.stops.length > 0) ? defaultTrip.stops : currentBus.stops,
+            };
+          }
         }
       }
       setAssignedBus(currentBus);
 
       // 2. Fetch stops & active drive specifically for this assigned bus and driver
       const busIdParam = currentBus?._id ? `&busId=${currentBus._id}` : "";
+      const schIdParam = currentBus?.selectedScheduleId ? `&scheduleId=${currentBus.selectedScheduleId}` : "";
       const driveRes = await axios.get(
-        `/api/driver/live-drive/status?driverId=${encodeURIComponent(currentUser?._id || "")}${busIdParam}`,
+        `/api/driver/live-drive/status?driverId=${encodeURIComponent(currentUser?._id || "")}${busIdParam}${schIdParam}`,
         { headers: authHeaders }
       ).catch(() => null);
 
-      if (driveRes?.data?.stops && driveRes.data.stops.length > 0) {
-        setStops(driveRes.data.stops);
+      const fetchedStops = normalizeStopList(driveRes?.data?.stops);
+      const busStops = normalizeStopList(currentBus?.stops);
+
+      if (fetchedStops.length > 0) {
+        setStops(fetchedStops);
+      } else if (busStops.length > 0) {
+        setStops(busStops);
       } else {
         const stopsRes = await axios.get("/api/rfid/stops", { headers: authHeaders }).catch(() => null);
-        setStops(stopsRes?.data?.stops || []);
+        const rfidStops = normalizeStopList(stopsRes?.data?.stops);
+        setStops(rfidStops.length > 0 ? rfidStops : []);
       }
 
       const distRes = await axios.get("/api/rfid/distances", { headers: authHeaders }).catch(() => null);
@@ -1079,11 +1139,15 @@ export default function DriverLiveDrive() {
     const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${targetBus._id}`, { headers: authHeaders }).catch(() => null);
-      if (driveRes?.data?.stops && driveRes.data.stops.length > 0) {
-        setStops(driveRes.data.stops);
-      } else if (targetBus.stops && targetBus.stops.length > 0) {
-        setStops(targetBus.stops);
+      const schParam = targetBus.selectedScheduleId ? `&scheduleId=${targetBus.selectedScheduleId}` : "";
+      const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${targetBus._id}${schParam}`, { headers: authHeaders }).catch(() => null);
+      const fetchedStops = normalizeStopList(driveRes?.data?.stops);
+      const tripStops = normalizeStopList(targetBus.stops);
+
+      if (fetchedStops.length > 0) {
+        setStops(fetchedStops);
+      } else if (tripStops.length > 0) {
+        setStops(tripStops);
       }
     } catch (err) {
       console.warn("Failed to fetch route stops for selected bus:", err.message);
@@ -1123,21 +1187,27 @@ export default function DriverLiveDrive() {
 
     const fetchBusRouteStops = async () => {
       try {
-        const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${assignedBus._id}`, { headers: authHeaders }).catch(() => null);
-        if (driveRes?.data?.stops && driveRes.data.stops.length > 0) {
-          setStops(driveRes.data.stops);
-          if (driveRes.data.hasActiveDrive && driveRes.data.drive) {
+        const schParam = assignedBus.selectedScheduleId ? `&scheduleId=${assignedBus.selectedScheduleId}` : "";
+        const driveRes = await axios.get(`/api/driver/live-drive/status?busId=${assignedBus._id}${schParam}`, { headers: authHeaders }).catch(() => null);
+        const fetchedStops = normalizeStopList(driveRes?.data?.stops);
+        const busStops = normalizeStopList(assignedBus.stops);
+
+        if (fetchedStops.length > 0) {
+          setStops(fetchedStops);
+          if (driveRes?.data?.hasActiveDrive && driveRes?.data?.drive) {
             setCurrentStopIndex(driveRes.data.drive.currentStopIndex || 0);
           } else {
             setCurrentStopIndex(0);
           }
+        } else if (busStops.length > 0) {
+          setStops(busStops);
         }
       } catch (err) {
         console.warn("Failed to fetch route stops for assigned bus:", err.message);
       }
     };
     fetchBusRouteStops();
-  }, [assignedBus]);
+  }, [assignedBus?._id, assignedBus?.selectedScheduleId]);
 
   // Current Stop and Next Stop computations
   const currentStop = useMemo(() => {
@@ -1228,9 +1298,25 @@ export default function DriverLiveDrive() {
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
+    // If an existing Leaflet instance is pointing to a different or stale DOM container, cleanly destroy it first
+    if (mapInstanceRef.current) {
+      if (mapInstanceRef.current.getContainer() !== mapContainerRef.current) {
+        try {
+          mapInstanceRef.current.remove();
+        } catch (e) {}
+        mapInstanceRef.current = null;
+      }
+    }
+
+    // Clean up any residual leaflet tracking id on the DOM node if no active map instance is attached
+    if (!mapInstanceRef.current && mapContainerRef.current._leaflet_id) {
+      delete mapContainerRef.current._leaflet_id;
+      mapContainerRef.current.innerHTML = "";
+    }
+
     if (!mapInstanceRef.current) {
-      const defaultLat = currentStop.latitude || 9.5574;
-      const defaultLng = currentStop.longitude || 76.7904;
+      const defaultLat = Number(currentStop?.latitude) || 9.5574;
+      const defaultLng = Number(currentStop?.longitude) || 76.7904;
 
       const map = L.map(mapContainerRef.current, {
         center: [defaultLat, defaultLng],
@@ -1241,23 +1327,46 @@ export default function DriverLiveDrive() {
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 19,
+        subdomains: ["a", "b", "c"],
       }).addTo(map);
 
       mapInstanceRef.current = map;
     }
 
     const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Ensure Leaflet recalculates viewport bounds immediately and after layout settles
+    map.invalidateSize();
+    const t1 = setTimeout(() => {
+      if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+    }, 100);
+    const t2 = setTimeout(() => {
+      if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+    }, 350);
+
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && mapContainerRef.current) {
+      ro = new ResizeObserver(() => {
+        if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+      });
+      ro.observe(mapContainerRef.current);
+    }
 
     // Clear existing stop markers
-    stopMarkersRef.current.forEach((m) => m.remove());
+    stopMarkersRef.current.forEach((m) => {
+      try { m.remove(); } catch (e) {}
+    });
     stopMarkersRef.current = [];
 
     // Add Stop Markers along Route
     const stopLatLngs = [];
     stops.forEach((s, idx) => {
-      const lat = s.latitude || (9.5574 + idx * 0.035);
-      const lng = s.longitude || (76.7904 + idx * 0.015);
-      stopLatLngs.push([lat, lng]);
+      const lat = Number(s.latitude) || (9.5574 + idx * 0.035);
+      const lng = Number(s.longitude) || (76.7904 + idx * 0.015);
+      if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+        stopLatLngs.push([lat, lng]);
+      }
 
       const isCur = idx === currentStopIndex;
       const isComp = idx < currentStopIndex;
@@ -1266,7 +1375,7 @@ export default function DriverLiveDrive() {
       const marker = L.marker([lat, lng], { icon: markerIcon }).addTo(map);
       marker.bindPopup(`
         <div style="font-family: sans-serif; padding: 4px;">
-          <strong style="font-size: 13px; color: #0f172a;">${s.name}</strong>
+          <strong style="font-size: 13px; color: #0f172a;">${s.name || `Stop ${idx + 1}`}</strong>
           <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Code: ${s.code}</div>
           <div style="font-size: 11px; font-weight: bold; color: ${isCur ? "#2563eb" : isComp ? "#16a34a" : "#475569"}; margin-top: 4px;">
             ${isCur ? "● Current Bus Position" : isComp ? "✓ Completed Stop" : "○ Upcoming Stop"}
@@ -1279,7 +1388,9 @@ export default function DriverLiveDrive() {
 
     // Draw Polyline connecting stops
     if (stopLatLngs.length > 1) {
-      if (polylineRef.current) polylineRef.current.remove();
+      if (polylineRef.current) {
+        try { polylineRef.current.remove(); } catch (e) {}
+      }
       polylineRef.current = L.polyline(stopLatLngs, {
         color: "#2563eb",
         weight: 5,
@@ -1290,30 +1401,53 @@ export default function DriverLiveDrive() {
       // Smoothly fit bounds so full route is visible on load
       try {
         const bounds = L.latLngBounds(stopLatLngs);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+        if (bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+        }
       } catch (e) {
         // ignore
       }
     }
 
     // Update Bus Marker Position
-    const curLat = currentStop.latitude || (9.5574 + currentStopIndex * 0.035);
-    const curLng = currentStop.longitude || (76.7904 + currentStopIndex * 0.015);
+    const curLat = Number(currentStop?.latitude) || (stopLatLngs[currentStopIndex] ? stopLatLngs[currentStopIndex][0] : 9.5574);
+    const curLng = Number(currentStop?.longitude) || (stopLatLngs[currentStopIndex] ? stopLatLngs[currentStopIndex][1] : 76.7904);
 
-    if (!busMarkerRef.current) {
-      busMarkerRef.current = L.marker([curLat, curLng], {
-        icon: createLiveBusIcon(45, driveStatus === "ACTIVE"),
-        zIndexOffset: 1000,
-      }).addTo(map);
-    } else {
-      busMarkerRef.current.setLatLng([curLat, curLng]);
-      busMarkerRef.current.setIcon(createLiveBusIcon(45, driveStatus === "ACTIVE"));
+    if (!isNaN(curLat) && !isNaN(curLng) && curLat !== 0) {
+      if (!busMarkerRef.current || !map.hasLayer(busMarkerRef.current)) {
+        busMarkerRef.current = L.marker([curLat, curLng], {
+          icon: createLiveBusIcon(45, driveStatus === "ACTIVE"),
+          zIndexOffset: 1000,
+        }).addTo(map);
+      } else {
+        busMarkerRef.current.setLatLng([curLat, curLng]);
+        busMarkerRef.current.setIcon(createLiveBusIcon(45, driveStatus === "ACTIVE"));
+      }
+
+      try {
+        map.panTo([curLat, curLng], { animate: true, duration: 0.8 });
+      } catch (e) {}
     }
 
-    // Pan smoothly to current stop
-    map.panTo([curLat, curLng], { animate: true, duration: 0.8 });
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      if (ro) ro.disconnect();
+    };
+  }, [stops, currentStopIndex, currentStop, driveStatus, isDriveRunning]);
 
-  }, [stops, currentStopIndex, currentStop, driveStatus]);
+  // Clean up Leaflet map instance when drive is ended
+  useEffect(() => {
+    if (!isDriveRunning && mapInstanceRef.current) {
+      try {
+        mapInstanceRef.current.remove();
+      } catch (e) {}
+      mapInstanceRef.current = null;
+      busMarkerRef.current = null;
+      polylineRef.current = null;
+      stopMarkersRef.current = [];
+    }
+  }, [isDriveRunning]);
 
   // 4. HANDLER: Start Drive (Creates new unique tripSessionId & resets RFID activity)
   const handleStartDrive = async () => {
@@ -1441,9 +1575,6 @@ export default function DriverLiveDrive() {
     }
   };
 
-  const isDriveActive = driveStatus === "ACTIVE";
-  const isDrivePaused = driveStatus === "PAUSED";
-  const isDriveRunning = isDriveActive || isDrivePaused;
   const isFinalStop = stops.length > 0 && currentStopIndex >= stops.length - 1;
 
   return (
@@ -1892,7 +2023,7 @@ export default function DriverLiveDrive() {
                     <div>
                       <div style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Assigned Route</div>
                       <div style={{ fontSize: "15px", fontWeight: "900", color: "#2563eb", marginTop: "2px" }}>
-                        {assignedBus.routeName || `${assignedBus.fromLocation} ➔ ${assignedBus.toLocation}`}
+                        {assignedBus.routeName || (assignedBus.fromLocation && assignedBus.fromLocation !== "Depot" ? `${assignedBus.fromLocation} ➔ ${assignedBus.toLocation}` : "") || (stops.length > 1 ? `${stops[0]?.name} ➔ ${stops[stops.length - 1]?.name}` : "Assigned Route")}
                       </div>
                     </div>
                   </div>
@@ -1900,11 +2031,15 @@ export default function DriverLiveDrive() {
                   <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px dashed #cbd5e1", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
                     <div>
                       <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748b" }}>Starting Stop: </span>
-                      <strong style={{ fontSize: "13px", color: "#0f172a" }}>{stops[0]?.name || assignedBus.fromLocation}</strong>
+                      <strong style={{ fontSize: "13px", color: "#0f172a" }}>
+                        {stops[0]?.name || (typeof stops[0] === "string" ? stops[0] : null) || (assignedBus.fromLocation && assignedBus.fromLocation !== "Depot" ? assignedBus.fromLocation : "") || "Origin Terminal"}
+                      </strong>
                     </div>
                     <div>
                       <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748b" }}>Destination: </span>
-                      <strong style={{ fontSize: "13px", color: "#0f172a" }}>{stops[stops.length - 1]?.name || assignedBus.toLocation}</strong>
+                      <strong style={{ fontSize: "13px", color: "#0f172a" }}>
+                        {stops[stops.length - 1]?.name || (typeof stops[stops.length - 1] === "string" ? stops[stops.length - 1] : null) || (assignedBus.toLocation && assignedBus.toLocation !== "Depot" ? assignedBus.toLocation : "") || "Destination Terminal"}
+                      </strong>
                     </div>
                     <div>
                       <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748b" }}>Total Stops: </span>
@@ -2197,7 +2332,7 @@ export default function DriverLiveDrive() {
             </div>
 
             {/* 2-COLUMN MAIN CONTENT: LEFT (MAP + STEPPER), RIGHT (RFID + TELEMETRY + CONTROLS) */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "20px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: "20px" }}>
 
               {/* LEFT COLUMN */}
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -2218,7 +2353,17 @@ export default function DriverLiveDrive() {
                   </div>
 
                   {/* MAP CANVAS */}
-                  <div ref={mapContainerRef} style={{ width: "100%", height: "360px", background: "#e2e8f0" }} />
+                  <div
+                    ref={mapContainerRef}
+                    style={{
+                      width: "100%",
+                      height: "360px",
+                      minHeight: "360px",
+                      background: "#e2e8f0",
+                      position: "relative",
+                      zIndex: 1,
+                    }}
+                  />
 
                   {/* BOTTOM MAP STATUS BAR */}
                   <div style={{ padding: "10px 16px", background: "#ffffff", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "#64748b" }}>
@@ -2434,7 +2579,7 @@ export default function DriverLiveDrive() {
                     Secondary Actions
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 140px), 1fr))", gap: "10px", marginBottom: "12px" }}>
                     <button
                       type="button"
                       onClick={handleMoveToPrevStop}
@@ -2781,9 +2926,11 @@ export default function DriverLiveDrive() {
                   driverBuses.map((bus) => {
                     const isBusActive = assignedBus?._id === bus._id || assignedBus?.busNumber === bus.busNumber;
                     const driverShift = bus.assignedShift || bus.shift || "Morning";
-                    const shiftBadge = driverShift === "Morning" ? "🌅 Morning (06:00 - 14:00)"
+                    const shiftBadge = bus.shiftBadge || (
+                      driverShift === "Morning" ? "🌅 Morning (06:00 - 14:00)"
                       : driverShift === "Evening" ? "🌆 Evening (14:00 - 22:00)"
-                      : "🌙 Night (22:00 - 06:00)";
+                      : "🌙 Night (22:00 - 06:00)"
+                    );
 
                     const trips = (bus.assignedTrips && bus.assignedTrips.length > 0)
                       ? bus.assignedTrips

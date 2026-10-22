@@ -38,9 +38,13 @@ import {
   LocateFixed,
   Eye,
   Maximize2,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Download,
+  Users
 } from "lucide-react";
 import { getStoredUser, getStoredToken } from "../utils/session";
+import { generateTicketPDF } from "../utils/ticketPdfGenerator";
+import BookingSuccess from "../components/booking/BookingSuccess";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import LiveBusMap from "../components/common/LiveBusMap";
@@ -57,6 +61,20 @@ export default function Dashboard() {
     setTimeout(() => setModeToast(""), 5000);
   };
 
+  // Sync initial device mode from hardware / backend on page load
+  useEffect(() => {
+    let isMounted = true;
+    axios.get("/api/rfid/device-mode", { timeout: 4000 })
+      .then((res) => {
+        if (isMounted && res.data?.success && res.data?.mode) {
+          setRfidMode(res.data.mode);
+          localStorage.setItem("rfidUsageMode", res.data.mode);
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
   const handleModeChange = async (targetMode) => {
     if (modeLoading) return;
     setModeLoading(true);
@@ -67,7 +85,7 @@ export default function Dashboard() {
         { mode: targetMode },
         {
           headers: { Authorization: token ? `Bearer ${token}` : "" },
-          timeout: 6000
+          timeout: 12000
         }
       );
       if (res.data?.success) {
@@ -78,7 +96,11 @@ export default function Dashboard() {
         showModeToast(res.data?.message || "ESP32 is offline. Mode was not changed.");
       }
     } catch (err) {
-      const errMsg = err.response?.data?.message || "ESP32 is offline. Mode was not changed.";
+      const errMsg =
+        err.response?.data?.message ||
+        (err.code === "ECONNABORTED"
+          ? "Connection to ESP32 timed out. Please check if ESP32 is powered on."
+          : "ESP32 is offline. Mode was not changed.");
       showModeToast(errMsg);
     } finally {
       setModeLoading(false);
@@ -89,7 +111,30 @@ export default function Dashboard() {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [planDate, setPlanDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [dbLocations, setDbLocations] = useState([]);
+  const [dbLocations, setDbLocations] = useState([
+    "New Delhi",
+    "Kottayam",
+    "Erattupetta",
+    "Kanjirappally",
+    "Kochi",
+    "Pala",
+    "Thiruvananthapuram",
+    "Kozhikode",
+    "Thrissur",
+    "Angamaly",
+    "Perumbavoor",
+    "Muvattupuzha",
+    "Kuravilangad",
+    "Ettumanoor",
+    "Mysuru (Mysore)",
+    "Ahmednagar",
+    "Shirdi",
+    "Indore",
+    "Ujjain",
+    "Bengaluru",
+    "Erumely",
+    "Changanassery"
+  ]);
   const [originSuggestions, setOriginSuggestions] = useState([]);
   const [destSuggestions, setDestSuggestions] = useState([]);
   const [showOriginDropdown, setShowOriginDropdown] = useState(false);
@@ -116,6 +161,30 @@ export default function Dashboard() {
   const [userWalletBalance, setUserWalletBalance] = useState(null);
   const [activeCardsCount, setActiveCardsCount] = useState(0);
 
+  // User Seat Bookings & PDF E-Tickets State
+  const [userBookings, setUserBookings] = useState([]);
+  const [selectedBookingForPass, setSelectedBookingForPass] = useState(null);
+
+  // Fetch User Seat Bookings for E-Ticket Downloads
+  const fetchUserBookings = useCallback(async () => {
+    try {
+      const u = getStoredUser();
+      const userIdentifier = u?.id || u?._id || "user";
+      const res = await axios.get(`/api/bookings/user/${userIdentifier}`, {
+        params: { email: u?.email, phone: u?.phone }
+      });
+      if (res.data?.success && Array.isArray(res.data.bookings)) {
+        setUserBookings(res.data.bookings);
+      }
+    } catch (err) {
+      console.warn("Could not load user bookings:", err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUserBookings();
+  }, [fetchUserBookings]);
+
   // Appu Chatbot State
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
@@ -140,8 +209,8 @@ export default function Dashboard() {
     const fetchLocations = async () => {
       try {
         const res = await axios.get("/api/locations");
-        if (res.data?.success && Array.isArray(res.data.locations)) {
-          setDbLocations(res.data.locations);
+        if (res.data?.success && Array.isArray(res.data.locations) && res.data.locations.length > 0) {
+          setDbLocations((prev) => Array.from(new Set([...res.data.locations, ...prev])));
         }
       } catch (err) {
         console.warn("Could not load stations:", err.message);
@@ -310,8 +379,8 @@ export default function Dashboard() {
   const handleOriginChange = (val) => {
     setOrigin(val);
     if (!val.trim()) {
-      setOriginSuggestions([]);
-      setShowOriginDropdown(false);
+      setOriginSuggestions(dbLocations.slice(0, 7));
+      setShowOriginDropdown(true);
       return;
     }
     const q = val.toLowerCase();
@@ -323,8 +392,8 @@ export default function Dashboard() {
   const handleDestChange = (val) => {
     setDestination(val);
     if (!val.trim()) {
-      setDestSuggestions([]);
-      setShowDestDropdown(false);
+      setDestSuggestions(dbLocations.slice(0, 7));
+      setShowDestDropdown(true);
       return;
     }
     const q = val.toLowerCase();
@@ -341,8 +410,11 @@ export default function Dashboard() {
 
   // Perform Live Bus Search against backend database
   const handleSearchBuses = async (orig = origin, dest = destination) => {
-    if (!orig.trim() || !dest.trim()) {
-      setSearchError("Please specify both Boarding (Origin) and Drop (Destination) stations.");
+    const cleanOrig = (orig || "").trim();
+    const cleanDest = (dest || "").trim();
+
+    if (!cleanOrig && !cleanDest) {
+      setSearchError("Please specify a Boarding station, Drop station, or Sub-Station.");
       return;
     }
     setIsSearching(true);
@@ -352,8 +424,8 @@ export default function Dashboard() {
     try {
       const res = await axios.get("/api/buses", {
         params: {
-          from: orig.trim(),
-          to: dest.trim(),
+          from: cleanOrig || undefined,
+          to: cleanDest || undefined,
           date: planDate
         }
       });
@@ -425,7 +497,18 @@ export default function Dashboard() {
       const bFrom = (bus.fromLocation || "").toLowerCase();
       const bTo = (bus.toLocation || "").toLowerCase();
       const bType = (bus.busType || "").toLowerCase();
-      return bNum.includes(q) || bName.includes(q) || bFrom.includes(q) || bTo.includes(q) || bType.includes(q);
+      const stopsMatch =
+        (Array.isArray(bus.intermediateStops) &&
+          bus.intermediateStops.some((s) => {
+            const sName = typeof s === "object" && s !== null ? (s.name || s.stationName || s.station) : s;
+            return sName && String(sName).toLowerCase().includes(q);
+          })) ||
+        (Array.isArray(bus.stops) &&
+          bus.stops.some((s) => {
+            const sName = typeof s === "object" && s !== null ? (s.name || s.stopName || s.station) : s;
+            return sName && String(sName).toLowerCase().includes(q);
+          }));
+      return bNum.includes(q) || bName.includes(q) || bFrom.includes(q) || bTo.includes(q) || bType.includes(q) || stopsMatch;
     }
     return true;
   });
@@ -442,7 +525,18 @@ export default function Dashboard() {
       const bFrom = (b.fromLocation || "").toLowerCase();
       const bTo = (b.toLocation || "").toLowerCase();
       const bRoute = `${bFrom} ${bTo}`;
-      return bNum.includes(q) || bName.includes(q) || bRoute.includes(q);
+      const stopsMatch =
+        (Array.isArray(b.intermediateStops) &&
+          b.intermediateStops.some((s) => {
+            const sName = typeof s === "object" && s !== null ? (s.name || s.stationName || s.station) : s;
+            return sName && String(sName).toLowerCase().includes(q);
+          })) ||
+        (Array.isArray(b.stops) &&
+          b.stops.some((s) => {
+            const sName = typeof s === "object" && s !== null ? (s.name || s.stopName || s.station) : s;
+            return sName && String(sName).toLowerCase().includes(q);
+          }));
+      return bNum.includes(q) || bName.includes(q) || bRoute.includes(q) || stopsMatch;
     });
   }, [allFleetBuses, trackingSearchQuery]);
 
@@ -924,6 +1018,61 @@ export default function Dashboard() {
                 </div>
               </Link>
 
+              {/* Card 4: My Seat Bookings & PDF E-Tickets */}
+              <Link
+                to="/profile"
+                state={{ openTab: "activity" }}
+                style={{
+                  background: "rgba(255, 255, 255, 0.07)",
+                  backdropFilter: "blur(14px)",
+                  WebkitBackdropFilter: "blur(14px)",
+                  border: "1px solid rgba(124, 58, 237, 0.4)",
+                  borderRadius: "18px",
+                  padding: "16px 22px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.15)",
+                  textDecoration: "none",
+                  transition: "transform 0.2s, background 0.2s",
+                  cursor: "pointer"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.12)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.07)";
+                }}
+                title="View My Bookings & Download PDF Tickets"
+              >
+                <div
+                  style={{
+                    width: "46px",
+                    height: "46px",
+                    borderRadius: "14px",
+                    background: "linear-gradient(135deg, rgba(124, 58, 237, 0.3) 0%, rgba(91, 33, 182, 0.4) 100%)",
+                    border: "1px solid rgba(167, 139, 250, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#c4b5fd"
+                  }}
+                >
+                  <Ticket size={24} />
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "#ddd6fe", textTransform: "uppercase", fontWeight: "700", letterSpacing: "0.5px" }}>
+                    My Bus Tickets
+                  </div>
+                  <div style={{ fontSize: "20px", fontWeight: "900", color: "#ffffff", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>{userBookings.length} {userBookings.length === 1 ? "Ticket" : "Tickets"}</span>
+                    <ArrowUpRight size={16} color="#c4b5fd" />
+                  </div>
+                </div>
+              </Link>
+
             </div>
           </div>
         </section>
@@ -996,7 +1145,7 @@ export default function Dashboard() {
           </div>
 
           {/* Quick Bus Tracking Results / Selector Chips */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px", marginBottom: selectedTrackingBus ? "24px" : "0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: "14px", marginBottom: selectedTrackingBus ? "24px" : "0" }}>
             {trackingMatchedBuses.map((bus) => {
               const liveData = liveFleetMap[String(bus._id)] || {};
               const isLive = Boolean(liveData.isTracking && liveData.status !== "OFFLINE");
@@ -1213,10 +1362,17 @@ export default function Dashboard() {
                 </div>
                 <input
                   type="text"
-                  placeholder="e.g. Ernakulam, Trivandrum..."
+                  placeholder="e.g. New Delhi, Kottayam, Ernakulam..."
                   value={origin}
                   onChange={(e) => handleOriginChange(e.target.value)}
-                  onFocus={() => { if (originSuggestions.length > 0) setShowOriginDropdown(true); }}
+                  onFocus={() => {
+                    const matches = origin.trim()
+                      ? dbLocations.filter((loc) => loc.toLowerCase().includes(origin.toLowerCase())).slice(0, 7)
+                      : dbLocations.slice(0, 7);
+                    setOriginSuggestions(matches);
+                    setShowOriginDropdown(matches.length > 0);
+                  }}
+                  onBlur={() => setTimeout(() => setShowOriginDropdown(false), 300)}
                   style={{
                     width: "100%",
                     padding: "14px 14px 14px 44px",
@@ -1242,12 +1398,16 @@ export default function Dashboard() {
               </div>
 
               {/* Origin Autocomplete Dropdown */}
-              {showOriginDropdown && (
+              {showOriginDropdown && originSuggestions.length > 0 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#ffffff", borderRadius: "14px", marginTop: "6px", boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)", border: "1px solid #e2e8f0", overflow: "hidden" }}>
                   {originSuggestions.map((loc, i) => (
                     <div
                       key={i}
-                      onClick={() => { setOrigin(loc); setShowOriginDropdown(false); }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setOrigin(loc);
+                        setShowOriginDropdown(false);
+                      }}
                       style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "700", color: "#1e293b", cursor: "pointer", borderBottom: "1px solid #f8fafc", display: "flex", alignItems: "center", gap: "10px" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#f0fdf4")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
@@ -1305,10 +1465,17 @@ export default function Dashboard() {
                 </div>
                 <input
                   type="text"
-                  placeholder="e.g. Kozhikode, Thrissur..."
+                  placeholder="e.g. Kottayam, Kozhikode, Thrissur..."
                   value={destination}
                   onChange={(e) => handleDestChange(e.target.value)}
-                  onFocus={() => { if (destSuggestions.length > 0) setShowDestDropdown(true); }}
+                  onFocus={() => {
+                    const matches = destination.trim()
+                      ? dbLocations.filter((loc) => loc.toLowerCase().includes(destination.toLowerCase())).slice(0, 7)
+                      : dbLocations.slice(0, 7);
+                    setDestSuggestions(matches);
+                    setShowDestDropdown(matches.length > 0);
+                  }}
+                  onBlur={() => setTimeout(() => setShowDestDropdown(false), 300)}
                   style={{
                     width: "100%",
                     padding: "14px 14px 14px 44px",
@@ -1334,12 +1501,16 @@ export default function Dashboard() {
               </div>
 
               {/* Destination Autocomplete Dropdown */}
-              {showDestDropdown && (
+              {showDestDropdown && destSuggestions.length > 0 && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#ffffff", borderRadius: "14px", marginTop: "6px", boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)", border: "1px solid #e2e8f0", overflow: "hidden" }}>
                   {destSuggestions.map((loc, i) => (
                     <div
                       key={i}
-                      onClick={() => { setDestination(loc); setShowDestDropdown(false); }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setDestination(loc);
+                        setShowDestDropdown(false);
+                      }}
                       style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "700", color: "#1e293b", cursor: "pointer", borderBottom: "1px solid #f8fafc", display: "flex", alignItems: "center", gap: "10px" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#f5f3ff")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
@@ -1512,7 +1683,7 @@ export default function Dashboard() {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))", gap: "20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: "20px" }}>
                   {searchedBuses?.map((bus) => {
                     const ctx = bus.searchContext;
                     const boardingTime = ctx?.boardingDepartureTime || bus.departureTime;
@@ -1520,7 +1691,7 @@ export default function Dashboard() {
                     const segDuration = ctx?.segmentDuration || bus.duration;
                     const boardingName = ctx?.boardingStationName || bus.fromLocation;
                     const dropName = ctx?.dropStationName || bus.toLocation;
-                    const displayFare = bus.ticketPrice || bus.fare;
+                    const displayFare = bus.ticketPrice || bus.fare || bus.price;
                     const isLiveBus = Boolean(liveFleetMap[String(bus._id)]?.isTracking);
 
                     return (
@@ -1666,6 +1837,175 @@ export default function Dashboard() {
         </section>
 
         {/* ========================================================= */}
+        {/* 3.5 MY BUS BOOKINGS & DOWNLOAD PDF E-TICKETS SECTION      */}
+        {/* ========================================================= */}
+        {userBookings.length > 0 && (
+          <section style={{ marginBottom: "38px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px", flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "10px",
+                      background: "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)",
+                      border: "1px solid #c4b5fd",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#7c3aed"
+                    }}
+                  >
+                    <Ticket size={20} />
+                  </div>
+                  <h2 style={{ fontSize: "22px", fontWeight: "900", color: "#1e1b4b", margin: 0 }}>
+                    My Bus Bookings &amp; PDF E-Tickets
+                  </h2>
+                </div>
+                <p style={{ margin: "4px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                  Download official PDF information sheets and view boarding passes with assigned passenger seats
+                </p>
+              </div>
+
+              <Link
+                to="/profile"
+                state={{ openTab: "activity" }}
+                style={{
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  color: "var(--accent-purple)",
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+              >
+                <span>View Full Travel History</span>
+                <ChevronRight size={16} />
+              </Link>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: "18px" }}>
+              {userBookings.slice(0, 4).map((b) => (
+                <div
+                  key={b._id || b.bookingId}
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "18px",
+                    padding: "18px 20px",
+                    border: "1.5px solid #e2e8f0",
+                    boxShadow: "0 4px 14px rgba(0, 0, 0, 0.04)",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    gap: "12px"
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                      <div>
+                        <strong style={{ fontSize: "15px", color: "#0f172a", display: "block" }}>{b.busName}</strong>
+                        <span style={{ fontSize: "11px", color: "#64748b" }}>
+                          Fleet #{b.busNumber || "MS-Fleet"} • {b.departureTime || "Scheduled"}
+                        </span>
+                      </div>
+                      <span style={{ background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "800", border: "1px solid #86efac" }}>
+                        Confirmed ✅
+                      </span>
+                    </div>
+
+                    {/* Route */}
+                    <div style={{ background: "#f8fafc", padding: "8px 12px", borderRadius: "10px", fontSize: "13px", fontWeight: "700", color: "#1e1b4b", display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                      <span>{b.fromLocation}</span>
+                      <ArrowRight size={14} style={{ color: "var(--accent-purple)" }} />
+                      <span>{b.toLocation}</span>
+                    </div>
+
+                    {/* Travel Date & Seats */}
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#475569", marginBottom: "8px" }}>
+                      <span>📅 {b.travelDate}</span>
+                      <span>🪑 Seats: <strong style={{ color: "#7c3aed" }}>{Array.isArray(b.selectedSeats) ? b.selectedSeats.join(", ") : b.selectedSeats}</strong></span>
+                    </div>
+
+                    {/* Individual Passenger Names */}
+                    {Array.isArray(b.passengers) && b.passengers.length > 0 && (
+                      <div style={{ background: "#faf5ff", border: "1px solid #ede9fe", padding: "8px 10px", borderRadius: "8px", fontSize: "11px", color: "#475569", marginBottom: "6px" }}>
+                        <span style={{ fontWeight: "700", color: "#6d28d9", display: "block", marginBottom: "3px" }}>
+                          👥 Passenger Details:
+                        </span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                          {b.passengers.map((p, pIdx) => (
+                            <span key={pIdx} style={{ background: "#ffffff", border: "1px solid #ddd6fe", padding: "1px 6px", borderRadius: "4px", fontWeight: "600", color: "#0f172a" }}>
+                              Seat {p.seat}: {p.name} {p.age ? `(${p.age}y)` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fare & Download Action Buttons */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f1f5f9", paddingTop: "10px" }}>
+                    <div>
+                      <span style={{ fontSize: "10px", color: "#94a3b8", display: "block", fontWeight: "700" }}>TOTAL FARE</span>
+                      <strong style={{ fontSize: "16px", color: "var(--primary)", fontWeight: "900" }}>
+                        ₹{Number(b.totalPrice || 0).toFixed(2)}
+                      </strong>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <button
+                        type="button"
+                        onClick={() => generateTicketPDF(b)}
+                        title="Download Official MoveSmart E-Ticket PDF Sheet"
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: "10px",
+                          background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
+                          color: "#ffffff",
+                          border: "none",
+                          fontSize: "12px",
+                          fontWeight: "800",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          boxShadow: "0 2px 8px rgba(124, 58, 237, 0.3)"
+                        }}
+                      >
+                        <Download size={14} /> Download PDF
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBookingForPass(b)}
+                        title="View Boarding Pass"
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: "10px",
+                          background: "#ffffff",
+                          color: "#334155",
+                          border: "1px solid #cbd5e1",
+                          fontSize: "12px",
+                          fontWeight: "700",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px"
+                        }}
+                      >
+                        <Eye size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ========================================================= */}
         {/* 4. CORE COMMUTER SERVICES HUB (LIGHT PURPLE & GREEN)      */}
         {/* ========================================================= */}
         <section style={{ marginBottom: "38px" }}>
@@ -1680,7 +2020,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "22px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "22px" }}>
             
             {/* Card 1: Bus Booking & Seats (Green Theme) */}
             <div
@@ -2198,7 +2538,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "18px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: "18px" }}>
               {dynamicCorridors.slice(0, 6).map((corr, i) => (
                 <div
                   key={i}
@@ -2468,6 +2808,15 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Boarding Pass & PDF Download Modal */}
+      {selectedBookingForPass && (
+        <BookingSuccess
+          booking={selectedBookingForPass}
+          onClose={() => setSelectedBookingForPass(null)}
+          onGoToDashboard={() => setSelectedBookingForPass(null)}
+        />
+      )}
 
       <Footer />
     </div>

@@ -88,6 +88,20 @@ export default function MyRfidCard() {
     setTimeout(() => setToastMessage(""), 5000);
   };
 
+  // Sync initial device mode from hardware / backend on page load
+  useEffect(() => {
+    let isMounted = true;
+    axios.get("/api/rfid/device-mode", { timeout: 4000 })
+      .then((res) => {
+        if (isMounted && res.data?.success && res.data?.mode) {
+          setRfidMode(res.data.mode);
+          localStorage.setItem("rfidUsageMode", res.data.mode);
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
   const handleModeChange = async (targetMode) => {
     if (modeLoading) return;
     setModeLoading(true);
@@ -98,7 +112,7 @@ export default function MyRfidCard() {
         { mode: targetMode },
         {
           headers: { Authorization: token ? `Bearer ${token}` : "" },
-          timeout: 6000
+          timeout: 12000
         }
       );
       if (res.data?.success) {
@@ -109,7 +123,11 @@ export default function MyRfidCard() {
         showToast(res.data?.message || "ESP32 is offline. Mode was not changed.");
       }
     } catch (err) {
-      const errMsg = err.response?.data?.message || "ESP32 is offline. Mode was not changed.";
+      const errMsg =
+        err.response?.data?.message ||
+        (err.code === "ECONNABORTED"
+          ? "Connection to ESP32 timed out. Please check if ESP32 is powered on."
+          : "ESP32 is offline. Mode was not changed.");
       showToast(errMsg);
     } finally {
       setModeLoading(false);
@@ -505,7 +523,7 @@ export default function MyRfidCard() {
           </div>
         ) : (
           /* Active Card & Telemetry View */
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", gap: "24px" }}>
             
             {/* LEFT: Physical RFID Card Canvas & Details */}
             <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>

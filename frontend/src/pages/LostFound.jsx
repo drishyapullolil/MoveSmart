@@ -831,7 +831,7 @@ export default function LostFound() {
                   </p>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: "18px" }}>
                   
                   {/* Item Name */}
                   <div style={{ gridColumn: "1/-1" }}>
@@ -1429,7 +1429,7 @@ export default function LostFound() {
                 <h3 style={{ fontSize: "16px", fontWeight: "800", color: "#334155", margin: 0 }}>No Verified Lost Items Found</h3>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "20px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: "20px" }}>
                 {publicLostItems.map((item) => (
                   <div key={item._id} style={{ background: "#ffffff", borderRadius: "20px", border: "1px solid #e2e8f0", overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.04)", display: "flex", flexDirection: "column" }}>
                     <div style={{ background: "linear-gradient(135deg, #1e1b4b, #312e81)", padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#ffffff" }}>
@@ -1552,7 +1552,7 @@ export default function LostFound() {
                 <h3 style={{ fontSize: "16px", fontWeight: "800", color: "#334155", margin: 0 }}>No Verified Found Items</h3>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: "20px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 310px), 1fr))", gap: "20px" }}>
                 {publicFoundItems.map((item) => (
                   <div key={item._id} style={{ background: "#ffffff", borderRadius: "20px", border: "1px solid #e2e8f0", overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.04)", display: "flex", flexDirection: "column" }}>
                     <div style={{ background: "linear-gradient(135deg, #1e3a8a, #2563eb)", padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#ffffff" }}>

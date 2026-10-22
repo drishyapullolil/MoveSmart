@@ -46,6 +46,9 @@ import {
   Video,
   VideoOff,
   Sparkles,
+  Lock,
+  Unlock,
+  MapPin,
 } from "lucide-react";
 
 import { INDIA_ALL_PLACES } from "../data/indiaPlaces";
@@ -285,6 +288,13 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
   const [showCustomStopInput, setShowCustomStopInput] = useState(false);
   const [newCustomStopName, setNewCustomStopName] = useState("");
 
+  // ---------------- ROUTE FLEET & 5-MIN BOOKING CUTOFF (TAB 4) STATE ----------------
+  const [selectedRouteForBuses, setSelectedRouteForBuses] = useState("");
+  const [routeBusesData, setRouteBusesData] = useState({ route: null, summary: {}, buses: [] });
+  const [loadingRouteBuses, setLoadingRouteBuses] = useState(false);
+  const [togglingBusId, setTogglingBusId] = useState(null);
+  const [routeBusFilter, setRouteBusFilter] = useState("all"); // "all" | "open" | "closed" | "started" | "disabled"
+
   // ---------------- DRIVER FACE ENROLLMENT (TAB 4) STATE ----------------
   const [selectedEnrollDriverId, setSelectedEnrollDriverId] = useState("");
   const [confirmReEnroll, setConfirmReEnroll] = useState(false);
@@ -497,6 +507,8 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
     driverVerified: false,
     driverExperience: 0,
     stops: "",
+    route_id: "",
+    bookingEnabled: false,
   });
 
   // Unassigned drivers from database (hides drivers already assigned to active fleet buses by ID only)
@@ -863,13 +875,101 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
     try {
       const res = await axios.get("/api/admin/routes");
       if (res.data.success) {
-        setRoutes(res.data.routes || []);
-        if (!scheduleRouteId && res.data.routes.length > 0) {
-          setScheduleRouteId(res.data.routes[0]._id);
+        const routeList = res.data.routes || [];
+        setRoutes(routeList);
+        if (!scheduleRouteId && routeList.length > 0) {
+          setScheduleRouteId(routeList[0]._id);
+        }
+        if (!selectedRouteForBuses && routeList.length > 0) {
+          setSelectedRouteForBuses(routeList[0]._id);
         }
       }
     } catch (err) {
       console.error("Error fetching routes:", err);
+    }
+  };
+
+  const fetchRouteBuses = async (routeId) => {
+    if (!routeId) return;
+    try {
+      setLoadingRouteBuses(true);
+      const res = await axios.get(`/api/admin/routes/${routeId}/buses`);
+      if (res.data.success) {
+        setRouteBusesData({
+          route: res.data.route,
+          summary: res.data.summary || {},
+          buses: res.data.buses || [],
+        });
+      }
+    } catch (err) {
+      console.error("Error fetching buses for route:", err);
+    } finally {
+      setLoadingRouteBuses(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedRouteForBuses) {
+      fetchRouteBuses(selectedRouteForBuses);
+    }
+  }, [selectedRouteForBuses]);
+
+  useEffect(() => {
+    if (activeTab === "routeBuses" && selectedRouteForBuses) {
+      fetchRouteBuses(selectedRouteForBuses);
+    }
+  }, [activeTab]);
+
+  const handleToggleBooking = async (busId, currentBookingEnabled) => {
+    if (!busId) return;
+    try {
+      setTogglingBusId(busId);
+      const token = getStoredToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.patch(`/api/admin/buses/${busId}/booking-toggle`, {
+        bookingEnabled: !currentBookingEnabled,
+      }, { headers });
+      if (res.data.success) {
+        showNotification(res.data.message || "Online booking setting updated! ✅");
+
+        // Update in-place in routeBusesData
+        setRouteBusesData((prev) => ({
+          ...prev,
+          buses: (prev.buses || []).map((b) =>
+            (String(b.busId) === String(busId) || String(b._id) === String(busId) || b.busNumber === res.data.busNumber)
+              ? {
+                  ...b,
+                  bookingEnabled: res.data.bookingEnabled,
+                  isBookingOpen: res.data.bookingEnabled ? (b.bookingStatus !== "CLOSED_5MIN_CUTOFF" && b.bookingStatus !== "CLOSED_DRIVE_STARTED" && !b.tripStarted) : false,
+                  bookingStatus: !res.data.bookingEnabled ? "DISABLED_BY_ADMIN" : (b.tripStarted ? "CLOSED_DRIVE_STARTED" : (b.minutesUntilCutoff <= 0 ? "CLOSED_5MIN_CUTOFF" : "OPEN")),
+                  bookingStatusLabel: !res.data.bookingEnabled ? "Booking Disabled" : (b.tripStarted ? "Drive Started" : (b.minutesUntilCutoff <= 0 ? "Booking Closed (< 5m)" : "Booking Open")),
+                  bookingStatusReason: !res.data.bookingEnabled ? "Online booking has been disabled by Admin for this bus (Walk-in only)." : b.bookingStatusReason,
+                }
+              : b
+          ),
+          summary: {
+            ...prev.summary,
+            bookingEnabledCount: res.data.bookingEnabled
+              ? (prev.summary.bookingEnabledCount || 0) + 1
+              : Math.max(0, (prev.summary.bookingEnabledCount || 1) - 1),
+            bookingDisabledCount: !res.data.bookingEnabled
+              ? (prev.summary.bookingDisabledCount || 0) + 1
+              : Math.max(0, (prev.summary.bookingDisabledCount || 1) - 1),
+          }
+        }));
+
+        // Update in-place in buses list
+        setBuses((prev) => prev.map((b) =>
+          (String(b._id) === String(busId) || b.busNumber === res.data.busNumber)
+            ? { ...b, bookingEnabled: res.data.bookingEnabled }
+            : b
+        ));
+      }
+    } catch (err) {
+      console.error("Error toggling booking option:", err);
+      showNotification("Failed to update booking option: " + (err.response?.data?.message || err.message), true);
+    } finally {
+      setTogglingBusId(null);
     }
   };
 
@@ -1450,7 +1550,7 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
   // Route Dropdown Auto-Fill Handler
   const handleRouteSelectChangeForBus = (routeIdVal) => {
     setSelectedRouteOption(routeIdVal);
-    const routeObj = routes.find((r) => r._id === routeIdVal);
+    const routeObj = routes.find((r) => String(r._id) === String(routeIdVal));
     if (routeObj) {
       const depTime = routeObj.base_start_time || "";
       const arrTime = depTime ? addMinutesToTime(depTime, routeObj.total_duration_minutes || 120) : "";
@@ -1460,15 +1560,21 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
 
       setBusForm((prev) => ({
         ...prev,
-        fromLocation: routeObj.fromLocation || "",
-        toLocation: routeObj.toLocation || "",
-        duration: routeObj.duration || "",
-        price: routeObj.fare || "",
-        departureTime: depTime,
-        arrivalTime: arrTime,
-        stops: stopsStr,
+        route_id: routeObj._id,
+        fromLocation: routeObj.fromLocation || prev.fromLocation || "",
+        toLocation: routeObj.toLocation || prev.toLocation || "",
+        duration: routeObj.duration || prev.duration || "",
+        price: routeObj.fare || prev.price || "",
+        departureTime: depTime || prev.departureTime,
+        arrivalTime: arrTime || prev.arrivalTime,
+        stops: stopsStr || prev.stops,
       }));
       showNotification(`Auto-filled bus specs from route "${routeObj.routeName}"!`);
+    } else {
+      setBusForm((prev) => ({
+        ...prev,
+        route_id: "",
+      }));
     }
   };
 
@@ -1521,6 +1627,8 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
         departureTime: busForm.departureTime?.trim() || "06:00 AM",
         arrivalTime: busForm.arrivalTime?.trim() || "10:00 PM",
         price: busForm.price !== "" && !isNaN(Number(busForm.price)) && Number(busForm.price) > 0 ? Number(busForm.price) : 100,
+        route_id: busForm.route_id || null,
+        bookingEnabled: Boolean(busForm.bookingEnabled),
       };
       if (busEditingId) {
         const res = await axios.put(`/api/admin/buses/${busEditingId}`, payload);
@@ -1566,6 +1674,8 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
       driverVerified: false,
       driverExperience: 0,
       stops: "",
+      route_id: "",
+      bookingEnabled: false,
     });
   };
 
@@ -1581,8 +1691,10 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
     );
 
     const driverIdToUse = matchedDriver ? String(matchedDriver._id || matchedDriver.id) : validDriverId;
+    const busRouteId = bus.route_id ? String(bus.route_id) : "";
 
     setBusEditingId(bus._id);
+    setSelectedRouteOption(busRouteId);
     setBusForm({
       busNumber: bus.busNumber || "",
       busName: bus.busName || "",
@@ -1604,6 +1716,8 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
       driverVerified: matchedDriver ? matchedDriver.verificationStatus === "Approved" : Boolean(bus.driverVerified),
       driverExperience: matchedDriver?.experienceYears || bus.driverExperience || 0,
       stops: Array.isArray(bus.stops) ? bus.stops.join(", ") : (bus.stops || ""),
+      route_id: busRouteId,
+      bookingEnabled: bus.bookingEnabled === true,
     });
 
     if (driverIdToUse) {
@@ -1627,28 +1741,48 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
     }
   };
 
-  // Filtered lists for search with safe property access
+  // Filtered lists for search with safe property access (including intermediate sub-stations)
   const safeBusQuery = (busSearch || "").toLowerCase().trim();
-  const filteredBuses = buses.filter(
-    (b) =>
-      !safeBusQuery ||
+  const filteredBuses = buses.filter((b) => {
+    if (!safeBusQuery) return true;
+    const directMatch =
       (b.busName || "").toLowerCase().includes(safeBusQuery) ||
       (b.busNumber || "").toLowerCase().includes(safeBusQuery) ||
       (b.fromLocation || "").toLowerCase().includes(safeBusQuery) ||
       (b.toLocation || "").toLowerCase().includes(safeBusQuery) ||
       (b.driverName || "").toLowerCase().includes(safeBusQuery) ||
-      (b.busType || "").toLowerCase().includes(safeBusQuery)
-  );
+      (b.busType || "").toLowerCase().includes(safeBusQuery);
+    if (directMatch) return true;
+
+    // Check intermediate sub-stations
+    const stopsMatch =
+      Array.isArray(b.stops) &&
+      b.stops.some((s) => {
+        const sName = typeof s === "object" && s !== null ? (s.name || s.stopName || s.station) : s;
+        return sName && String(sName).toLowerCase().includes(safeBusQuery);
+      });
+    return Boolean(stopsMatch);
+  });
 
   const safeRouteQuery = (routeSearch || "").toLowerCase().trim();
-  const filteredRoutes = routes.filter(
-    (r) =>
-      !safeRouteQuery ||
+  const filteredRoutes = routes.filter((r) => {
+    if (!safeRouteQuery) return true;
+    const directMatch =
       (r.routeName || "").toLowerCase().includes(safeRouteQuery) ||
       (r.routeId || "").toLowerCase().includes(safeRouteQuery) ||
       (r.fromLocation || "").toLowerCase().includes(safeRouteQuery) ||
-      (r.toLocation || "").toLowerCase().includes(safeRouteQuery)
-  );
+      (r.toLocation || "").toLowerCase().includes(safeRouteQuery);
+    if (directMatch) return true;
+
+    // Check intermediate sub-stations
+    const stopsMatch =
+      Array.isArray(r.stops) &&
+      r.stops.some((s) => {
+        const sName = typeof s === "object" && s !== null ? (s.name || s.stopName || s.station) : s;
+        return sName && String(sName).toLowerCase().includes(safeRouteQuery);
+      });
+    return Boolean(stopsMatch);
+  });
 
   const mainContent = (
     <div style={{ maxWidth: isEmbedded ? "100%" : "1380px", margin: "0 auto", padding: isEmbedded ? "0" : "28px 24px", flex: 1, width: "100%" }}>
@@ -1843,6 +1977,31 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
         <button
           type="button"
           onClick={() => {
+            setActiveTab("routeBuses");
+            if (selectedRouteForBuses) fetchRouteBuses(selectedRouteForBuses);
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "12px 22px",
+            borderRadius: "12px",
+            fontSize: "14px",
+            fontWeight: "800",
+            border: "none",
+            cursor: "pointer",
+            background: activeTab === "routeBuses" ? "linear-gradient(135deg, #0284c7, #0369a1)" : "#ffffff",
+            color: activeTab === "routeBuses" ? "#ffffff" : "#64748b",
+            boxShadow: activeTab === "routeBuses" ? "0 4px 12px rgba(2, 132, 199, 0.35)" : "none",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <Shield size={18} /> 4. Route Fleet &amp; 5-Min Cutoff ({routeBusesData.buses ? routeBusesData.buses.length : 0})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
             setActiveTab("faceEnrollment");
             setCaptureError(null);
             setSuccessFeedback(null);
@@ -1863,7 +2022,7 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
             transition: "all 0.2s ease",
           }}
         >
-          <UserCheck size={18} /> 4. Driver Face Enrollment ({driversList.filter((d) => d.isEnrolled).length}/{driversList.length})
+          <UserCheck size={18} /> 5. Driver Face Enrollment ({driversList.filter((d) => d.isEnrolled).length}/{driversList.length})
         </button>
 
         <button
@@ -1975,7 +2134,7 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
           />
 
           {/* 2. Main Two-Column Layout: Stop Management Table & Route Info Form */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "24px", alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "24px", alignItems: "start" }}>
 
             {/* Left Column: STOP MANAGEMENT PANEL TABLE */}
             <div style={{ background: "#ffffff", padding: "24px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
@@ -2473,7 +2632,7 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
       {/* TAB 2: SCHEDULE DEPARTURES MANAGEMENT */}
       {/* ==================================================== */}
       {activeTab === "schedules" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "28px", alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "28px", alignItems: "start" }}>
 
           {/* Left Column: Create Departure Schedule */}
           <div style={{ background: "#ffffff", padding: "26px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
@@ -2901,7 +3060,7 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
       {/* TAB 3: BUS FLEET MANAGEMENT */}
       {/* ==================================================== */}
       {activeTab === "buses" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.1fr", gap: "28px", alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "28px", alignItems: "start" }}>
 
           {/* Left Column: Register / Edit Bus Form */}
           <div style={{ background: "#ffffff", padding: "26px", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
@@ -3005,6 +3164,67 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
                 </div>
               </div>
 
+              {/* Assigned Route Selection */}
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: "#475569", marginBottom: "4px" }}>
+                  Assigned Route (Optional)
+                </label>
+                <select
+                  value={busForm.route_id || ""}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    setBusForm((prev) => ({ ...prev, route_id: selectedId }));
+                    handleRouteSelectChangeForBus(selectedId);
+                  }}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid #cbd5e1", fontSize: "13px", fontWeight: "700", background: "#ffffff" }}
+                >
+                  <option value="">-- No Route Assigned (Unassigned) --</option>
+                  {routes.map((r) => (
+                    <option key={r._id} value={r._id}>
+                      {r.routeId ? `[${r.routeId}] ` : ""}{r.routeName || `${r.fromLocation} ➔ ${r.toLocation}`}
+                    </option>
+                  ))}
+                </select>
+                <span style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "block" }}>
+                  Assigning a valid route enables this bus for route listings and passenger visibility.
+                </span>
+              </div>
+
+              {/* Online Booking Option Control (Opt-in by Admin only) */}
+              <div
+                style={{
+                  background: busForm.bookingEnabled ? "#f0fdf4" : "#f8fafc",
+                  border: busForm.bookingEnabled ? "1.5px solid #86efac" : "1.5px solid #cbd5e1",
+                  borderRadius: "12px",
+                  padding: "12px 14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: "800", color: busForm.bookingEnabled ? "#15803d" : "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>{busForm.bookingEnabled ? "🟢 Online Booking ENABLED" : "🔒 Walk-in Only (Online Booking Disabled)"}</span>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                    {busForm.bookingEnabled
+                      ? "Passengers can reserve seats online via web app (locks 5m before takeoff)."
+                      : "Default: Walk-in counter ticketing only. Only buses admin gives will have online booking."}
+                  </div>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#0f172a" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(busForm.bookingEnabled)}
+                    onChange={(e) => setBusForm({ ...busForm, bookingEnabled: e.target.checked })}
+                    style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                  />
+                  <span>Give Booking</span>
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -3084,6 +3304,17 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
                             </>
                           )}
                         </div>
+                        <div style={{ fontSize: "11.5px", color: "#475569", marginTop: "2px" }}>
+                          Route: {b.route_id ? (
+                            <span style={{ color: "#0284c7", fontWeight: "700" }}>
+                              🛣️ {b.routeName || "Assigned"}
+                            </span>
+                          ) : (
+                            <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                              ⚠️ Unassigned (Hidden from passengers)
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div style={{ display: "flex", gap: "6px" }}>
@@ -3105,6 +3336,28 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
                           }}
                         >
                           {b.is_active !== false ? "⏸ Disable" : "▶ Enable"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleBooking(b._id, b.bookingEnabled === true)}
+                          disabled={togglingBusId === b._id}
+                          style={{
+                            padding: "4px 9px",
+                            borderRadius: "6px",
+                            background: b.bookingEnabled === true ? "#ecfdf5" : "#f1f5f9",
+                            color: b.bookingEnabled === true ? "#047857" : "#475569",
+                            border: b.bookingEnabled === true ? "1.5px solid #a7f3d0" : "1.5px solid #cbd5e1",
+                            fontSize: "11px",
+                            fontWeight: "800",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "3px",
+                            transition: "all 0.15s ease",
+                          }}
+                          title={b.bookingEnabled === true ? "Online Booking Active (Admin Given) — Click to Revoke" : "Walk-in Only (No Online Booking) — Click to Give Booking"}
+                        >
+                          {b.bookingEnabled === true ? "✓ Booking Active" : "+ Give Booking"}
                         </button>
                         <button
                           type="button"
@@ -3148,7 +3401,680 @@ export default function AdminAddBusRoute({ isEmbedded = false, onNavigateTab, in
       )}
 
       {/* ==================================================== */}
-      {/* TAB 4: DRIVER FACE ENROLLMENT */}
+      {/* TAB 4: ROUTE FLEET & 5-MIN PRE-DEPARTURE CUTOFF CONTROL */}
+      {/* ==================================================== */}
+      {activeTab === "routeBuses" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Header Banner Card */}
+          <div
+            style={{
+              background: "linear-gradient(135deg, #0f172a 0%, #0369a1 50%, #0284c7 100%)",
+              borderRadius: "20px",
+              padding: "24px 28px",
+              color: "#ffffff",
+              boxShadow: "0 8px 30px rgba(2, 132, 199, 0.25)",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "18px",
+            }}
+          >
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
+                    background: "rgba(255, 255, 255, 0.18)",
+                    backdropFilter: "blur(4px)",
+                  }}
+                >
+                  <Shield size={20} color="#38bdf8" />
+                </span>
+                <span
+                  style={{
+                    fontSize: "12px",
+                    fontWeight: "800",
+                    color: "#bae6fd",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Route Fleet Operations &amp; Cutoff Control
+                </span>
+              </div>
+              <h2 style={{ fontSize: "24px", fontWeight: "900", margin: "0 0 6px 0", letterSpacing: "-0.5px" }}>
+                Buses Selected for Route &amp; 5-Min Takeoff Protection
+              </h2>
+              <p style={{ margin: 0, fontSize: "14px", color: "rgba(255, 255, 255, 0.85)", maxWidth: "780px" }}>
+                Inspect all allocated buses for any selected route. Online booking automatically closes <strong>5 minutes before takeoff from the main station</strong> or <strong>immediately when trip drive starts</strong>. Administrators can toggle booking availability per bus anytime.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedRouteForBuses) fetchRouteBuses(selectedRouteForBuses);
+                }}
+                disabled={loadingRouteBuses}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "10px 18px",
+                  borderRadius: "12px",
+                  background: "rgba(255, 255, 255, 0.15)",
+                  color: "#ffffff",
+                  border: "1px solid rgba(255, 255, 255, 0.25)",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  cursor: loadingRouteBuses ? "not-allowed" : "pointer",
+                  backdropFilter: "blur(6px)",
+                }}
+              >
+                <RefreshCw size={15} className={loadingRouteBuses ? "animate-spin" : ""} />
+                {loadingRouteBuses ? "Evaluating Status..." : "Refresh Live Status"}
+              </button>
+            </div>
+          </div>
+
+          {/* Route Selector & Route Meta Card */}
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              padding: "20px 24px",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.03)",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "800", color: "#1e293b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  Select Route to View Assigned Fleet:
+                </label>
+                <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
+                  Total Routes Configured: <strong>{routes.length}</strong>
+                </span>
+              </div>
+
+              {/* Route Dropdown Picker */}
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                <select
+                  value={selectedRouteForBuses}
+                  onChange={(e) => setSelectedRouteForBuses(e.target.value)}
+                  style={{
+                    flex: "1 1 360px",
+                    padding: "12px 16px",
+                    borderRadius: "12px",
+                    border: "2px solid #0284c7",
+                    fontSize: "14px",
+                    fontWeight: "700",
+                    color: "#0f172a",
+                    background: "#f0f9ff",
+                    cursor: "pointer",
+                    outline: "none",
+                  }}
+                >
+                  <option value="">-- Choose a Route to Inspect Buses --</option>
+                  {routes.map((r) => (
+                    <option key={r._id} value={r._id}>
+                      {r.routeName ? `${r.routeName} (${r.fromLocation} ➔ ${r.toLocation})` : `${r.fromLocation} ➔ ${r.toLocation}`}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Quick Switch Buttons for Top Routes */}
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {routes.slice(0, 4).map((r) => {
+                    const isSelected = String(r._id) === String(selectedRouteForBuses);
+                    return (
+                      <button
+                        key={r._id}
+                        type="button"
+                        onClick={() => setSelectedRouteForBuses(r._id)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          fontWeight: "700",
+                          cursor: "pointer",
+                          border: isSelected ? "1px solid #0284c7" : "1px solid #cbd5e1",
+                          background: isSelected ? "#0284c7" : "#ffffff",
+                          color: isSelected ? "#ffffff" : "#475569",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        {r.fromLocation} ➔ {r.toLocation}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Active Route Details Header Card */}
+              {routeBusesData.route && (
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    padding: "14px 18px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "12px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "14px", fontWeight: "800", color: "#0f172a" }}>
+                      <MapPin size={16} color="#0284c7" />
+                      <span>{routeBusesData.route.routeName || `${routeBusesData.route.fromLocation} ➔ ${routeBusesData.route.toLocation}`}</span>
+                    </div>
+
+                    <span style={{ fontSize: "12px", color: "#0369a1", background: "#e0f2fe", padding: "3px 10px", borderRadius: "6px", fontWeight: "700" }}>
+                      Origin / Main Station: <strong>{routeBusesData.route.originTerminal || routeBusesData.route.fromLocation}</strong>
+                    </span>
+
+                    <span style={{ fontSize: "12px", color: "#475569", background: "#f1f5f9", padding: "3px 10px", borderRadius: "6px", fontWeight: "600" }}>
+                      Destination: <strong>{routeBusesData.route.destinationTerminal || routeBusesData.route.toLocation}</strong>
+                    </span>
+
+                    <span style={{ fontSize: "12px", color: "#64748b" }}>
+                      Distance: <strong>{routeBusesData.route.distanceKm || "N/A"} km</strong> • Base Fare: <strong>₹{routeBusesData.route.fare || 0}</strong>
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: "12px", color: "#0284c7", fontWeight: "800" }}>
+                    Total Fleet Buses Assigned: {routeBusesData.buses ? routeBusesData.buses.length : 0}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 5-Min Cutoff & Drive-Start Operational Protection Policy Banner */}
+          <div
+            style={{
+              background: "linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)",
+              border: "1px solid #bfdbfe",
+              borderRadius: "16px",
+              padding: "16px 20px",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+              <span style={{ fontSize: "20px" }}>⏱️</span>
+              <div>
+                <h4 style={{ margin: "0 0 2px 0", fontSize: "13px", fontWeight: "800", color: "#1e3a8a" }}>
+                  5-Minute Takeoff Cutoff
+                </h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "#3b82f6", lineHeight: "1.4" }}>
+                  Online seat booking automatically locks <strong>5 minutes before scheduled departure</strong> from the main station so passenger manifest finalizes cleanly.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+              <span style={{ fontSize: "20px" }}>🚀</span>
+              <div>
+                <h4 style={{ margin: "0 0 2px 0", fontSize: "13px", fontWeight: "800", color: "#14532d" }}>
+                  Drive-Start Immediate Lockout
+                </h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "#16a34a", lineHeight: "1.4" }}>
+                  If the driver begins the trip in the Driver App before the 5-min threshold, online booking <strong>closes immediately</strong> to prevent mid-journey conflicts.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+              <span style={{ fontSize: "20px" }}>⚙️</span>
+              <div>
+                <h4 style={{ margin: "0 0 2px 0", fontSize: "13px", fontWeight: "800", color: "#581c87" }}>
+                  Admin Booking Control
+                </h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "#7c3aed", lineHeight: "1.4" }}>
+                  Administrator can toggle any bus to <strong>Booking Enabled</strong> or <strong>Walk-in Only (Disabled)</strong> with one click below at any time.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Analytics Counters */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+            <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>Allocated Buses</div>
+              <div style={{ fontSize: "22px", fontWeight: "900", color: "#0284c7", marginTop: "2px" }}>
+                {routeBusesData.summary?.totalBuses || 0}
+              </div>
+              <span style={{ fontSize: "11px", color: "#64748b" }}>Assigned to this route</span>
+            </div>
+
+            <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: "800", color: "#15803d", textTransform: "uppercase" }}>🟢 Booking Open</div>
+              <div style={{ fontSize: "22px", fontWeight: "900", color: "#16a34a", marginTop: "2px" }}>
+                {routeBusesData.summary?.openForBookingCount || 0}
+              </div>
+              <span style={{ fontSize: "11px", color: "#15803d" }}>Active online bookings</span>
+            </div>
+
+            <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: "800", color: "#b45309", textTransform: "uppercase" }}>⏱️ Cutoff (&lt; 5m)</div>
+              <div style={{ fontSize: "22px", fontWeight: "900", color: "#d97706", marginTop: "2px" }}>
+                {routeBusesData.summary?.closedCutoffCount || 0}
+              </div>
+              <span style={{ fontSize: "11px", color: "#b45309" }}>Departing &lt; 5 mins</span>
+            </div>
+
+            <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: "800", color: "#7c3aed", textTransform: "uppercase" }}>🚀 Drive Started</div>
+              <div style={{ fontSize: "22px", fontWeight: "900", color: "#9333ea", marginTop: "2px" }}>
+                {routeBusesData.summary?.driveStartedCount || 0}
+              </div>
+              <span style={{ fontSize: "11px", color: "#7c3aed" }}>Active on trip</span>
+            </div>
+
+            <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: "800", color: "#dc2626", textTransform: "uppercase" }}>🔒 Booking Disabled</div>
+              <div style={{ fontSize: "22px", fontWeight: "900", color: "#ef4444", marginTop: "2px" }}>
+                {routeBusesData.summary?.bookingDisabledCount || 0}
+              </div>
+              <span style={{ fontSize: "11px", color: "#dc2626" }}>Admin set walk-in only</span>
+            </div>
+          </div>
+
+          {/* Filter Pills Bar */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {[
+                { id: "all", label: `All Buses (${routeBusesData.buses ? routeBusesData.buses.length : 0})` },
+                { id: "open", label: `🟢 Booking Open (${routeBusesData.summary?.openForBookingCount || 0})` },
+                { id: "cutoff", label: `⏱️ Cutoff Passed (${routeBusesData.summary?.closedCutoffCount || 0})` },
+                { id: "started", label: `🚀 Drive Started (${routeBusesData.summary?.driveStartedCount || 0})` },
+                { id: "disabled", label: `🔒 Booking Disabled (${routeBusesData.summary?.bookingDisabledCount || 0})` },
+              ].map((tab) => {
+                const isActive = routeBusFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setRouteBusFilter(tab.id)}
+                    style={{
+                      padding: "7px 14px",
+                      borderRadius: "10px",
+                      fontSize: "12px",
+                      fontWeight: "800",
+                      cursor: "pointer",
+                      border: isActive ? "1px solid #0284c7" : "1px solid #e2e8f0",
+                      background: isActive ? "#0284c7" : "#ffffff",
+                      color: isActive ? "#ffffff" : "#475569",
+                      boxShadow: isActive ? "0 2px 8px rgba(2, 132, 199, 0.25)" : "none",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Buses List for Route */}
+          {loadingRouteBuses ? (
+            <div
+              style={{
+                background: "#ffffff",
+                padding: "60px 20px",
+                borderRadius: "16px",
+                border: "1px solid #e2e8f0",
+                textAlign: "center",
+                color: "#64748b",
+              }}
+            >
+              <RefreshCw size={32} className="animate-spin" style={{ margin: "0 auto 12px auto", color: "#0284c7" }} />
+              <div style={{ fontSize: "16px", fontWeight: "700" }}>Fetching route fleet buses and calculating takeoff cutoffs...</div>
+            </div>
+          ) : !routeBusesData.buses || routeBusesData.buses.length === 0 ? (
+            <div
+              style={{
+                background: "#ffffff",
+                borderRadius: "16px",
+                border: "2px dashed #cbd5e1",
+                padding: "48px 24px",
+                textAlign: "center",
+              }}
+            >
+              <Bus size={44} style={{ color: "#94a3b8", margin: "0 auto 14px auto" }} />
+              <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1e293b", margin: "0 0 6px 0" }}>
+                No Buses Assigned to this Route Yet
+              </h3>
+              <p style={{ fontSize: "14px", color: "#64748b", maxWidth: "520px", margin: "0 auto 20px auto" }}>
+                No buses have been allocated or scheduled for this route. Assign buses via Departure Schedules or Bus Fleet Management to set up departure timetables and 5-min booking cutoffs.
+              </p>
+              <div style={{ display: "flex", justifyContent: "center", gap: "12px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={handleSwitchToSchedulesTab}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                    color: "#ffffff",
+                    border: "none",
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Go to Departure Schedules (Tab 2)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("buses")}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: "10px",
+                    background: "#0284c7",
+                    color: "#ffffff",
+                    border: "none",
+                    fontWeight: "800",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Go to Bus Fleet Management (Tab 3)
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {routeBusesData.buses
+                .filter((b) => {
+                  if (routeBusFilter === "open") return b.isBookingOpen;
+                  if (routeBusFilter === "cutoff") return b.bookingStatus === "CLOSED_5MIN_CUTOFF";
+                  if (routeBusFilter === "started") return b.tripStarted || b.bookingStatus === "CLOSED_DRIVE_STARTED";
+                  if (routeBusFilter === "disabled") return !b.bookingEnabled || b.bookingStatus === "DISABLED_BY_ADMIN";
+                  return true;
+                })
+                .map((b) => {
+                  const bId = b.busId || b._id;
+                  const isToggling = togglingBusId === bId;
+
+                  return (
+                    <div
+                      key={bId || b.busNumber}
+                      style={{
+                        background: "#ffffff",
+                        borderRadius: "16px",
+                        border: !b.bookingEnabled
+                          ? "1.5px solid #fecaca"
+                          : b.tripStarted
+                          ? "1.5px solid #d8b4fe"
+                          : b.bookingStatus === "CLOSED_5MIN_CUTOFF"
+                          ? "1.5px solid #fed7aa"
+                          : "1.5px solid #bbf7d0",
+                        padding: "20px 24px",
+                        boxShadow: "0 2px 10px rgba(0, 0, 0, 0.04)",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "20px",
+                      }}
+                    >
+                      {/* Left: Bus Identity, Route Info & Driver */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", flex: "1 1 360px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                          <span
+                            style={{
+                              fontSize: "15px",
+                              fontWeight: "900",
+                              color: "#0f172a",
+                              background: "#f1f5f9",
+                              padding: "4px 10px",
+                              borderRadius: "8px",
+                              letterSpacing: "0.5px",
+                              border: "1px solid #cbd5e1",
+                            }}
+                          >
+                            🚌 {b.busNumber}
+                          </span>
+
+                          <span style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b" }}>
+                            {b.busName}
+                          </span>
+
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              color: "#0369a1",
+                              background: "#e0f2fe",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                            }}
+                          >
+                            {b.busType || "Standard"}
+                          </span>
+
+                          <span style={{ fontSize: "12px", color: "#64748b", fontWeight: "600" }}>
+                            • {b.totalSeats || 32} Total Seats
+                          </span>
+                        </div>
+
+                        {/* Timing Badges Row */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginTop: "2px" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              color: "#0f172a",
+                              background: "#f8fafc",
+                              padding: "3px 8px",
+                              borderRadius: "6px",
+                              border: "1px solid #e2e8f0",
+                            }}
+                          >
+                            <Clock size={13} color="#0284c7" />
+                            Main Station Departure: <strong>{b.mainStationDepartureTime || b.scheduledDepartureTime || "08:30 AM"}</strong>
+                          </span>
+
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              color: "#b45309",
+                              background: "#fffbeb",
+                              padding: "3px 8px",
+                              borderRadius: "6px",
+                              border: "1px solid #fde68a",
+                            }}
+                          >
+                            ⏱️ 5-Min Cutoff Locks At: <strong>{b.bookingCloseTime || "08:25 AM"}</strong>
+                          </span>
+
+                          {b.scheduleCount > 1 && (
+                            <span style={{ fontSize: "11px", color: "#8b5cf6", fontWeight: "700" }}>
+                              ({b.scheduleCount} Daily Departures)
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Driver & Operator info */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "14px", fontSize: "12px", color: "#475569", flexWrap: "wrap" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                            <User size={13} color="#64748b" />
+                            Driver: <strong>{b.driverName || "Assigned Driver"}</strong>
+                          </span>
+                          {b.driverPhone && b.driverPhone !== "N/A" && (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                              <Phone size={13} color="#64748b" />
+                              {b.driverPhone}
+                            </span>
+                          )}
+                          <span style={{ color: "#94a3b8" }}>|</span>
+                          <span>Operator: {b.operator || "MoveSmart Fleet Ops"}</span>
+                        </div>
+                      </div>
+
+                      {/* Middle: Real-Time Cutoff & Booking Status Badge */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: "220px" }}>
+                        <div style={{ fontSize: "11px", fontWeight: "800", color: "#64748b", textTransform: "uppercase" }}>
+                          Live Booking &amp; Drive Status
+                        </div>
+
+                        {/* Dynamic Status Pill */}
+                        {b.bookingStatus === "OPEN" ? (
+                          <div
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 14px",
+                              borderRadius: "10px",
+                              background: "#f0fdf4",
+                              border: "1px solid #86efac",
+                              color: "#15803d",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                            }}
+                          >
+                            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e", display: "inline-block" }}></span>
+                            <span>🟢 Online Booking OPEN</span>
+                          </div>
+                        ) : b.bookingStatus === "CLOSED_5MIN_CUTOFF" ? (
+                          <div
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 14px",
+                              borderRadius: "10px",
+                              background: "#fffbeb",
+                              border: "1px solid #fcd34d",
+                              color: "#b45309",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                            }}
+                          >
+                            <span>⏱️ Booking Closed (&lt; 5m to takeoff)</span>
+                          </div>
+                        ) : b.bookingStatus === "CLOSED_DRIVE_STARTED" ? (
+                          <div
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 14px",
+                              borderRadius: "10px",
+                              background: "#faf5ff",
+                              border: "1px solid #d8b4fe",
+                              color: "#7e22ce",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                            }}
+                          >
+                            <span>🚀 Drive Started (In Transit)</span>
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 14px",
+                              borderRadius: "10px",
+                              background: "#fef2f2",
+                              border: "1px solid #fecaca",
+                              color: "#b91c1c",
+                              fontSize: "13px",
+                              fontWeight: "800",
+                            }}
+                          >
+                            <Lock size={14} />
+                            <span>🔒 Booking Disabled by Admin</span>
+                          </div>
+                        )}
+
+                        <span style={{ fontSize: "11px", color: "#64748b", maxWidth: "260px" }}>
+                          {b.bookingStatusReason || "Evaluated against main station departure"}
+                        </span>
+                      </div>
+
+                      {/* Right: Admin Booking Option Choice Toggle */}
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                        <div style={{ fontSize: "11px", fontWeight: "800", color: "#475569", textTransform: "uppercase" }}>
+                          Admin Booking Option:
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleBooking(bId, b.bookingEnabled === true)}
+                          disabled={isToggling}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            padding: "10px 18px",
+                            borderRadius: "10px",
+                            fontSize: "13px",
+                            fontWeight: "800",
+                            cursor: isToggling ? "not-allowed" : "pointer",
+                            border: b.bookingEnabled === true ? "1.5px solid #22c55e" : "1.5px solid #cbd5e1",
+                            background: b.bookingEnabled === true ? "#f0fdf4" : "#f8fafc",
+                            color: b.bookingEnabled === true ? "#15803d" : "#475569",
+                            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.05)",
+                            transition: "all 0.2s ease",
+                          }}
+                        >
+                          {isToggling ? (
+                            <>
+                              <RefreshCw size={14} className="animate-spin" />
+                              <span>Updating...</span>
+                            </>
+                          ) : b.bookingEnabled === true ? (
+                            <>
+                              <Unlock size={15} color="#15803d" />
+                              <span>✓ Booking Active (Click to Revoke)</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock size={15} color="#64748b" />
+                              <span>+ Give Booking Option</span>
+                            </>
+                          )}
+                        </button>
+
+                        <span style={{ fontSize: "11px", color: b.bookingEnabled === true ? "#15803d" : "#64748b", textAlign: "right", fontWeight: "600" }}>
+                          {b.bookingEnabled === true ? "✓ Online seat reservation enabled for passengers" : "🔒 Walk-in / ticket counter only (No online booking)"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* TAB 5: DRIVER FACE ENROLLMENT */}
       {/* ==================================================== */}
       {activeTab === "faceEnrollment" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>

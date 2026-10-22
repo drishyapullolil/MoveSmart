@@ -51,6 +51,10 @@ const scheduleSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    bookingEnabled: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

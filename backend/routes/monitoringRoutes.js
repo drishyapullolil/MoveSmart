@@ -906,27 +906,288 @@ router.post("/stream-frame", async (req, res) => {
 // 4. ACTIVE ALERTS, ACKNOWLEDGE & RESOLVE (Admin)
 // ----------------------------------------------------
 
-// GET /api/monitoring/alerts - Get all active/unacknowledged safety alerts
+// GET /api/monitoring/action-analytics - Real-time statistics & chart metrics based on Admin actions
+router.get("/action-analytics", async (req, res) => {
+  try {
+    const statusAgg = await SafetyEvent.aggregate([
+      {
+        $match: {
+          status: { $in: ["Active", "Acknowledged", "Resolved"] },
+        },
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const statusCounts = {
+      Active: 0,
+      Acknowledged: 0,
+      Resolved: 0,
+    };
+    statusAgg.forEach((item) => {
+      if (statusCounts[item._id] !== undefined) {
+        statusCounts[item._id] = item.count;
+      }
+    });
+
+    const totalActionable = statusCounts.Active + statusCounts.Acknowledged + statusCounts.Resolved;
+    const totalActionsTaken = statusCounts.Acknowledged + statusCounts.Resolved;
+    const actionRate = totalActionable > 0 ? Math.round((totalActionsTaken / totalActionable) * 100) : 0;
+    const acknowledgedRate = totalActionable > 0 ? Math.round((statusCounts.Acknowledged / totalActionable) * 100) : 0;
+    const resolvedRate = totalActionable > 0 ? Math.round((statusCounts.Resolved / totalActionable) * 100) : 0;
+
+    // Breakdown by incident eventType and admin action status
+    const typeStatusAgg = await SafetyEvent.aggregate([
+      {
+        $match: {
+          status: { $in: ["Active", "Acknowledged", "Resolved"] },
+        },
+      },
+      {
+        $group: {
+          _id: { eventType: "$eventType", status: "$status" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const categoryMap = {
+      MONITORING_DEVICE_OFFLINE: "Device Offline",
+      CRITICAL_DROWSINESS: "Severe Drowsiness",
+      DROWSINESS_WARNING: "Drowsiness Warning",
+      DRIVER_MISMATCH: "Driver Mismatch",
+      DRIVER_ABSENT: "Driver Absent",
+    };
+
+    const typeBreakdown = {};
+    Object.keys(categoryMap).forEach((type) => {
+      typeBreakdown[type] = {
+        eventType: type,
+        label: categoryMap[type],
+        Active: 0,
+        Acknowledged: 0,
+        Resolved: 0,
+        total: 0,
+      };
+    });
+
+    typeStatusAgg.forEach((item) => {
+      const { eventType, status } = item._id;
+      if (!typeBreakdown[eventType]) {
+        typeBreakdown[eventType] = {
+          eventType,
+          label: categoryMap[eventType] || eventType,
+          Active: 0,
+          Acknowledged: 0,
+          Resolved: 0,
+          total: 0,
+        };
+      }
+      typeBreakdown[eventType][status] = item.count;
+      typeBreakdown[eventType].total += item.count;
+    });
+
+    // Device offline specific metrics
+    const offlineTotal = typeBreakdown["MONITORING_DEVICE_OFFLINE"]?.total || 0;
+    const offlineAcknowledged = typeBreakdown["MONITORING_DEVICE_OFFLINE"]?.Acknowledged || 0;
+    const offlinePending = typeBreakdown["MONITORING_DEVICE_OFFLINE"]?.Active || 0;
+    const offlineResolved = typeBreakdown["MONITORING_DEVICE_OFFLINE"]?.Resolved || 0;
+
+    // Get latest active/acknowledged device offline alerts (like Bus KL-06-345)
+    const activeOfflineAlerts = await SafetyEvent.find({
+      eventType: "MONITORING_DEVICE_OFFLINE",
+      status: { $in: ["Active", "Acknowledged"] },
+    })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    // Driver-by-Driver safety & action analytics
+    const driverAgg = await SafetyEvent.aggregate([
+      {
+        $match: {
+          status: { $in: ["Active", "Acknowledged", "Resolved"] },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            driverName: "$driverName",
+            status: "$status",
+          },
+          count: { $sum: 1 },
+          driverId: { $first: "$driverId" },
+          buses: { $addToSet: "$busNumber" },
+        },
+      },
+    ]);
+
+    const driverTypeAgg = await SafetyEvent.aggregate([
+      {
+        $match: {
+          status: { $in: ["Active", "Acknowledged", "Resolved"] },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            driverName: "$driverName",
+            eventType: "$eventType",
+          },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const driverMap = {};
+
+    driverAgg.forEach((item) => {
+      const driverName = item._id.driverName || "Unknown Driver";
+      const status = item._id.status;
+      if (!driverMap[driverName]) {
+        driverMap[driverName] = {
+          driverName,
+          driverId: item.driverId,
+          buses: [],
+          total: 0,
+          pending: 0,
+          acknowledged: 0,
+          resolved: 0,
+          actionRate: 0,
+          byType: {
+            MONITORING_DEVICE_OFFLINE: 0,
+            CRITICAL_DROWSINESS: 0,
+            DROWSINESS_WARNING: 0,
+            DRIVER_MISMATCH: 0,
+            DRIVER_ABSENT: 0,
+          },
+        };
+      }
+
+      if (status === "Active") driverMap[driverName].pending += item.count;
+      if (status === "Acknowledged") driverMap[driverName].acknowledged += item.count;
+      if (status === "Resolved") driverMap[driverName].resolved += item.count;
+      driverMap[driverName].total += item.count;
+
+      if (item.buses && Array.isArray(item.buses)) {
+        item.buses.forEach((b) => {
+          if (b && !driverMap[driverName].buses.includes(b)) {
+            driverMap[driverName].buses.push(b);
+          }
+        });
+      }
+    });
+
+    driverTypeAgg.forEach((item) => {
+      const driverName = item._id.driverName || "Unknown Driver";
+      const eventType = item._id.eventType;
+      if (driverMap[driverName] && driverMap[driverName].byType[eventType] !== undefined) {
+        driverMap[driverName].byType[eventType] = item.count;
+      }
+    });
+
+    // Also include any registered driver who may not have safety incidents yet
+    try {
+      const registeredDrivers = await User.find({ role: "driver" }).select("name email licenseNumber assignedBus").lean();
+      registeredDrivers.forEach((rd) => {
+        const dName = rd.name || rd.email?.split("@")[0] || "Driver";
+        if (!driverMap[dName]) {
+          driverMap[dName] = {
+            driverName: dName,
+            driverId: rd._id,
+            buses: rd.assignedBus ? [rd.assignedBus] : [],
+            total: 0,
+            pending: 0,
+            acknowledged: 0,
+            resolved: 0,
+            actionRate: 100, // 100% clean safety record
+            byType: {
+              MONITORING_DEVICE_OFFLINE: 0,
+              CRITICAL_DROWSINESS: 0,
+              DROWSINESS_WARNING: 0,
+              DRIVER_MISMATCH: 0,
+              DRIVER_ABSENT: 0,
+            },
+          };
+        }
+      });
+    } catch (driverErr) {
+      console.warn("Could not query registered drivers for analytics:", driverErr.message);
+    }
+
+    const driverAnalytics = Object.values(driverMap).map((d) => {
+      const actionsTaken = d.acknowledged + d.resolved;
+      const actionRate = d.total > 0 ? Math.round((actionsTaken / d.total) * 100) : 100;
+      return {
+        ...d,
+        actionRate,
+      };
+    }).sort((a, b) => b.total - a.total);
+
+    res.json({
+      success: true,
+      analytics: {
+        summary: {
+          total: totalActionable,
+          pending: statusCounts.Active,
+          acknowledged: statusCounts.Acknowledged,
+          resolved: statusCounts.Resolved,
+          actionRate,
+          acknowledgedRate,
+          resolvedRate,
+          offlineTotal,
+          offlineAcknowledged,
+          offlinePending,
+          offlineResolved,
+        },
+        typeBreakdown: Object.values(typeBreakdown).sort((a, b) => b.total - a.total),
+        driverAnalytics,
+        activeOfflineAlerts,
+      },
+    });
+  } catch (error) {
+    console.error("Error generating alert action analytics:", error);
+    res.status(500).json({ success: false, message: "Failed to generate analytics", error: error.message });
+  }
+});
+
+// GET /api/monitoring/alerts - Get safety alerts with status & action filters
 router.get("/alerts", async (req, res) => {
   try {
-    const { status = "Active", severity } = req.query;
+    const { status = "All", severity, includeResolved, busNumber, eventType } = req.query;
 
     let filter = {};
-    if (status !== "All") {
+    if (status === "All") {
+      if (includeResolved === "true") {
+        filter.status = { $in: ["Active", "Acknowledged", "Resolved"] };
+      } else {
+        filter.status = { $in: ["Active", "Acknowledged"] };
+      }
+    } else if (status) {
       filter.status = status;
-    } else {
-      filter.status = { $in: ["Active", "Acknowledged"] };
     }
 
     if (severity && severity !== "All") {
       filter.severity = severity;
     }
 
+    if (eventType && eventType !== "All") {
+      filter.eventType = eventType;
+    }
+
+    if (busNumber) {
+      filter.busNumber = new RegExp(busNumber, "i");
+    }
+
     const alerts = await SafetyEvent.find(filter)
       .populate("busId", "busNumber busName")
       .populate("driverId", "name email phone licenseNumber profilePic")
       .sort({ createdAt: -1 })
-      .limit(100);
+      .limit(150);
 
     res.json({ success: true, count: alerts.length, alerts });
   } catch (error) {

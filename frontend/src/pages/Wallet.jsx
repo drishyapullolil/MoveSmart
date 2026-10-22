@@ -360,7 +360,7 @@ export default function Wallet() {
         )}
 
         {/* Top Grid: Balance Card & Quick Recharge / Book Card */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", marginBottom: "32px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: "24px", marginBottom: "32px" }}>
           
           {/* 1. WALLET DASHBOARD BALANCE CARD */}
           <div style={{
@@ -493,7 +493,7 @@ export default function Wallet() {
                 <label style={{ fontSize: "12px", fontWeight: "800", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: "8px" }}>
                   Quick Recharge Amount
                 </label>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "16px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(70px, 1fr))", gap: "10px", marginBottom: "16px" }}>
                   {[50, 100, 200, 500].map((amt) => {
                     const isSelected = selectedQuickAmount === amt && !customAmount;
                     return (

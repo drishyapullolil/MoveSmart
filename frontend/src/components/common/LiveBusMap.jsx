@@ -189,6 +189,17 @@ export default function LiveBusMap({
   const [secondsAgo, setSecondsAgo] = useState(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [internalStops, setInternalStops] = useState(stops || []);
+  const [internalCoords, setInternalCoords] = useState(routeCoordinates || []);
+
+  useEffect(() => {
+    if (stops && stops.length > 0) setInternalStops(stops);
+  }, [stops]);
+
+  useEffect(() => {
+    if (routeCoordinates && routeCoordinates.length > 0) setInternalCoords(routeCoordinates);
+  }, [routeCoordinates]);
+
   const [activeBusInfo, setActiveBusInfo] = useState(() => ({
     busNumber: busNumber || busData?.busNumber,
     busName: busName || busData?.busName,
@@ -223,12 +234,22 @@ export default function LiveBusMap({
       if (res.data?.success) {
         const d = res.data;
         setActiveBusInfo((prev) => ({ ...prev, ...d }));
+
+        // If backend returned stops or polyline coordinates, populate them
+        if (d.stops && d.stops.length > 0 && (!stops || stops.length === 0)) {
+          setInternalStops(d.stops);
+        }
+        if (d.routeCoordinates && d.routeCoordinates.length > 0 && (!routeCoordinates || routeCoordinates.length === 0)) {
+          setInternalCoords(d.routeCoordinates);
+        }
+
         if (d.latitude && d.longitude) {
           const locObj = {
             busId: d.busId,
             busNumber: d.busNumber || busNumber,
             routeName: d.routeName || (routeSource && routeDestination ? `${routeSource} ➔ ${routeDestination}` : ""),
             driverName: d.driverName,
+            currentStopName: d.currentStopName,
             latitude: Number(d.latitude),
             longitude: Number(d.longitude),
             speed: d.speed || 0,
@@ -249,6 +270,8 @@ export default function LiveBusMap({
               if (!mapInstanceRef.current.hasLayer(busMarkerRef.current)) {
                 busMarkerRef.current.addTo(mapInstanceRef.current);
               }
+              busMarkerRef.current.setLatLng([Number(d.latitude), Number(d.longitude)]);
+              mapInstanceRef.current.setView([Number(d.latitude), Number(d.longitude)], 14, { animate: true });
             } else {
               if (mapInstanceRef.current.hasLayer(busMarkerRef.current)) {
                 mapInstanceRef.current.removeLayer(busMarkerRef.current);
@@ -262,7 +285,7 @@ export default function LiveBusMap({
     } finally {
       setLoadingInitial(false);
     }
-  }, [busId, busNumber, routeSource, routeDestination]);
+  }, [busId, busNumber, routeSource, routeDestination, stops, routeCoordinates]);
 
   useEffect(() => {
     fetchInitialData();
@@ -313,6 +336,8 @@ export default function LiveBusMap({
       const newLng = Number(locData.longitude);
       if (isNaN(newLat) || isNaN(newLng) || newLat === 0 || newLng === 0) return;
 
+      const isFirstFix = !prevCoordsRef.current;
+
       setLiveLocation((prev) => ({
         ...prev,
         ...locData,
@@ -325,8 +350,15 @@ export default function LiveBusMap({
 
       setSecondsAgo(0);
 
+      // Ensure marker is attached to the map
+      if (busMarkerRef.current && mapInstanceRef.current) {
+        if (!mapInstanceRef.current.hasLayer(busMarkerRef.current)) {
+          busMarkerRef.current.addTo(mapInstanceRef.current);
+        }
+      }
+
       // Interpolate marker coordinates
-      if (!prevCoordsRef.current) {
+      if (isFirstFix) {
         prevCoordsRef.current = { lat: newLat, lng: newLng };
         targetCoordsRef.current = { lat: newLat, lng: newLng };
         if (busMarkerRef.current) {
@@ -346,7 +378,7 @@ export default function LiveBusMap({
       }
 
       // If map is initialized and this is the first real fix, pan to it
-      if (mapInstanceRef.current && !prevCoordsRef.current) {
+      if (mapInstanceRef.current && isFirstFix) {
         mapInstanceRef.current.setView([newLat, newLng], 14, { animate: true });
       }
     },
@@ -418,6 +450,10 @@ export default function LiveBusMap({
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
+    if (mapContainerRef.current._leaflet_id) {
+      delete mapContainerRef.current._leaflet_id;
+    }
+
     const initialLat = liveLocation?.latitude || DEFAULT_CENTER[0];
     const initialLng = liveLocation?.longitude || DEFAULT_CENTER[1];
 
@@ -460,7 +496,21 @@ export default function LiveBusMap({
     mapInstanceRef.current = map;
     setIsMapReady(true);
 
+    const t1 = setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 100);
+    const t2 = setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 500);
+
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && mapContainerRef.current) {
+      ro = new ResizeObserver(() => {
+        try { map.invalidateSize(); } catch (e) {}
+      });
+      ro.observe(mapContainerRef.current);
+    }
+
     return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      if (ro) ro.disconnect();
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -473,11 +523,11 @@ export default function LiveBusMap({
     if (!mapInstanceRef.current || !isMapReady) return;
 
     // 1. Draw Route Polyline if coordinates are available
-    if (routeCoordinates && routeCoordinates.length > 1) {
+    if (internalCoords && internalCoords.length > 1) {
       if (routePolylineRef.current) {
-        routePolylineRef.current.setLatLngs(routeCoordinates);
+        routePolylineRef.current.setLatLngs(internalCoords);
       } else {
-        routePolylineRef.current = L.polyline(routeCoordinates, {
+        routePolylineRef.current = L.polyline(internalCoords, {
           color: "#7c3aed",
           weight: 4.5,
           opacity: 0.8,
@@ -485,18 +535,28 @@ export default function LiveBusMap({
           dashArray: "2, 8",
         }).addTo(mapInstanceRef.current);
       }
+
+      // If bus location is not tracking yet, fit map bounds to full route
+      if (!liveLocation?.isTracking) {
+        try {
+          const bounds = L.latLngBounds(internalCoords);
+          if (bounds.isValid()) {
+            mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+          }
+        } catch (e) {}
+      }
     }
 
     // 2. Draw Stop Markers
-    if (stopsLayerGroupRef.current && stops && stops.length > 0) {
+    if (stopsLayerGroupRef.current && internalStops && internalStops.length > 0) {
       stopsLayerGroupRef.current.clearLayers();
 
-      stops.forEach((stop, idx) => {
+      internalStops.forEach((stop, idx) => {
         const lat = Number(stop.lat || stop.latitude);
         const lng = Number(stop.lng || stop.longitude);
         if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
           const isOrigin = idx === 0;
-          const isDest = idx === stops.length - 1;
+          const isDest = idx === internalStops.length - 1;
           const isTerminus = isOrigin || isDest;
           const icon = createStationIcon(stop.name || `Stop ${idx + 1}`, isTerminus, isOrigin ? "origin" : "dest");
 
@@ -509,7 +569,7 @@ export default function LiveBusMap({
         }
       });
     }
-  }, [routeCoordinates, stops, isMapReady]);
+  }, [internalCoords, internalStops, isMapReady, liveLocation?.isTracking]);
 
   // Center Map on Bus
   const handleCenterBus = () => {
@@ -521,8 +581,8 @@ export default function LiveBusMap({
   // Fit Full Route View
   const handleFitRoute = () => {
     if (!mapInstanceRef.current) return;
-    if (routeCoordinates && routeCoordinates.length > 1) {
-      mapInstanceRef.current.fitBounds(L.polyline(routeCoordinates).getBounds(), { padding: [40, 40] });
+    if (internalCoords && internalCoords.length > 1) {
+      mapInstanceRef.current.fitBounds(L.polyline(internalCoords).getBounds(), { padding: [40, 40] });
     } else if (liveLocation?.latitude && liveLocation?.longitude) {
       mapInstanceRef.current.setView([liveLocation.latitude, liveLocation.longitude], 13, { animate: true });
     }
@@ -693,6 +753,28 @@ export default function LiveBusMap({
                   <Clock size={14} />
                   <span>{formatSecondsAgo(secondsAgo)}</span>
                 </div>
+
+                {(liveLocation.currentStopName || activeBusInfo?.currentStopName) && (
+                  <div
+                    style={{
+                      background: "rgba(255, 255, 255, 0.95)",
+                      backdropFilter: "blur(10px)",
+                      border: "1px solid #ede9fe",
+                      padding: "6px 12px",
+                      borderRadius: "10px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      color: "#1e1b4b",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+                    }}
+                  >
+                    <MapPin size={14} style={{ color: "#2563eb" }} />
+                    <span>Stop: {liveLocation.currentStopName || activeBusInfo?.currentStopName}</span>
+                  </div>
+                )}
               </>
             )}
 

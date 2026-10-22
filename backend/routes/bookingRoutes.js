@@ -3,16 +3,19 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const Bus = require("../models/Bus");
 const Booking = require("../models/Booking");
+const BusDailySeat = require("../models/BusDailySeat");
 const Route = require("../models/Route");
 const Schedule = require("../models/Schedule");
 const User = require("../models/User");
+const TripSession = require("../models/TripSession");
 const DriverLeave = require("../models/DriverLeave");
 const DriverReplacement = require("../models/DriverReplacement");
+const { protect, adminOnly } = require("../middleware/authMiddleware");
 const {
   resolveEffectiveDepartureDriver,
   PASSENGER_ASSIGNMENT_STATUS,
 } = require("../utils/effectiveDriverResolver");
-const { getActiveBusLocation, getAllActiveBusLocations } = require("../services/socketService");
+const { getActiveBusLocation, setActiveBusLocation, getAllActiveBusLocations } = require("../services/socketService");
 
 // Helper to extract stations/stops list from doc
 const extractStopsFromDoc = (doc) => {
@@ -80,6 +83,250 @@ const calculateDurationMins = (startMinutes, endMinutes) => {
   if (h > 0 && m > 0) return `${h}h ${m}m`;
   if (h > 0) return `${h}h`;
   return `${m}m`;
+};
+
+// Convert "08:00 AM", "02:30 PM", "14:15" to total minutes from midnight
+const parseTimeStrToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  const cleanStr = String(timeStr).trim().toUpperCase();
+  const isPM = cleanStr.includes("PM");
+  const isAM = cleanStr.includes("AM");
+  const match = cleanStr.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  return hours * 60 + minutes;
+};
+
+// Get current date and minute offset in Indian Standard Time (IST / UTC+5:30)
+const getCurrentISTInfo = () => {
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  const istDate = new Date(utcMs + 5.5 * 3600000);
+  const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
+  const dateStr = istDate.toISOString().split("T")[0];
+  return { now, istDate, currentMinutes, dateStr };
+};
+
+/**
+ * Validates whether a bus has a valid, active route assignment.
+ * Checks:
+ * 1. Direct bus.route_id pointing to an existing, non-suspended Route.
+ * 2. Active Schedule linking bus_id or busNumber to an existing, non-suspended Route.
+ * 3. Active TripSession on an existing, non-suspended Route.
+ * Returns { isValid, route, schedule, reason }.
+ */
+const validateBusRouteAssignment = async (bus) => {
+  if (!bus) {
+    return { isValid: false, route: null, reason: "Bus does not exist." };
+  }
+
+  // 1. Direct route_id on Bus
+  const directRouteId = bus.route_id || bus.routeId;
+  if (directRouteId) {
+    let route = null;
+    if (mongoose.Types.ObjectId.isValid(directRouteId)) {
+      route = await Route.findById(directRouteId).lean();
+    }
+    if (!route && typeof directRouteId === "string") {
+      route = await Route.findOne({
+        $or: [{ routeId: directRouteId }, { routeName: directRouteId }],
+      }).lean();
+    }
+
+    if (route) {
+      if (route.status === "Suspended") {
+        return { isValid: false, route: null, reason: "The assigned route for this bus is currently suspended." };
+      }
+      return { isValid: true, route, reason: null };
+    } else {
+      return { isValid: false, route: null, reason: "This bus references a route that does not exist or has been deleted." };
+    }
+  }
+
+  // 2. Active Schedule for this bus
+  const busQuery = [];
+  if (bus._id && mongoose.Types.ObjectId.isValid(bus._id)) {
+    busQuery.push({ bus_id: bus._id });
+  }
+  if (bus.busNumber) {
+    busQuery.push({ busNumber: bus.busNumber });
+  }
+
+  if (busQuery.length > 0) {
+    const schedules = await Schedule.find({
+      $or: busQuery,
+      is_active: { $ne: false },
+    }).populate("route_id").lean();
+
+    for (const sch of schedules) {
+      const schRoute = sch.route_id;
+      if (schRoute && schRoute.status !== "Suspended") {
+        return { isValid: true, route: schRoute, schedule: sch, reason: null };
+      }
+    }
+
+    if (schedules.length > 0) {
+      return { isValid: false, route: null, reason: "The scheduled route for this bus does not exist or is suspended." };
+    }
+  }
+
+  // 3. Active TripSession
+  if (bus._id || bus.busNumber) {
+    const activeTrip = await TripSession.findOne({
+      $or: [
+        { busId: bus._id, status: { $in: ["ACTIVE", "PAUSED"] } },
+        { busNumber: bus.busNumber, status: { $in: ["ACTIVE", "PAUSED"] } },
+      ],
+    }).populate("routeId").lean();
+
+    if (activeTrip && activeTrip.routeId && activeTrip.routeId.status !== "Suspended") {
+      return { isValid: true, route: activeTrip.routeId, trip: activeTrip, reason: null };
+    }
+  }
+
+  return { isValid: false, route: null, reason: "This bus has no assigned route." };
+};
+
+/**
+ * 5-Minute Pre-Departure & Trip Start Booking Cutoff Evaluator:
+ * Enforces:
+ * 1. Admin Setting: bookingEnabled must be true (default false).
+ * 2. Drive Started: If active TripSession exists for this bus, booking closes immediately.
+ * 3. 5-Minute Cutoff: Booking closes strictly 5 minutes before scheduled takeoff from the main station.
+ */
+const evaluateBusBookingCutoff = ({
+  bus = {},
+  schedule = null,
+  activeTripsMap = new Map(),
+  serviceDate = "",
+}) => {
+  const { currentMinutes, dateStr: todayIST } = getCurrentISTInfo();
+  const targetDate = serviceDate && typeof serviceDate === "string" && serviceDate.trim().match(/^\d{4}-\d{2}-\d{2}$/)
+    ? serviceDate.trim()
+    : todayIST;
+
+  const busIdStr = bus?._id ? String(bus._id) : "";
+  const busNumClean = (bus?.busNumber || schedule?.busNumber || "").trim().toUpperCase();
+
+  // 1. Strict Rule: Bus ONLY has online booking if Admin explicitly gave/enabled it!
+  const isBookingGivenByAdmin = bus && bus.bookingEnabled !== undefined
+    ? bus.bookingEnabled === true
+    : (schedule ? schedule.bookingEnabled === true : false);
+  if (!isBookingGivenByAdmin) {
+    return {
+      bookingEnabled: false,
+      isBookingOpen: false,
+      bookingStatus: "DISABLED_BY_ADMIN",
+      bookingStatusLabel: "Walk-in Only",
+      bookingStatusReason: "Online booking option has not been enabled by Administrator for this bus (Walk-in / Counter ticketing only).",
+      bookingCloseTime: "Walk-in Only",
+      minutesUntilDeparture: null,
+      minutesUntilCutoff: null,
+      tripStarted: false,
+      activeTripId: null,
+    };
+  }
+
+  // 2. Check if Drive has started (Active TripSession)
+  let activeTrip = null;
+  if (busIdStr && activeTripsMap.has(busIdStr)) {
+    activeTrip = activeTripsMap.get(busIdStr);
+  } else if (busNumClean && activeTripsMap.has(busNumClean)) {
+    activeTrip = activeTripsMap.get(busNumClean);
+  }
+
+  if (activeTrip) {
+    return {
+      bookingEnabled: true,
+      isBookingOpen: false,
+      bookingStatus: "CLOSED_DRIVE_STARTED",
+      bookingStatusLabel: "Drive Started",
+      bookingStatusReason: "Drive has already started from the main station. Online booking is closed.",
+      bookingCloseTime: "Trip In Transit",
+      minutesUntilDeparture: 0,
+      minutesUntilCutoff: 0,
+      tripStarted: true,
+      activeTripId: activeTrip.tripSessionId || activeTrip._id,
+    };
+  }
+
+  // Determine main station departure time
+  const departureTime = schedule?.start_time || bus?.departureTime || "08:00 AM";
+  const departureMinutes = parseTimeStrToMinutes(departureTime);
+  const cutoffMinutes = departureMinutes - 5;
+  const bookingCloseTime = addMinutesToTimeStr(departureTime, -5);
+
+  const isPastDate = targetDate < todayIST;
+  const isFutureDate = targetDate > todayIST;
+
+  if (isPastDate) {
+    return {
+      bookingEnabled: true,
+      isBookingOpen: false,
+      bookingStatus: "DATE_PASSED",
+      bookingStatusLabel: "Trip Expired",
+      bookingStatusReason: "The scheduled service date has already passed.",
+      bookingCloseTime,
+      minutesUntilDeparture: null,
+      minutesUntilCutoff: null,
+      tripStarted: false,
+      activeTripId: null,
+    };
+  }
+
+  if (isFutureDate) {
+    return {
+      bookingEnabled: true,
+      isBookingOpen: true,
+      bookingStatus: "OPEN",
+      bookingStatusLabel: "Booking Open",
+      bookingStatusReason: `Advance booking open for ${targetDate}. Closes 5 mins before departure (at ${bookingCloseTime}).`,
+      bookingCloseTime,
+      minutesUntilDeparture: null,
+      minutesUntilCutoff: null,
+      tripStarted: false,
+      activeTripId: null,
+    };
+  }
+
+  // Target date is Today! Enforce 5-minute pre-departure takeoff rule
+  const minutesUntilDeparture = departureMinutes - currentMinutes;
+  const minutesUntilCutoff = cutoffMinutes - currentMinutes;
+
+  if (minutesUntilCutoff <= 0) {
+    return {
+      bookingEnabled: true,
+      isBookingOpen: false,
+      bookingStatus: "CLOSED_5MIN_CUTOFF",
+      bookingStatusLabel: "Booking Closed (< 5m)",
+      bookingStatusReason: `Booking closed: Bus takes off from main station in ${Math.max(0, minutesUntilDeparture)} mins (Closed at ${bookingCloseTime}).`,
+      bookingCloseTime,
+      minutesUntilDeparture: Math.max(0, minutesUntilDeparture),
+      minutesUntilCutoff: 0,
+      tripStarted: false,
+      activeTripId: null,
+    };
+  }
+
+  // Booking is OPEN!
+  return {
+    bookingEnabled: true,
+    isBookingOpen: true,
+    bookingStatus: "OPEN",
+    bookingStatusLabel: "Booking Open",
+    bookingStatusReason: `Online booking open until ${bookingCloseTime} (5 mins before takeoff from main station).`,
+    bookingCloseTime,
+    minutesUntilDeparture,
+    minutesUntilCutoff,
+    tripStarted: false,
+    activeTripId: null,
+  };
 };
 
 // Generate comprehensive station timetable with computed arrival and departure times
@@ -187,7 +434,7 @@ const cleanLocationTokens = (str) => {
   if (!str) return [];
   return String(str)
     .toLowerCase()
-    .replace(/\(.*?\)/g, " ")
+    .replace(/[()\/,-]/g, " ")
     .replace(/[^a-z0-9\s]/gi, " ")
     .split(/\s+/)
     .map((w) => w.trim())
@@ -253,7 +500,8 @@ const normalizeBusDocument = (
   routeList = [],
   cleanDate = "",
   driverReplacements = [],
-  driverLeaves = []
+  driverLeaves = [],
+  activeTripsMap = new Map()
 ) => {
   const busNumber =
     doc.busNumber ||
@@ -284,12 +532,12 @@ const normalizeBusDocument = (
   }
 
   const fromLocation =
-    doc.fromLocation ||
-    parentRoute?.fromLocation ||
+    (parentRoute?.fromLocation) ||
+    (doc.fromLocation && doc.fromLocation !== "Depot" && doc.fromLocation !== "Origin" ? doc.fromLocation : "") ||
     (stops.length > 0 ? stops[0] : "");
   const toLocation =
-    doc.toLocation ||
-    parentRoute?.toLocation ||
+    (parentRoute?.toLocation) ||
+    (doc.toLocation && doc.toLocation !== "Depot" && doc.toLocation !== "Destination" ? doc.toLocation : "") ||
     (stops.length > 1 ? stops[stops.length - 1] : stops.length === 1 ? stops[0] : "");
 
   const departureTime = doc.departureTime || doc.start_time || "08:00 AM";
@@ -303,7 +551,9 @@ const normalizeBusDocument = (
   const rating = doc.rating || 4.8;
   const amenities = doc.amenities || ["Live Tracking", "Emergency Contact", "IoT Transit Feed"];
   const bookedSeats = doc.bookedSeats || [];
-  const busName = doc.busName || (parentRoute ? parentRoute.routeName : `${fromLocation} ➔ ${toLocation}`);
+  const busName = (doc.busName && !doc.busName.includes("undefined"))
+    ? doc.busName
+    : (parentRoute ? parentRoute.routeName : `${fromLocation} ➔ ${toLocation}`);
 
   // Dynamic driver resolution: if bus has 3-shift roster configured, use effectiveDriverResolver
   let driverName = "Not Assigned";
@@ -398,15 +648,38 @@ const normalizeBusDocument = (
     serviceDate: cleanDate || new Date().toISOString().split("T")[0],
     driverId: null, // Sanitized: Never leak internal User ObjectId to public
     driverName,
+    driverPhone: doc.driverPhone || "",
+    driverLicense: doc.driverLicense || "",
     assignmentStatus,
     driverStatus,
     isReplacementDriver,
     hasShiftOverrunException,
     warningMessage,
-    driverPhoto: "", // Sanitized
+    driverPhoto: doc.driverPhoto || "",
     driverVerified: assignmentStatus === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED,
-    driverExperience: 4,
+    driverExperience: doc.driverExperience || 4,
     is_active: doc.is_active !== undefined ? doc.is_active : true,
+    // Booking availability & 5-minute pre-departure takeoff status
+    ...(() => {
+      const cutoffEval = evaluateBusBookingCutoff({
+        bus: doc,
+        schedule: null,
+        activeTripsMap,
+        serviceDate: cleanDate,
+      });
+      return {
+        bookingEnabled: cutoffEval.bookingEnabled,
+        isBookingOpen: cutoffEval.isBookingOpen,
+        bookingStatus: cutoffEval.bookingStatus,
+        bookingStatusLabel: cutoffEval.bookingStatusLabel,
+        bookingStatusReason: cutoffEval.bookingStatusReason,
+        bookingCloseTime: cutoffEval.bookingCloseTime,
+        minutesUntilDeparture: cutoffEval.minutesUntilDeparture,
+        minutesUntilCutoff: cutoffEval.minutesUntilCutoff,
+        tripStarted: cutoffEval.tripStarted,
+        activeTripId: cutoffEval.activeTripId,
+      };
+    })(),
     passengerView,
     stops: timetable.stations.map((s) => s.name),
     route: timetable.stations.map((s) => s.name),
@@ -417,7 +690,7 @@ const normalizeBusDocument = (
 
 // In-memory caching for sub-millisecond response times (keyed by service date)
 const busCacheMap = new Map();
-const CACHE_TTL_MS = 8000; // 8 seconds cache TTL
+const CACHE_TTL_MS = 60000; // 60 seconds cache TTL (invalidated immediately on admin edits)
 
 const invalidateBusCache = () => {
   busCacheMap.clear();
@@ -586,6 +859,7 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
     driverLeaves = [],
     driverReplacements = [],
     driverUserMap = new Map(),
+    activeTripsMap = new Map(),
   } = dataBundle;
 
   const normalizedBuses = [];
@@ -599,16 +873,33 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
 
   // 1. Process active departure schedules created by Admin
   for (const sch of rawSchedules) {
-    const routeDoc = (sch.route_id && typeof sch.route_id === "object" && sch.route_id._id)
-      ? sch.route_id
-      : (rawRoutes.find((r) => String(r._id) === String(sch.route_id || sch.routeId)) || null);
+    if (sch.is_active === false) continue;
+
+    let routeDoc = null;
+    if (sch.route_id && typeof sch.route_id === "object" && (sch.route_id.fromLocation || sch.route_id.routeName || Array.isArray(sch.route_id.stops))) {
+      routeDoc = sch.route_id;
+    } else {
+      const targetRouteId = sch.route_id ? String(sch.route_id) : String(sch.routeId || "");
+      routeDoc = rawRoutes.find((r) =>
+        String(r._id) === targetRouteId ||
+        (r.routeId && String(r.routeId).toUpperCase() === targetRouteId.toUpperCase())
+      ) || null;
+    }
     if (!routeDoc || routeDoc.status === "Suspended") continue;
 
     routesWithActiveSchedule.add(String(routeDoc._id));
 
-    const busDoc = (sch.bus_id && typeof sch.bus_id === "object" && sch.bus_id._id)
-      ? sch.bus_id
-      : (rawBuses.find((b) => String(b._id) === String(sch.bus_id || sch.busId)) || {});
+    let busDoc = null;
+    if (sch.bus_id && typeof sch.bus_id === "object" && (sch.bus_id.busNumber || sch.bus_id.totalSeats !== undefined)) {
+      busDoc = sch.bus_id;
+    } else {
+      const targetBusId = sch.bus_id ? String(sch.bus_id) : "";
+      const targetBusNum = sch.busNumber ? String(sch.busNumber).trim().toUpperCase() : "";
+      busDoc = rawBuses.find((b) =>
+        (targetBusId && String(b._id) === targetBusId) ||
+        (targetBusNum && b.busNumber && String(b.busNumber).trim().toUpperCase() === targetBusNum)
+      ) || null;
+    }
 
     if (busDoc && busDoc._id) {
       busesWithActiveSchedule.add(String(busDoc._id));
@@ -618,7 +909,7 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
       busesWithActiveSchedule.add(String(rawBusNum).trim().toUpperCase());
     }
 
-    const tripKey = `${sch.busNumber || busDoc.busNumber || routeDoc.routeId}_${sch.start_time}`;
+    const tripKey = `${sch.busNumber || (busDoc && busDoc.busNumber) || routeDoc.routeId}_${sch.start_time}`;
 
     if (!seenTripKeys.has(tripKey)) {
       seenTripKeys.add(tripKey);
@@ -629,18 +920,50 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
       // Resolve effective driver dynamically via effectiveDriverResolver
       const resolverResult = resolveEffectiveDepartureDriver({
         schedule: sch,
-        bus: busDoc,
+        bus: busDoc || {},
         route: routeDoc,
         serviceDate: cleanDate,
         driverReplacements,
         driverLeaves,
       });
 
-      const assignmentStatus = resolverResult.passengerView.status;
-      const driverName = resolverResult.passengerView.driverName;
+      let assignmentStatus = resolverResult.passengerView.status;
+      let driverName = resolverResult.passengerView.driverName;
+
+      // Fallback check: if resolver returned "Not Assigned", check busDoc and schedule
+      const isGenericName = (n) => !n || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(n).toLowerCase().trim());
+      if (isGenericName(driverName)) {
+        if (!isGenericName(busDoc?.driverName)) {
+          driverName = busDoc.driverName;
+          assignmentStatus = PASSENGER_ASSIGNMENT_STATUS.ASSIGNED;
+        } else if (!isGenericName(sch.driverName)) {
+          driverName = sch.driverName;
+          assignmentStatus = PASSENGER_ASSIGNMENT_STATUS.ASSIGNED;
+        } else if (busDoc?.shifts?.morning?.driverName && !isGenericName(busDoc.shifts.morning.driverName)) {
+          driverName = busDoc.shifts.morning.driverName;
+          assignmentStatus = PASSENGER_ASSIGNMENT_STATUS.ASSIGNED;
+        }
+      }
+
+      // Match driver with driverUserMap to populate full credentials (phone, license, verification, experience, photo)
+      let matchedDriverUser = null;
+      if (resolverResult.driverId && driverUserMap.has(String(resolverResult.driverId))) {
+        matchedDriverUser = driverUserMap.get(String(resolverResult.driverId));
+      } else if (busDoc?.driverId && driverUserMap.has(String(busDoc.driverId))) {
+        matchedDriverUser = driverUserMap.get(String(busDoc.driverId));
+      } else if (!isGenericName(driverName)) {
+        for (const u of driverUserMap.values()) {
+          if (String(u.name || "").toLowerCase().trim() === String(driverName).toLowerCase().trim()) {
+            matchedDriverUser = u;
+            break;
+          }
+        }
+      }
+
+      const isDriverAssigned = assignmentStatus === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED || Boolean(matchedDriverUser && !isGenericName(driverName));
 
       let driverStatus = "Assignment Pending";
-      if (assignmentStatus === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED) {
+      if (isDriverAssigned) {
         if (resolverResult.hasShiftOverrunException) {
           driverStatus = "Driver Assigned (Shift Boundary Warning)";
         } else if (resolverResult.isReplacement) {
@@ -654,41 +977,70 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
         driverStatus = "Assignment Pending";
       }
 
+      // Evaluate 5-minute pre-departure and trip-start booking cutoff
+      const cutoffEval = evaluateBusBookingCutoff({
+        bus: busDoc || { bookingEnabled: false },
+        schedule: sch,
+        activeTripsMap,
+        serviceDate: cleanDate,
+      });
+
+      // Strict: Only buses with a physical bus in fleet and bookingEnabled === true can be booked online
+      const hasPhysicalBus = Boolean(busDoc && busDoc._id);
+      const effectiveBookingEnabled = hasPhysicalBus && (busDoc.bookingEnabled === true);
+
       const norm = {
-        _id: sch._id,
+        _id: busDoc?._id || sch._id,
         scheduleId: sch._id,
-        busId: busDoc._id || null,
+        busId: busDoc?._id || null,
         routeId: routeDoc._id,
         routeCode: routeDoc.routeId,
-        busNumber: sch.busNumber || busDoc.busNumber || `KL-01-${routeDoc.routeId ? routeDoc.routeId.replace(/[^A-Z0-9]/g, "") : "MS100"}`,
-        busName: routeDoc.routeName || `${routeDoc.fromLocation} ➔ ${routeDoc.toLocation}`,
-        busType: busDoc.busType || "Standard Route Transit",
-        operator: busDoc.operator || "MoveSmart Transit Ops",
+        busNumber: (busDoc && busDoc.busNumber) || sch.busNumber || `KL-01-${routeDoc.routeId ? routeDoc.routeId.replace(/[^A-Z0-9]/g, "") : "MS100"}`,
+        busName: (busDoc && busDoc.busName && !busDoc.busName.includes("undefined"))
+          ? busDoc.busName
+          : (routeDoc.routeName || `${routeDoc.fromLocation} ➔ ${routeDoc.toLocation}`),
+        busType: (busDoc && busDoc.busType) || "Standard Route Transit",
+        operator: (busDoc && busDoc.operator) || "MoveSmart Transit Ops",
         fromLocation: routeDoc.fromLocation || stops[0] || "Origin",
         toLocation: routeDoc.toLocation || stops[stops.length - 1] || "Destination",
         departureTime: timetable.departureTime,
         arrivalTime: timetable.arrivalTime,
         duration: timetable.duration,
         total_duration_minutes: timetable.total_duration_minutes,
-        totalSeats: busDoc.totalSeats || 32,
-        availableSeats: busDoc.availableSeats !== undefined ? busDoc.availableSeats : 32,
-        price: routeDoc.fare || busDoc.price || 150,
-        rating: busDoc.rating || 4.8,
-        amenities: busDoc.amenities || ["Live Tracking", "Emergency Contact", "IoT Transit Feed"],
-        bookedSeats: busDoc.bookedSeats || [],
+        totalSeats: (busDoc && busDoc.totalSeats) || 32,
+        availableSeats: busDoc && busDoc.availableSeats !== undefined ? busDoc.availableSeats : 32,
+        price: routeDoc.fare || (busDoc && busDoc.price) || 150,
+        rating: (busDoc && busDoc.rating) || 4.8,
+        amenities: (busDoc && busDoc.amenities) || ["Live Tracking", "Emergency Contact", "IoT Transit Feed"],
+        bookedSeats: (busDoc && busDoc.bookedSeats) || [],
         shift: resolverResult.shift || sch.shift || null,
         serviceDate: resolverResult.serviceDate || cleanDate,
         driverId: null, // Sanitized: Never leak internal User ObjectId to public
-        driverName: driverName,
-        assignmentStatus: assignmentStatus,
+        driverName: isDriverAssigned ? (matchedDriverUser?.name || driverName) : "Not Assigned",
+        driverPhone: matchedDriverUser?.phone || busDoc?.driverPhone || sch?.driverPhone || "",
+        driverLicense: matchedDriverUser?.licenseNumber || busDoc?.driverLicense || "",
+        driverPhoto: matchedDriverUser?.profilePic || busDoc?.driverPhoto || "",
+        driverVerified: isDriverAssigned ? (matchedDriverUser ? matchedDriverUser.verificationStatus === "Approved" : Boolean(busDoc?.driverVerified)) : false,
+        driverExperience: matchedDriverUser?.experienceYears || busDoc?.driverExperience || 5,
+        assignmentStatus: isDriverAssigned ? PASSENGER_ASSIGNMENT_STATUS.ASSIGNED : assignmentStatus,
         driverStatus: driverStatus,
         isReplacementDriver: Boolean(resolverResult.isReplacement),
         hasShiftOverrunException: Boolean(resolverResult.hasShiftOverrunException),
         warningMessage: resolverResult.boundaryCheck?.warningMessage || null,
-        driverPhoto: "", // Sanitized
-        driverVerified: assignmentStatus === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED,
-        driverExperience: 4,
         is_active: sch.is_active,
+        // Booking availability & 5-minute pre-departure takeoff status
+        bookingEnabled: effectiveBookingEnabled,
+        isBookingOpen: effectiveBookingEnabled ? cutoffEval.isBookingOpen : false,
+        bookingStatus: !effectiveBookingEnabled ? "DISABLED_BY_ADMIN" : cutoffEval.bookingStatus,
+        bookingStatusLabel: !effectiveBookingEnabled ? "Walk-in Only" : cutoffEval.bookingStatusLabel,
+        bookingStatusReason: !effectiveBookingEnabled
+          ? "Online booking option has not been enabled by Administrator for this bus (Walk-in / Counter ticketing only)."
+          : cutoffEval.bookingStatusReason,
+        bookingCloseTime: cutoffEval.bookingCloseTime,
+        minutesUntilDeparture: cutoffEval.minutesUntilDeparture,
+        minutesUntilCutoff: cutoffEval.minutesUntilCutoff,
+        tripStarted: cutoffEval.tripStarted,
+        activeTripId: cutoffEval.activeTripId,
         passengerView: resolverResult.passengerView,
         stops: stops,
         route: stops,
@@ -702,6 +1054,14 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
   // 2. Process Routes that do not have an explicit schedule yet (use base_start_time)
   for (const r of rawRoutes) {
     if (!routesWithActiveSchedule.has(String(r._id))) {
+      // Check if any standalone bus is directly assigned to this route
+      const hasDirectBus = rawBuses.some((b) => {
+        const dId = b.route_id || b.routeId;
+        return dId && (String(dId) === String(r._id) || (r.routeId && String(dId).toUpperCase() === String(r.routeId).toUpperCase()));
+      });
+      // If a physical bus is already assigned to this route, Step 3 will process that bus; skip duplicate placeholder!
+      if (hasDirectBus) continue;
+
       const timetable = generateStationTimetable(r, r.base_start_time || "08:00 AM");
       const stops = timetable.stations.map((s) => s.name);
       const routeBusNumber = r.routeId || `RT-${String(r._id).substring(18).toUpperCase()}`;
@@ -714,6 +1074,7 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
           _id: r._id,
           routeId: r._id,
           routeCode: r.routeId,
+          busId: null, // No physical bus assigned
           busNumber: routeBusNumber,
           busName: r.routeName || `${r.fromLocation || "Route"} ➔ ${r.toLocation || "Destination"}`,
           busType: "Standard Route Transit",
@@ -743,6 +1104,16 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
           driverVerified: false,
           driverExperience: 0,
           is_active: r.status !== "Suspended",
+          bookingEnabled: false, // Unassigned route is NEVER bookable
+          isBookingOpen: false,
+          bookingStatus: "DISABLED_BY_ADMIN",
+          bookingStatusLabel: "Walk-in Only",
+          bookingStatusReason: "No physical bus has been assigned to this route corridor yet (Walk-in / Station schedule only).",
+          bookingCloseTime: "Walk-in Only",
+          minutesUntilDeparture: null,
+          minutesUntilCutoff: null,
+          tripStarted: false,
+          activeTripId: null,
           passengerView: {
             status: PASSENGER_ASSIGNMENT_STATUS.ASSIGNMENT_PENDING,
             busNumber: routeBusNumber,
@@ -750,7 +1121,7 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
             departureTime: timetable.departureTime,
             serviceDate: cleanDate,
             shift: null,
-            statusReason: "No active departure schedule configured for this route.",
+            statusReason: "No active bus departure configured for this route.",
           },
           stops: stops,
           route: stops,
@@ -762,14 +1133,40 @@ const buildNormalizedBusesFromData = (dataBundle = {}, targetServiceDate = "") =
     }
   }
 
-  // 3. Process standalone Bus collection items (only for buses without active departure schedules)
+  // 3. Process standalone Bus collection items (ONLY buses with a VALID assigned route)
   for (const b of rawBuses) {
     const bId = b._id ? String(b._id) : "";
     const bNum = b.busNumber ? String(b.busNumber).trim().toUpperCase() : "";
     if (bId && busesWithActiveSchedule.has(bId)) continue;
     if (bNum && busesWithActiveSchedule.has(bNum)) continue;
 
-    const norm = normalizeBusDocument(b, null, driverUserMap, rawRoutes, cleanDate, driverReplacements, driverLeaves);
+    // Resolve valid parent route from active routes
+    let parentRoute = null;
+    const directRouteId = b.route_id || b.routeId;
+    if (directRouteId) {
+      parentRoute = rawRoutes.find((r) =>
+        r && r.status !== "Suspended" && (
+          String(r._id) === String(directRouteId) ||
+          (r.routeId && String(r.routeId).toUpperCase() === String(directRouteId).toUpperCase())
+        )
+      ) || null;
+    }
+
+    // Fallback: Check if bus is on an active trip with a valid route
+    if (!parentRoute && (bId || bNum)) {
+      const activeTrip = activeTripsMap.get(bId) || activeTripsMap.get(bNum);
+      if (activeTrip && activeTrip.routeId) {
+        parentRoute = rawRoutes.find((r) => String(r._id) === String(activeTrip.routeId) && r.status !== "Suspended") || null;
+      }
+    }
+
+    // REQUIREMENT 4: Do not display buses without a valid assigned route!
+    // Exclude buses whose route assignment is missing, invalid or references a deleted route.
+    if (!parentRoute) {
+      continue;
+    }
+
+    const norm = normalizeBusDocument(b, parentRoute, driverUserMap, rawRoutes, cleanDate, driverReplacements, driverLeaves, activeTripsMap);
     const tripKey = `${norm.busNumber}_${norm.departureTime}`;
     if (!seenTripKeys.has(tripKey)) {
       seenTripKeys.add(tripKey);
@@ -796,22 +1193,23 @@ const fetchAllNormalizedBuses = async (serviceDate = null, mockData = null) => {
   if (cached && cached.data && cached.data.length > 0 && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.data;
   }
+  if (cached && cached.data && cached.data.length > 0 && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
 
-  const QUERY_TIMEOUT_MS = 8000;
+  const QUERY_TIMEOUT_MS = 15000;
 
   try {
     // Run all database fetches in parallel with strict timeout
-    const [driversResult, routesResult, schedulesResult, busesResult, leavesResult, replacementsResult] = await Promise.allSettled([
+    const [driversResult, routesResult, schedulesResult, busesResult, leavesResult, replacementsResult, activeTripsResult] = await Promise.allSettled([
       User.find({ role: { $in: ["driver", "Driver", "DRIVER"] } })
-        .select("_id name phone email licenseNumber profilePic licenseImage verificationStatus experienceYears")
+        .select("_id name phone email licenseNumber verificationStatus experienceYears")
         .maxTimeMS(QUERY_TIMEOUT_MS)
         .lean(),
       Route.find({ status: { $ne: "Suspended" } })
         .maxTimeMS(QUERY_TIMEOUT_MS)
         .lean(),
       Schedule.find({ is_active: true })
-        .populate("route_id")
-        .populate("bus_id")
         .maxTimeMS(QUERY_TIMEOUT_MS)
         .lean(),
       Bus.find()
@@ -823,11 +1221,23 @@ const fetchAllNormalizedBuses = async (serviceDate = null, mockData = null) => {
       DriverReplacement.find({ dutyDate: targetServiceDate })
         .maxTimeMS(QUERY_TIMEOUT_MS)
         .lean(),
+      TripSession.find({ status: { $in: ["ACTIVE", "PAUSED"] } })
+        .select("tripSessionId busId busNumber status startTime")
+        .maxTimeMS(QUERY_TIMEOUT_MS)
+        .lean(),
     ]);
 
     const driverUserMap = new Map();
     if (driversResult.status === "fulfilled" && Array.isArray(driversResult.value)) {
       driversResult.value.forEach((d) => driverUserMap.set(String(d._id), d));
+    }
+
+    const activeTripsMap = new Map();
+    if (activeTripsResult && activeTripsResult.status === "fulfilled" && Array.isArray(activeTripsResult.value)) {
+      activeTripsResult.value.forEach((t) => {
+        if (t.busId) activeTripsMap.set(String(t.busId), t);
+        if (t.busNumber) activeTripsMap.set(String(t.busNumber).trim().toUpperCase(), t);
+      });
     }
 
     const rawRoutes = routesResult.status === "fulfilled" && Array.isArray(routesResult.value) ? routesResult.value : [];
@@ -843,12 +1253,14 @@ const fetchAllNormalizedBuses = async (serviceDate = null, mockData = null) => {
       driverLeaves: rawLeaves,
       driverReplacements: rawReplacements,
       driverUserMap,
+      activeTripsMap,
     };
 
     const normalizedBuses = buildNormalizedBusesFromData(dataBundle, targetServiceDate);
 
-    // If database returned active data, update the memory cache
-    if (normalizedBuses.length > 0) {
+    // If database query succeeded, update cache and return normalized buses
+    const isDbAlive = busesResult.status === "fulfilled" || routesResult.status === "fulfilled";
+    if (isDbAlive) {
       busCacheMap.set(targetServiceDate, { data: normalizedBuses, timestamp: Date.now() });
       return normalizedBuses;
     }
@@ -886,53 +1298,121 @@ const fetchAllNormalizedBuses = async (serviceDate = null, mockData = null) => {
   return sanitizedSeed;
 };
 
-// GET /locations (Get all unique stations/locations from DB)
+// GET /locations (Get all unique stations/locations and sub-stations from DB)
 router.get("/locations", async (req, res) => {
   try {
-    const allBuses = await fetchAllNormalizedBuses();
-    const locationSet = new Set();
+    const [buses, routes, schedules] = await Promise.all([
+      Bus.find({ is_active: { $ne: false } }).select("fromLocation toLocation stops schedule").lean(),
+      Route.find({ status: { $ne: "Suspended" } }).select("fromLocation toLocation stops schedule").lean(),
+      Schedule.find({ is_active: true }).select("stations stops").lean(),
+    ]);
 
-    const addCleanLocation = (raw) => {
+    const locationSet = new Set();
+    const subStationSet = new Set();
+
+    const addCleanLocation = (raw, isSubStation = false) => {
       if (!raw) return;
       const str = String(raw).trim();
-      // Skip route names or strings with arrows or via descriptions or generic placeholder Stop numbers
+      // Skip invalid route descriptions or generic depot placeholders
       if (
         str.includes("➔") ||
         str.includes("->") ||
-        str.toLowerCase().includes("via ") ||
+        str.includes("→") ||
+        str.toLowerCase().startsWith("via ") ||
         str.length < 2 ||
-        /^stop\s*\d+$/i.test(str)
+        /^stop\s*\d+$/i.test(str) ||
+        str.toLowerCase() === "depot"
       ) {
         return;
       }
       locationSet.add(str);
+      if (isSubStation) subStationSet.add(str);
+
+      // Extract base city before parenthesis if present
+      const parenMatch = str.match(/^(.*?)\s*\((.*?)\)$/);
+      if (parenMatch) {
+        const baseCity = parenMatch[1].trim();
+        const insideParen = parenMatch[2].trim();
+        if (baseCity && baseCity.length >= 2) {
+          locationSet.add(baseCity);
+        }
+        if (insideParen) {
+          insideParen.split(/[\/,]/).forEach((part) => {
+            const cleanPart = part.trim();
+            if (
+              cleanPart &&
+              cleanPart.length >= 3 &&
+              cleanPart.toLowerCase() !== "ksrtc" &&
+              cleanPart.toLowerCase() !== "aictsl"
+            ) {
+              locationSet.add(cleanPart);
+              subStationSet.add(cleanPart);
+            }
+          });
+        }
+      }
     };
 
-    allBuses.forEach((b) => {
+    buses.forEach((b) => {
       addCleanLocation(b.fromLocation);
       addCleanLocation(b.toLocation);
       if (Array.isArray(b.stops)) {
         b.stops.forEach((s) => {
           const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.station) : s;
-          addCleanLocation(stName);
+          addCleanLocation(stName, true);
+        });
+      }
+      if (Array.isArray(b.schedule)) {
+        b.schedule.forEach((sch) => {
+          if (Array.isArray(sch.stations)) {
+            sch.stations.forEach((st) => {
+              const name = st.station || st.name;
+              addCleanLocation(name, true);
+            });
+          }
         });
       }
     });
 
-    const routes = await Route.find({ status: { $ne: "Suspended" } }).lean();
     routes.forEach((r) => {
       addCleanLocation(r.fromLocation);
       addCleanLocation(r.toLocation);
       if (Array.isArray(r.stops)) {
         r.stops.forEach((s) => {
           const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.station) : s;
-          addCleanLocation(stName);
+          addCleanLocation(stName, true);
+        });
+      }
+      if (Array.isArray(r.schedule)) {
+        r.schedule.forEach((sch) => {
+          if (Array.isArray(sch.stations)) {
+            sch.stations.forEach((st) => {
+              const name = st.station || st.name;
+              addCleanLocation(name, true);
+            });
+          }
+        });
+      }
+    });
+
+    schedules.forEach((sch) => {
+      if (Array.isArray(sch.stations)) {
+        sch.stations.forEach((st) => {
+          const name = st.station || st.name;
+          addCleanLocation(name, true);
+        });
+      }
+      if (Array.isArray(sch.stops)) {
+        sch.stops.forEach((s) => {
+          const stName = typeof s === "object" && s !== null ? (s.stopName || s.name || s.station) : s;
+          addCleanLocation(stName, true);
         });
       }
     });
 
     const locations = Array.from(locationSet).filter(Boolean).sort();
-    res.json({ success: true, count: locations.length, locations });
+    const subStations = Array.from(subStationSet).filter(Boolean).sort();
+    res.json({ success: true, count: locations.length, locations, subStations });
   } catch (error) {
     console.error("Error fetching locations:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -1070,15 +1550,59 @@ router.get("/buses", async (req, res) => {
         }
         if (toIdx !== -1 && stations[toIdx]) {
           dropStation = stations[toIdx];
+        } else if (boardingStation && stations.length > 0) {
+          dropStation = stations[stations.length - 1];
+        }
+        if (!boardingStation && dropStation && stations.length > 0) {
+          boardingStation = stations[0];
         }
 
+        let segmentPrice = b.price;
         if (boardingStation && dropStation) {
-          const segMins = Math.max(15, (dropStation.offset_minutes || 0) - (boardingStation.offset_minutes || 0));
+          const bOffset = Number(boardingStation.offset_minutes) || 0;
+          const dOffset = Number(dropStation.offset_minutes) || (b.total_duration_minutes || 180);
+          const segMins = Math.max(15, dOffset - bOffset);
           segmentDuration = calculateDurationMins(0, segMins);
+
+          const totalMins = Math.max(30, Number(b.total_duration_minutes) || (stations[stations.length - 1]?.offset_minutes) || 180);
+          const ratio = Math.min(1, Math.max(0.15, segMins / totalMins));
+          segmentPrice = Math.max(40, Math.round((Number(b.price) || 150) * ratio));
+        }
+
+        // Sub-Station Takeoff Cutoff Re-evaluation:
+        let isBookingOpen = b.isBookingOpen;
+        let bookingStatus = b.bookingStatus;
+        let bookingStatusLabel = b.bookingStatusLabel;
+        let bookingStatusReason = b.bookingStatusReason;
+        let minutesUntilCutoff = b.minutesUntilCutoff;
+        let minutesUntilDeparture = b.minutesUntilDeparture;
+        let bookingCloseTime = b.bookingCloseTime;
+
+        if (b.bookingEnabled && boardingStation && boardingStation.departureTime && boardingStation.departureTime !== "--") {
+          const subCutoff = evaluateBusBookingCutoff({
+            bus: b,
+            schedule: { start_time: boardingStation.departureTime, bookingEnabled: true },
+            serviceDate: targetDate,
+          });
+          isBookingOpen = subCutoff.isBookingOpen;
+          bookingStatus = subCutoff.bookingStatus;
+          bookingStatusLabel = subCutoff.bookingStatusLabel;
+          bookingStatusReason = subCutoff.bookingStatusReason;
+          minutesUntilCutoff = subCutoff.minutesUntilCutoff;
+          minutesUntilDeparture = subCutoff.minutesUntilDeparture;
+          bookingCloseTime = subCutoff.bookingCloseTime;
         }
 
         matchedBuses.push({
           ...b,
+          isBookingOpen,
+          bookingStatus,
+          bookingStatusLabel,
+          bookingStatusReason,
+          minutesUntilCutoff,
+          minutesUntilDeparture,
+          bookingCloseTime,
+          price: segmentPrice,
           searchContext: {
             fromQuery: fromQuery || "",
             toQuery: toQuery || "",
@@ -1089,6 +1613,8 @@ router.get("/buses", async (req, res) => {
             dropStationName: dropStation ? dropStation.name : (toQuery || b.toLocation),
             dropArrivalTime: dropStation ? (dropStation.arrivalTime !== "--" ? dropStation.arrivalTime : b.arrivalTime) : b.arrivalTime,
             segmentDuration: segmentDuration || b.duration,
+            segmentPrice,
+            isSubStationSegment: Boolean((fromIdx > 0) || (toIdx !== -1 && toIdx < stations.length - 1)),
           }
         });
       }
@@ -1133,26 +1659,88 @@ router.get("/buses/live-fleet", async (req, res) => {
     const liveMap = new Map();
     liveLocations.forEach((loc) => liveMap.set(String(loc.busId), loc));
 
+    // Fallback: Check MongoDB TripSessions for any active drives not yet in memory
+    try {
+      const activeTrips = await TripSession.find({
+        status: { $in: ["ACTIVE", "PAUSED"] }
+      }).lean();
+
+      for (const trip of activeTrips) {
+        const tripBusId = String(trip.busId);
+        if (!liveMap.has(tripBusId) || !liveMap.get(tripBusId).isTracking) {
+          const lat = Number(trip.currentStop?.latitude) || 9.9658;
+          const lng = Number(trip.currentStop?.longitude) || 76.3204;
+          const locObj = {
+            busId: tripBusId,
+            busNumber: trip.busNumber,
+            busName: trip.busName,
+            routeName: trip.routeName,
+            driverName: trip.driverName,
+            tripSessionId: trip.tripSessionId,
+            currentStopName: trip.currentStop?.name || "",
+            latitude: lat,
+            longitude: lng,
+            speed: 25,
+            heading: 45,
+            isTracking: true,
+            status: trip.status === "PAUSED" ? "PAUSED" : "LIVE",
+            lastUpdated: trip.updatedAt ? new Date(trip.updatedAt).getTime() : Date.now(),
+            timestamp: trip.updatedAt ? new Date(trip.updatedAt).toISOString() : new Date().toISOString()
+          };
+          liveMap.set(tripBusId, locObj);
+          setActiveBusLocation(tripBusId, locObj);
+        }
+      }
+    } catch (e) {
+      console.warn("TripSession sync in live-fleet notice:", e.message);
+    }
+
     const dbBuses = await Bus.find().lean();
     const fleetStatus = dbBuses.map((bus) => {
       const busIdStr = String(bus._id);
       const live = liveMap.get(busIdStr);
+      const isLive = Boolean(live?.isTracking && live?.status !== "OFFLINE" && live?.status !== "COMPLETED");
+      const trackingStatus = live?.status || (isLive ? "LIVE" : "OFFLINE");
+
+      const stopNames = Array.isArray(bus.stops)
+        ? bus.stops.map((s) => (typeof s === "object" ? s.stationName || s.name : s)).filter(Boolean)
+        : [];
+
       return {
         _id: bus._id,
+        id: bus._id,
         busNumber: bus.busNumber,
         busName: bus.busName,
         busType: bus.busType,
+        from: bus.fromLocation,
+        to: bus.toLocation,
         fromLocation: bus.fromLocation,
         toLocation: bus.toLocation,
+        route: `${bus.fromLocation} ➔ ${bus.toLocation}`,
         departureTime: bus.departureTime,
         arrivalTime: bus.arrivalTime,
-        driverName: bus.driverName,
-        isTracking: Boolean(live?.isTracking),
-        status: live ? live.status : "OFFLINE",
+        driverName: live?.driverName || bus.driverName,
+        isLive,
+        isTracking: isLive,
+        trackingStatus,
+        status: trackingStatus,
+        stops: stopNames,
+        intermediateStops: stopNames,
+        activeLocation: isLive ? {
+          latitude: live.latitude,
+          longitude: live.longitude,
+          speed: live.speed || 0,
+          heading: live.heading || 0,
+          driverName: live.driverName,
+          currentStopName: live.currentStopName || "",
+          lastUpdated: live.lastUpdated || Date.now(),
+          timestamp: live.timestamp || new Date().toISOString()
+        } : null,
         latitude: live?.latitude || null,
         longitude: live?.longitude || null,
         speed: live?.speed || 0,
         heading: live?.heading || 0,
+        currentStopName: live?.currentStopName || "",
         lastUpdated: live?.lastUpdated || null,
         timestamp: live?.timestamp || null,
       };
@@ -1161,10 +1749,11 @@ router.get("/buses/live-fleet", async (req, res) => {
     res.json({
       success: true,
       count: fleetStatus.length,
-      activeCount: fleetStatus.filter((b) => b.isTracking && b.status === "LIVE").length,
-      delayedCount: fleetStatus.filter((b) => b.status === "DELAYED").length,
-      offlineCount: fleetStatus.filter((b) => b.status === "OFFLINE").length,
+      activeCount: fleetStatus.filter((b) => b.isLive && b.trackingStatus === "LIVE").length,
+      delayedCount: fleetStatus.filter((b) => b.isLive && b.trackingStatus === "DELAYED").length,
+      offlineCount: fleetStatus.filter((b) => !b.isLive || b.trackingStatus === "OFFLINE").length,
       fleet: fleetStatus,
+      buses: fleetStatus,
     });
   } catch (error) {
     console.error("Error fetching live fleet status:", error);
@@ -1176,12 +1765,66 @@ router.get("/buses/live-fleet", async (req, res) => {
 router.get("/buses/:busId/live-location", async (req, res) => {
   try {
     const { busId } = req.params;
-    const live = getActiveBusLocation(busId);
+    let live = getActiveBusLocation(busId);
     const bus = await Bus.findById(busId).lean();
+
+    // Fallback: If not in memory cache or isTracking false, check active TripSession in DB
+    if (!live || !live.isTracking) {
+      try {
+        const activeTrip = await TripSession.findOne({
+          busId,
+          status: { $in: ["ACTIVE", "PAUSED"] }
+        }).sort({ createdAt: -1 }).lean();
+
+        if (activeTrip) {
+          const lat = Number(activeTrip.currentStop?.latitude) || 9.9658;
+          const lng = Number(activeTrip.currentStop?.longitude) || 76.3204;
+          live = {
+            busId: String(busId),
+            busNumber: activeTrip.busNumber || bus?.busNumber || "Bus",
+            busName: activeTrip.busName || bus?.busName || "MoveSmart Express",
+            routeName: activeTrip.routeName || (bus ? `${bus.fromLocation} ➔ ${bus.toLocation}` : ""),
+            driverName: activeTrip.driverName || bus?.driverName || "Driver",
+            tripSessionId: activeTrip.tripSessionId,
+            currentStopName: activeTrip.currentStop?.name || "",
+            currentStopCode: activeTrip.currentStop?.code || "",
+            latitude: lat,
+            longitude: lng,
+            speed: 25,
+            heading: 45,
+            isTracking: true,
+            status: activeTrip.status === "PAUSED" ? "PAUSED" : "LIVE",
+            lastUpdated: activeTrip.updatedAt ? new Date(activeTrip.updatedAt).getTime() : Date.now(),
+            timestamp: activeTrip.updatedAt ? new Date(activeTrip.updatedAt).toISOString() : new Date().toISOString()
+          };
+          setActiveBusLocation(busId, live);
+        }
+      } catch (err) {
+        console.warn("TripSession lookup error in live-location:", err.message);
+      }
+    }
 
     if (!bus && !live) {
       return res.status(404).json({ success: false, message: "Bus not found" });
     }
+
+    // Format stops & route coordinates so passenger live map can display full route
+    let stops = [];
+    let routeCoordinates = [];
+    try {
+      if (bus && Array.isArray(bus.stops) && bus.stops.length > 0) {
+        stops = bus.stops.map((s, idx) => ({
+          name: s.stationName || s.name || `Stop ${idx + 1}`,
+          code: s.code || `STOP_${idx + 1}`,
+          latitude: Number(s.latitude || s.lat || 0),
+          longitude: Number(s.longitude || s.lng || 0),
+          departureTime: s.departureTime || s.time || ""
+        }));
+        routeCoordinates = stops
+          .filter((s) => s.latitude && s.longitude)
+          .map((s) => [s.latitude, s.longitude]);
+      }
+    } catch {}
 
     res.json({
       success: true,
@@ -1194,6 +1837,7 @@ router.get("/buses/:busId/live-location", async (req, res) => {
       departureTime: bus?.departureTime || "",
       arrivalTime: bus?.arrivalTime || "",
       driverName: bus?.driverName || live?.driverName || "Driver",
+      currentStopName: live?.currentStopName || "",
       isTracking: Boolean(live?.isTracking),
       status: live ? live.status : "OFFLINE",
       latitude: live?.latitude ?? null,
@@ -1202,6 +1846,8 @@ router.get("/buses/:busId/live-location", async (req, res) => {
       heading: live?.heading ?? 0,
       lastUpdated: live?.lastUpdated ?? null,
       timestamp: live?.timestamp ?? null,
+      stops,
+      routeCoordinates,
     });
   } catch (error) {
     console.error("Error fetching bus live location:", error);
@@ -1225,134 +1871,425 @@ router.get("/buses/:busId", async (req, res) => {
 // 3. GET /seats/:busId (Fetch seat layout & availability)
 router.get("/seats/:busId", async (req, res) => {
   try {
-    const bus = await Bus.findById(req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: "Bus not found" });
-    }
-
-    // Generate grid seat layout (e.g. 8 rows x 4 seats = 32 seats: 1A, 1B, 1C, 1D ... 8D)
-    const seats = [];
-    const rows = Math.ceil(bus.totalSeats / 4);
-    const cols = ["A", "B", "C", "D"];
-
-    for (let r = 1; r <= rows; r++) {
-      for (let c of cols) {
-        const seatId = `${r}${c}`;
-        const isBooked = bus.bookedSeats.includes(seatId);
-        seats.push({
-          id: seatId,
-          row: r,
-          column: c,
-          isBooked,
-          isWindow: c === "A" || c === "D",
-          price: bus.price,
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      busId: bus._id,
-      busName: bus.busName,
-      totalSeats: bus.totalSeats,
-      availableSeats: bus.availableSeats,
-      bookedSeats: bus.bookedSeats,
-      seats,
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// 4. POST /bookings (Book Seats)
-router.post("/bookings", async (req, res) => {
-  try {
-    const { userId, busId, passengerName, passengerEmail, passengerPhone, travelDate, selectedSeats, totalPrice, fromLocation, toLocation } = req.body;
-
-    if (!busId || !selectedSeats || selectedSeats.length === 0) {
-      return res.status(400).json({ success: false, message: "Bus ID and at least 1 selected seat are required." });
-    }
-    if (selectedSeats.length > 6) {
-      return res.status(400).json({ success: false, message: "You can book a maximum of 6 seats per transaction." });
-    }
-
+    const { busId } = req.params;
     let bus = null;
     if (mongoose.Types.ObjectId.isValid(busId)) {
       bus = await Bus.findById(busId);
     }
     if (!bus) {
       bus = await Bus.findOne({
-        $or: [{ busNumber: busId }, { vehicleNumber: busId }, { "Vehicle Number": busId }]
+        $or: [{ busNumber: busId }, { vehicleNumber: busId }, { "Vehicle Number": busId }],
       });
     }
+    if (!bus && mongoose.Types.ObjectId.isValid(busId)) {
+      const sch = await Schedule.findById(busId).populate("bus_id");
+      if (sch && sch.bus_id) bus = sch.bus_id;
+    }
 
-    // If bus record is not yet stored in Bus collection, instantiate and save it
     if (!bus) {
-      const allBuses = await fetchAllNormalizedBuses();
-      const norm = allBuses.find((b) => String(b._id) === String(busId) || b.busNumber === busId);
-
-      bus = new Bus({
-        busNumber: norm ? norm.busNumber : (typeof busId === "string" ? busId : "KL-07-MS-1008"),
-        busName: norm ? norm.busName : "MoveSmart Transit Express",
-        busType: norm ? norm.busType : "AC Seater / Sleeper (2+2)",
-        operator: norm ? norm.operator : "MoveSmart Fleet Ops",
-        fromLocation: norm ? norm.fromLocation : "Kochi",
-        toLocation: norm ? norm.toLocation : "Trivandrum",
-        departureTime: norm ? norm.departureTime : "07:00 AM",
-        arrivalTime: norm ? norm.arrivalTime : "11:30 AM",
-        price: norm ? norm.price : (totalPrice ? Math.round(totalPrice / selectedSeats.length) : 350),
-        bookedSeats: norm ? norm.bookedSeats : [],
-        totalSeats: norm ? norm.totalSeats : 32,
-        availableSeats: norm ? norm.availableSeats : 32,
-      });
-      await bus.save();
+      return res.status(404).json({ success: false, message: "Bus not found." });
     }
 
-    const currentBooked = bus.bookedSeats || [];
-
-    // Check if any seat is already booked
-    const conflict = selectedSeats.some((seat) => currentBooked.includes(seat));
-    if (conflict) {
+    // 1. Verify valid route assignment
+    const routeCheck = await validateBusRouteAssignment(bus);
+    if (!routeCheck.isValid) {
       return res.status(400).json({
         success: false,
-        message: "One or more selected seats have already been booked by another passenger. Please select different seats.",
+        bookingEnabled: false,
+        isBookingEligible: false,
+        message: routeCheck.reason || "This bus does not have a valid assigned route.",
+        busId: bus._id,
+        busName: bus.busName,
+        totalSeats: bus.totalSeats || 32,
+        availableSeats: bus.availableSeats || 0,
+        bookedSeats: bus.bookedSeats || [],
+        seats: [],
       });
     }
 
-    // Create unique Booking ID
+    // 2. Verify seat booking is enabled for this bus
+    if (bus.bookingEnabled !== true) {
+      return res.status(400).json({
+        success: false,
+        bookingEnabled: false,
+        isBookingEligible: false,
+        message: "Online seat booking is disabled for this bus (Walk-in / Counter ticketing only).",
+        busId: bus._id,
+        busName: bus.busName,
+        totalSeats: bus.totalSeats || 32,
+        availableSeats: bus.availableSeats || 0,
+        bookedSeats: bus.bookedSeats || [],
+        seats: [],
+      });
+    }
+
+    const targetDate = String(req.query.date || req.query.travelDate || req.query.serviceDate || "").trim();
+
+    // Determine booked seats specific to this travel date
+    let bookedList = [];
+    if (targetDate) {
+      // Find booked seats on this specific date
+      const [dailyReserved, confirmedBookings] = await Promise.all([
+        BusDailySeat.find({ busId: bus._id, travelDate: targetDate }).select("seat"),
+        Booking.find({
+          busId: bus._id,
+          travelDate: targetDate,
+          status: { $nin: ["Cancelled", "Refunded", "Failed"] },
+        }).select("selectedSeats"),
+      ]);
+
+      const seatSet = new Set();
+      dailyReserved.forEach((d) => {
+        if (d.seat) seatSet.add(String(d.seat).trim().toUpperCase());
+      });
+      confirmedBookings.forEach((b) => {
+        if (Array.isArray(b.selectedSeats)) {
+          b.selectedSeats.forEach((s) => seatSet.add(String(s).trim().toUpperCase()));
+        }
+      });
+      bookedList = Array.from(seatSet);
+    } else {
+      // No date specified in query: check today's date first
+      const { dateStr: todayIST } = getCurrentISTInfo();
+      const [dailyReserved, confirmedBookings] = await Promise.all([
+        BusDailySeat.find({ busId: bus._id, travelDate: todayIST }).select("seat"),
+        Booking.find({
+          busId: bus._id,
+          travelDate: todayIST,
+          status: { $nin: ["Cancelled", "Refunded", "Failed"] },
+        }).select("selectedSeats"),
+      ]);
+
+      const seatSet = new Set();
+      dailyReserved.forEach((d) => {
+        if (d.seat) seatSet.add(String(d.seat).trim().toUpperCase());
+      });
+      confirmedBookings.forEach((b) => {
+        if (Array.isArray(b.selectedSeats)) {
+          b.selectedSeats.forEach((s) => seatSet.add(String(s).trim().toUpperCase()));
+        }
+      });
+
+      if (seatSet.size > 0) {
+        bookedList = Array.from(seatSet);
+      } else {
+        bookedList = bus.bookedSeats || [];
+      }
+    }
+
+    // Generate fresh grid seat layout
+    const seats = [];
+    const totalSeats = bus.totalSeats || 32;
+    const rows = Math.ceil(totalSeats / 4);
+    const cols = ["A", "B", "C", "D"];
+
+    for (let r = 1; r <= rows; r++) {
+      for (let c of cols) {
+        const seatId = `${r}${c}`;
+        const isBooked = bookedList.includes(seatId);
+        seats.push({
+          id: seatId,
+          row: r,
+          column: c,
+          isBooked,
+          isWindow: c === "A" || c === "D",
+          price: bus.price || 150,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      bookingEnabled: true,
+      isBookingEligible: true,
+      busId: bus._id,
+      busName: bus.busName,
+      travelDate: targetDate || getCurrentISTInfo().dateStr,
+      totalSeats,
+      availableSeats: Math.max(0, totalSeats - bookedList.length),
+      bookedSeats: bookedList,
+      seats,
+    });
+  } catch (error) {
+    console.error("Error fetching seats:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to fetch seats." });
+  }
+});
+
+// 4. POST /bookings (Book Seats - Enforces Rules 1-7)
+router.post("/bookings", protect, async (req, res) => {
+  try {
+    const {
+      busId,
+      selectedSeats: reqSelectedSeats,
+      seatsBooked: reqSeatsBooked,
+      totalPrice: reqTotalPrice,
+      totalFare: reqTotalFare,
+      travelDate: reqTravelDate,
+      serviceDate: reqServiceDate,
+      fromLocation,
+      toLocation,
+      passengerName,
+      passengerEmail,
+      passengerPhone,
+      passengers: reqPassengers,
+      paymentMethod: reqPaymentMethod,
+      arrivalTime: reqArrivalTime,
+    } = req.body;
+
+    // Rule 1: Authenticated user is authorized to book
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ success: false, message: "Authentication required to book seats." });
+    }
+
+    const selectedSeats = Array.isArray(reqSelectedSeats) && reqSelectedSeats.length > 0
+      ? reqSelectedSeats
+      : (Array.isArray(reqSeatsBooked) ? reqSeatsBooked : []);
+
+    const effectiveTravelDate = (reqTravelDate || reqServiceDate || "").trim() || new Date().toISOString().split("T")[0];
+    const numericTotalPrice = Number(reqTotalPrice || reqTotalFare) || 0;
+
+    if (!busId || selectedSeats.length === 0) {
+      return res.status(400).json({ success: false, message: "Bus ID and at least 1 selected seat are required." });
+    }
+    if (selectedSeats.length > 6) {
+      return res.status(400).json({ success: false, message: "You can book a maximum of 6 seats per transaction." });
+    }
+
+    // Rule 2: Requested bus exists (No auto-creating fake buses!)
+    let bus = null;
+    if (mongoose.Types.ObjectId.isValid(busId)) {
+      bus = await Bus.findById(busId);
+    }
+    if (!bus) {
+      bus = await Bus.findOne({
+        $or: [{ busNumber: busId }, { vehicleNumber: busId }, { "Vehicle Number": busId }],
+      });
+    }
+    if (!bus && mongoose.Types.ObjectId.isValid(busId)) {
+      const sch = await Schedule.findById(busId).populate("bus_id");
+      if (sch && sch.bus_id) bus = sch.bus_id;
+    }
+
+    if (!bus) {
+      return res.status(404).json({ success: false, message: "Requested bus not found." });
+    }
+
+    // Rule 3: Bus has a valid route assignment
+    const routeCheck = await validateBusRouteAssignment(bus);
+    if (!routeCheck.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: routeCheck.reason || "This bus does not have a valid assigned route for seat booking.",
+      });
+    }
+
+    // Rule 4: Seat booking is enabled for that bus
+    if (bus.bookingEnabled !== true) {
+      return res.status(400).json({
+        success: false,
+        message: "Seat booking is disabled for this bus (Walk-in / Counter ticketing only).",
+      });
+    }
+
+    // Rule 5: Requested journey is eligible under booking policy
+    // 5a. Check active drive
+    const activeDrive = await TripSession.findOne({
+      $or: [
+        { busId: bus._id, status: { $in: ["ACTIVE", "PAUSED"] } },
+        { busNumber: bus.busNumber, status: { $in: ["ACTIVE", "PAUSED"] } },
+      ],
+    });
+    if (activeDrive) {
+      return res.status(400).json({
+        success: false,
+        message: "Online booking closed: The driver has already started this trip from the main station.",
+      });
+    }
+
+    // 5b. Check date eligibility
+    const { currentMinutes, dateStr: todayIST } = getCurrentISTInfo();
+    if (effectiveTravelDate < todayIST) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot book tickets for a past service date.",
+      });
+    }
+
+    // 5c. 5-minute pre-departure cutoff (Evaluates scheduled departure at passenger's boarding station)
+    if (effectiveTravelDate === todayIST) {
+      let depTimeToCheck = bus.departureTime;
+      if (fromLocation) {
+        const fullStops = buildCompleteStopsList(bus);
+        const matchIdx = fullStops.findIndex((st) => matchLocationStr(st, fromLocation));
+        if (matchIdx !== -1 && Array.isArray(bus.schedule) && bus.schedule[0]?.stations && bus.schedule[0].stations[matchIdx]) {
+          const stInfo = bus.schedule[0].stations[matchIdx];
+          if (stInfo.departureTime && stInfo.departureTime !== "--") {
+            depTimeToCheck = stInfo.departureTime;
+          }
+        }
+      }
+      const depMins = parseTimeStrToMinutes(depTimeToCheck);
+      const cutoffMins = depMins - 5;
+      if (currentMinutes >= cutoffMins) {
+        const closeTimeStr = addMinutesToTimeStr(depTimeToCheck, -5);
+        return res.status(400).json({
+          success: false,
+          message: `Booking is closed for this trip. Online reservations must be made at least 5 minutes before departure (Closed at ${closeTimeStr} for ${depTimeToCheck} departure).`,
+        });
+      }
+    }
+
+    // Rule 6: Selected seat is valid and available
+    const totalSeats = bus.totalSeats || 32;
+    const maxRow = Math.ceil(totalSeats / 4);
+    for (const seat of selectedSeats) {
+      const match = String(seat).trim().match(/^(\d+)([A-D])$/i);
+      if (!match) {
+        return res.status(400).json({ success: false, message: `Invalid seat format: "${seat}".` });
+      }
+      const rowNum = parseInt(match[1], 10);
+      if (rowNum < 1 || rowNum > maxRow) {
+        return res.status(400).json({ success: false, message: `Seat "${seat}" does not exist on this bus (capacity: ${totalSeats} seats).` });
+      }
+    }
+
+    // Rule 6: Selected seat availability specifically for effectiveTravelDate
+    const [dateExistingDaily, dateExistingBookings] = await Promise.all([
+      BusDailySeat.find({
+        busId: bus._id,
+        travelDate: effectiveTravelDate,
+        seat: { $in: selectedSeats },
+      }),
+      Booking.find({
+        busId: bus._id,
+        travelDate: effectiveTravelDate,
+        status: { $nin: ["Cancelled", "Refunded", "Failed"] },
+        selectedSeats: { $in: selectedSeats },
+      }),
+    ]);
+
+    if (dateExistingDaily.length > 0 || dateExistingBookings.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `One or more selected seats (${selectedSeats.join(", ")}) have already been booked for ${effectiveTravelDate} by another passenger. Please select different seats.`,
+      });
+    }
+
+    // Rule 7: Duplicate or concurrent reservations cannot reserve the same seat twice on this date (atomic reservation via unique compound index)
+    try {
+      await BusDailySeat.insertMany(
+        selectedSeats.map((seat) => ({
+          busId: bus._id,
+          travelDate: effectiveTravelDate,
+          seat: String(seat).trim().toUpperCase(),
+          userId: String(req.user._id),
+        })),
+        { ordered: true }
+      );
+    } catch (dupErr) {
+      if (dupErr.code === 11000 || dupErr.name === "MongoBulkWriteError" || dupErr.message?.includes("E11000")) {
+        return res.status(409).json({
+          success: false,
+          message: "One or more selected seats were just reserved by another passenger. Please choose different seats.",
+        });
+      }
+      throw dupErr;
+    }
+
+    // Keep Bus.bookedSeats populated for test compatibility and historical logging
+    const updatedBus = await Bus.findByIdAndUpdate(
+      bus._id,
+      {
+        $addToSet: { bookedSeats: { $each: selectedSeats } },
+      },
+      { new: true }
+    );
+
+    // Construct structured passenger list per seat
+    const primaryName = (passengerName || req.user.name || "Passenger").trim();
+    let structuredPassengers = [];
+    if (Array.isArray(reqPassengers) && reqPassengers.length > 0) {
+      structuredPassengers = selectedSeats.map((seat, idx) => {
+        const found = reqPassengers.find((p) => p.seat === seat) || reqPassengers[idx];
+        return {
+          seat,
+          name: (found?.name || (idx === 0 ? primaryName : `Passenger ${idx + 1}`)).trim(),
+          age: found?.age || "",
+          gender: found?.gender || "",
+        };
+      });
+    } else {
+      structuredPassengers = selectedSeats.map((seat, idx) => ({
+        seat,
+        name: idx === 0 ? primaryName : `Passenger ${idx + 1}`,
+        age: "",
+        gender: "",
+      }));
+    }
+
+    // Create unique Booking ID and record in MongoDB
     const bookingId = `MS-BK-${Math.floor(100000 + Math.random() * 900000)}`;
+    const finalPrice = numericTotalPrice > 0 ? numericTotalPrice : selectedSeats.length * (bus.price || 150);
 
     const newBooking = new Booking({
       bookingId,
-      userId: userId || "guest_user",
-      passengerName: passengerName || "Passenger",
-      passengerEmail: passengerEmail || "passenger@movesmart.in",
-      passengerPhone: passengerPhone || "",
+      userId: String(req.user._id),
+      passengerName: primaryName,
+      passengerEmail: (passengerEmail || req.user.email || "").trim(),
+      passengerPhone: (passengerPhone || req.user.phone || "").trim(),
+      passengers: structuredPassengers,
       busId: bus._id,
       busName: bus.busName,
-      fromLocation: fromLocation || bus.fromLocation,
-      toLocation: toLocation || bus.toLocation,
-      travelDate: travelDate || new Date().toISOString().split("T")[0],
+      busNumber: bus.busNumber || "",
+      fromLocation: fromLocation || bus.fromLocation || routeCheck.route?.fromLocation || "Origin",
+      toLocation: toLocation || bus.toLocation || routeCheck.route?.toLocation || "Destination",
+      travelDate: effectiveTravelDate,
       departureTime: bus.departureTime,
+      arrivalTime: reqArrivalTime || bus.arrivalTime || "",
       selectedSeats,
-      totalPrice: totalPrice || selectedSeats.length * bus.price,
+      totalPrice: finalPrice,
+      paymentMethod: reqPaymentMethod || "rfid",
+      driverName: bus.driverName || "",
+      driverPhone: bus.driverPhone || "",
+      driverLicense: bus.driverLicense || "",
       status: "Confirmed",
     });
 
     await newBooking.save();
+    // Associate bookingId with the daily reserved seats
+    await BusDailySeat.updateMany(
+      { busId: bus._id, travelDate: effectiveTravelDate, seat: { $in: selectedSeats } },
+      { $set: { bookingId: newBooking.bookingId } }
+    );
+    invalidateBusCache();
 
-    // Update Bus bookedSeats & availableSeats
-    bus.bookedSeats = [...currentBooked, ...selectedSeats];
-    bus.availableSeats = Math.max(0, (bus.totalSeats || 32) - bus.bookedSeats.length);
-    await bus.save();
+    const dateBookedCount = await BusDailySeat.countDocuments({
+      busId: bus._id,
+      travelDate: effectiveTravelDate,
+    });
+    const dateRemainingSeats = Math.max(0, totalSeats - dateBookedCount);
 
     res.status(201).json({
       success: true,
       message: "Bus ticket booking confirmed successfully! 🎉",
       booking: newBooking,
+      availableSeats: dateRemainingSeats,
     });
   } catch (error) {
     console.error("Booking creation error:", error);
+    try {
+      if (bus && effectiveTravelDate && Array.isArray(selectedSeats)) {
+        await BusDailySeat.deleteMany({
+          busId: bus._id,
+          travelDate: effectiveTravelDate,
+          seat: { $in: selectedSeats },
+          bookingId: { $in: ["", null, undefined] },
+        });
+      }
+    } catch (cleanupErr) {
+      console.error("Seat reservation rollback error:", cleanupErr);
+    }
     res.status(500).json({ success: false, message: error.message || "Failed to confirm booking." });
   }
 });
@@ -1360,10 +2297,354 @@ router.post("/bookings", async (req, res) => {
 // 5. GET /bookings/user/:userId (User Bookings History)
 router.get("/bookings/user/:userId", async (req, res) => {
   try {
-    const bookings = await Booking.find({ userId: req.params.userId }).sort({ createdAt: -1 });
+    const { userId } = req.params;
+    const { email, phone } = req.query;
+
+    const conditions = [];
+    if (userId && userId !== "undefined" && userId !== "null") {
+      conditions.push({ userId });
+    }
+    if (email && String(email).trim()) {
+      conditions.push({ passengerEmail: String(email).trim() });
+    }
+    if (phone && String(phone).trim()) {
+      conditions.push({ passengerPhone: String(phone).trim() });
+    }
+
+    const query = conditions.length > 0 ? { $or: conditions } : { userId };
+    const bookings = await Booking.find(query).sort({ createdAt: -1 });
     res.json({ success: true, count: bookings.length, bookings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==========================================
+// PASSENGER BOOKINGS MANAGEMENT ENDPOINTS (ADMIN & DRIVER)
+// ==========================================
+
+// GET /admin/bookings (Fetch all bookings with search, filters & executive stats)
+router.get("/admin/bookings", async (req, res) => {
+  try {
+    const { search, status, date, busNumber, page = 1, limit = 50 } = req.query;
+    const filter = {};
+
+    if (status && status !== "all") {
+      filter.status = status;
+    }
+
+    if (date && date.trim()) {
+      filter.travelDate = date.trim();
+    }
+
+    if (busNumber && busNumber !== "all") {
+      filter.busNumber = new RegExp(`^${busNumber.trim()}$`, "i");
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      const sReg = new RegExp(q, "i");
+      filter.$or = [
+        { bookingId: sReg },
+        { passengerName: sReg },
+        { passengerEmail: sReg },
+        { passengerPhone: sReg },
+        { fromLocation: sReg },
+        { toLocation: sReg },
+        { busNumber: sReg },
+        { busName: sReg },
+        { selectedSeats: { $in: [q.toUpperCase(), q] } },
+      ];
+    }
+
+    const total = await Booking.countDocuments(filter);
+    const bookings = await Booking.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((Number(page) - 1) * Number(limit))
+      .limit(Number(limit))
+      .lean();
+
+    // Auto-fill busNumber / driverName if legacy booking has empty busNumber
+    for (const b of bookings) {
+      if (!b.busNumber && b.busId) {
+        try {
+          const busDoc = await Bus.findById(b.busId).select("busNumber busName driverName").lean();
+          if (busDoc) {
+            b.busNumber = busDoc.busNumber;
+            b.busName = busDoc.busName || b.busName;
+            b.driverName = busDoc.driverName || "Driver Assigned";
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Aggregate Executive Stats
+    const allFiltered = await Booking.find(filter).select("status totalPrice selectedSeats travelDate").lean();
+    let totalRevenue = 0;
+    let confirmedCount = 0;
+    let cancelledCount = 0;
+    let pendingCount = 0;
+    let totalPassengers = 0;
+    let todayBookingsCount = 0;
+    const todayStr = getCurrentISTInfo().dateStr;
+
+    allFiltered.forEach((b) => {
+      const isConfirmed = b.status === "Confirmed";
+      if (isConfirmed) {
+        confirmedCount++;
+        totalRevenue += Number(b.totalPrice || 0);
+      } else if (b.status === "Cancelled") {
+        cancelledCount++;
+      } else {
+        pendingCount++;
+      }
+
+      const seats = Array.isArray(b.selectedSeats) ? b.selectedSeats.length : 1;
+      totalPassengers += seats;
+
+      if (b.travelDate === todayStr) {
+        todayBookingsCount++;
+      }
+    });
+
+    const buses = await Bus.find().select("busNumber busName").sort({ busNumber: 1 }).lean();
+
+    res.json({
+      success: true,
+      count: bookings.length,
+      bookings,
+      buses,
+      stats: {
+        totalBookings: total,
+        confirmedCount,
+        cancelledCount,
+        pendingCount,
+        totalRevenue,
+        todayBookingsCount,
+        totalPassengers,
+      },
+      pagination: {
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit)),
+        limit: Number(limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error in GET /admin/bookings:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to fetch bookings." });
+  }
+});
+
+// PATCH /admin/bookings/:bookingId/status (Update status e.g. Cancelled / Confirmed)
+router.patch("/admin/bookings/:bookingId/status", async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { status } = req.body;
+
+    if (!["Confirmed", "Cancelled", "Pending"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status value." });
+    }
+
+    const booking = await Booking.findOne({
+      $or: [{ bookingId }, { _id: mongoose.Types.ObjectId.isValid(bookingId) ? bookingId : null }],
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: "Booking not found." });
+    }
+
+    const previousStatus = booking.status;
+    booking.status = status;
+    await booking.save();
+
+    // If cancelled, release seats from BusDailySeat so other passengers can book!
+    if (status === "Cancelled" && previousStatus !== "Cancelled") {
+      await BusDailySeat.deleteMany({
+        busId: booking.busId,
+        travelDate: booking.travelDate,
+        seat: { $in: booking.selectedSeats },
+      });
+      invalidateBusCache();
+    }
+
+    res.json({
+      success: true,
+      message: `Booking ${booking.bookingId} marked as ${status}.`,
+      booking,
+    });
+  } catch (error) {
+    console.error("Error updating booking status:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to update booking status." });
+  }
+});
+
+// GET /driver/bookings (Fetch passenger manifest, sub-station roster & seat bookings for driver)
+router.get("/driver/bookings", async (req, res) => {
+  try {
+    const { busNumber, date, driverName, driverId } = req.query;
+    const targetDate = date && date !== "All" ? date.trim() : null;
+
+    let targetBuses = [];
+    if (busNumber && busNumber.trim() && busNumber !== "all") {
+      targetBuses = [busNumber.trim().toUpperCase()];
+    } else {
+      // Find buses driven by this driver
+      const drvNameQuery = driverName || req.user?.name;
+      const drvIdQuery = driverId || req.user?._id;
+
+      const busDocs = await Bus.find({
+        $or: [
+          drvIdQuery ? { driverId: drvIdQuery } : null,
+          drvNameQuery ? { driverName: new RegExp(`^${drvNameQuery}$`, "i") } : null,
+          drvNameQuery ? { "shifts.morning.driverName": new RegExp(`^${drvNameQuery}$`, "i") } : null,
+          drvNameQuery ? { "shifts.evening.driverName": new RegExp(`^${drvNameQuery}$`, "i") } : null,
+          drvNameQuery ? { "shifts.night.driverName": new RegExp(`^${drvNameQuery}$`, "i") } : null,
+        ].filter(Boolean),
+      }).select("busNumber vehicleNumber").lean();
+
+      if (busDocs.length > 0) {
+        targetBuses = busDocs.map((b) => (b.busNumber || b.vehicleNumber || "").trim().toUpperCase()).filter(Boolean);
+      }
+    }
+
+    // Build query for bookings
+    const filter = {};
+    if (targetBuses.length > 0) {
+      filter.busNumber = { $in: targetBuses.map((b) => new RegExp(`^${b}$`, "i")) };
+    }
+    if (targetDate) {
+      filter.travelDate = targetDate;
+    }
+    filter.status = { $ne: "Cancelled" };
+
+    const bookings = await Booking.find(filter).sort({ travelDate: 1, departureTime: 1 }).lean();
+
+    // Build Station-by-Station Roster
+    const stationMap = new Map();
+    let totalPassengers = 0;
+    let boardedCount = 0;
+
+    bookings.forEach((b) => {
+      const fromSt = b.fromLocation || "Origin";
+      const toSt = b.toLocation || "Destination";
+
+      if (!stationMap.has(fromSt)) {
+        stationMap.set(fromSt, { stationName: fromSt, boarding: [], dropping: [] });
+      }
+      if (!stationMap.has(toSt)) {
+        stationMap.set(toSt, { stationName: toSt, boarding: [], dropping: [] });
+      }
+
+      const passengerList = Array.isArray(b.passengers) && b.passengers.length > 0
+        ? b.passengers
+        : (b.selectedSeats || []).map((seat) => ({ seat, name: b.passengerName }));
+
+      passengerList.forEach((p) => {
+        totalPassengers++;
+        if (p.boarded || b.boarded) {
+          boardedCount++;
+        }
+        stationMap.get(fromSt).boarding.push({
+          bookingId: b.bookingId,
+          seat: p.seat,
+          passengerName: p.name || b.passengerName,
+          passengerPhone: b.passengerPhone,
+          age: p.age,
+          gender: p.gender,
+          fromLocation: fromSt,
+          toLocation: toSt,
+          departureTime: b.departureTime,
+          boarded: Boolean(p.boarded || b.boarded),
+        });
+
+        stationMap.get(toSt).dropping.push({
+          bookingId: b.bookingId,
+          seat: p.seat,
+          passengerName: p.name || b.passengerName,
+          fromLocation: fromSt,
+          toLocation: toSt,
+          boarded: Boolean(p.boarded || b.boarded),
+        });
+      });
+    });
+
+    const stationRoster = Array.from(stationMap.values()).filter(
+      (s) => s.boarding.length > 0 || s.dropping.length > 0
+    );
+
+    res.json({
+      success: true,
+      count: bookings.length,
+      bookings,
+      stationRoster,
+      stats: {
+        totalBookings: bookings.length,
+        totalPassengers,
+        boardedCount,
+        pendingBoardingCount: Math.max(0, totalPassengers - boardedCount),
+        targetBuses,
+        selectedDate: targetDate || "All Dates",
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching driver bookings:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to fetch driver manifest." });
+  }
+});
+
+// PATCH /driver/bookings/:bookingId/board (Driver toggles passenger check-in/boarded status)
+router.patch("/driver/bookings/:bookingId/board", async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { seat, boarded, stationName } = req.body;
+
+    const booking = await Booking.findOne({
+      $or: [{ bookingId }, { _id: mongoose.Types.ObjectId.isValid(bookingId) ? bookingId : null }],
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: "Booking record not found." });
+    }
+
+    const targetBoarded = boarded !== undefined ? Boolean(boarded) : true;
+
+    if (seat && Array.isArray(booking.passengers)) {
+      let seatFound = false;
+      booking.passengers.forEach((p) => {
+        if (p.seat === seat) {
+          p.boarded = targetBoarded;
+          p.boardedAt = targetBoarded ? new Date() : null;
+          if (stationName) p.boardedStation = stationName;
+          seatFound = true;
+        }
+      });
+
+      if (!seatFound && Array.isArray(booking.selectedSeats) && booking.selectedSeats.includes(seat)) {
+        booking.passengers.push({
+          seat,
+          name: booking.passengerName,
+          boarded: targetBoarded,
+          boardedAt: targetBoarded ? new Date() : null,
+          boardedStation: stationName || booking.fromLocation,
+        });
+      }
+    } else {
+      booking.boarded = targetBoarded;
+      booking.boardedAt = targetBoarded ? new Date() : null;
+      if (stationName) booking.boardedStation = stationName;
+    }
+
+    await booking.save();
+
+    res.json({
+      success: true,
+      message: `Passenger for seat ${seat || "ALL"} marked as ${targetBoarded ? "Boarded" : "Pending"}.`,
+      booking,
+    });
+  } catch (error) {
+    console.error("Error updating passenger boarding:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to update check-in." });
   }
 });
 
@@ -1385,7 +2666,7 @@ router.get("/admin/buses", async (req, res) => {
 });
 
 // POST /admin/buses (Create a new bus)
-router.post("/admin/buses", async (req, res) => {
+router.post("/admin/buses", protect, adminOnly, async (req, res) => {
   try {
     const {
       busNumber,
@@ -1409,6 +2690,8 @@ router.post("/admin/buses", async (req, res) => {
       driverVerified,
       driverExperience,
       stops,
+      route_id,
+      routeId,
     } = req.body;
 
     if (!busName || !String(busName).trim()) {
@@ -1436,10 +2719,24 @@ router.post("/admin/buses", async (req, res) => {
       ? Number(price)
       : 100;
 
-    const finalFromLocation = (fromLocation && typeof fromLocation === "string" && fromLocation.trim()) ? fromLocation.trim() : "Depot";
-    const finalToLocation = (toLocation && typeof toLocation === "string" && toLocation.trim()) ? toLocation.trim() : "Depot";
+    let finalFromLocation = (fromLocation && typeof fromLocation === "string" && fromLocation.trim()) ? fromLocation.trim() : "Depot";
+    let finalToLocation = (toLocation && typeof toLocation === "string" && toLocation.trim()) ? toLocation.trim() : "Depot";
     const finalDepartureTime = (departureTime && typeof departureTime === "string" && departureTime.trim()) ? departureTime.trim() : "06:00 AM";
     const finalArrivalTime = (arrivalTime && typeof arrivalTime === "string" && arrivalTime.trim()) ? arrivalTime.trim() : "10:00 PM";
+
+    // Route Assignment Validation
+    let assignedRouteId = null;
+    let assignedRouteName = "";
+    const rawRouteId = route_id || routeId;
+    if (rawRouteId && mongoose.Types.ObjectId.isValid(rawRouteId)) {
+      const routeDoc = await Route.findById(rawRouteId);
+      if (routeDoc) {
+        assignedRouteId = routeDoc._id;
+        assignedRouteName = routeDoc.routeName || `${routeDoc.fromLocation} ➔ ${routeDoc.toLocation}`;
+        if (!fromLocation || fromLocation === "Depot") finalFromLocation = routeDoc.fromLocation;
+        if (!toLocation || toLocation === "Depot") finalToLocation = routeDoc.toLocation;
+      }
+    }
 
     const parsedStops = Array.isArray(stops)
       ? stops
@@ -1512,6 +2809,9 @@ router.post("/admin/buses", async (req, res) => {
       driverVerified: assignedDriverVerified,
       driverExperience: assignedDriverExperience,
       stops: parsedStops,
+      route_id: assignedRouteId,
+      routeName: assignedRouteName,
+      bookingEnabled: req.body.bookingEnabled !== undefined ? Boolean(req.body.bookingEnabled) : false,
       bookedSeats: [],
     });
 
@@ -1536,7 +2836,7 @@ router.post("/admin/buses", async (req, res) => {
 });
 
 // PUT /admin/buses/:id (Update bus details)
-router.put("/admin/buses/:id", async (req, res) => {
+router.put("/admin/buses/:id", protect, adminOnly, async (req, res) => {
   try {
     const bus = await Bus.findById(req.params.id);
     if (!bus) {
@@ -1565,6 +2865,8 @@ router.put("/admin/buses/:id", async (req, res) => {
       driverVerified,
       driverExperience,
       stops,
+      route_id,
+      routeId,
     } = req.body;
 
     if (busNumber) bus.busNumber = busNumber.trim().toUpperCase();
@@ -1583,6 +2885,30 @@ router.put("/admin/buses/:id", async (req, res) => {
     }
     if (price) bus.price = Number(price);
     if (Array.isArray(amenities)) bus.amenities = amenities;
+
+    // Handle route assignment independently without touching bookingEnabled
+    const incomingRouteId = route_id !== undefined ? route_id : routeId;
+    if (incomingRouteId !== undefined) {
+      if (!incomingRouteId || incomingRouteId === "unassigned" || incomingRouteId === "null") {
+        bus.route_id = null;
+        bus.routeName = "";
+      } else if (mongoose.Types.ObjectId.isValid(incomingRouteId)) {
+        const routeDoc = await Route.findById(incomingRouteId);
+        if (routeDoc) {
+          bus.route_id = routeDoc._id;
+          bus.routeName = routeDoc.routeName || `${routeDoc.fromLocation} ➔ ${routeDoc.toLocation}`;
+        }
+      }
+    }
+
+    // Handle booking permission independently without silently altering assigned route
+    if (req.body.bookingEnabled !== undefined) {
+      bus.bookingEnabled = Boolean(req.body.bookingEnabled);
+      await Schedule.updateMany(
+        { $or: [{ bus_id: bus._id }, { busNumber: bus.busNumber }] },
+        { $set: { bookingEnabled: bus.bookingEnabled } }
+      );
+    }
 
     // Driver Assignment Logic (ONE DRIVER -> MAXIMUM ONE BUS)
     if (driverId !== undefined) {
@@ -1672,7 +2998,7 @@ router.put("/admin/buses/:id", async (req, res) => {
 });
 
 // DELETE /admin/buses/:id (Delete bus)
-router.delete("/admin/buses/:id", async (req, res) => {
+router.delete("/admin/buses/:id", protect, adminOnly, async (req, res) => {
   try {
     const bus = await Bus.findByIdAndDelete(req.params.id);
     if (!bus) {
@@ -2122,7 +3448,7 @@ router.patch("/admin/schedules/:id/toggle", async (req, res) => {
 });
 
 // PATCH /admin/routes/:id/toggle — Toggle route status Active ↔ Suspended
-router.patch("/admin/routes/:id/toggle", async (req, res) => {
+router.patch("/admin/routes/:id/toggle", protect, adminOnly, async (req, res) => {
   try {
     const route = await Route.findById(req.params.id);
     if (!route) {
@@ -2139,7 +3465,7 @@ router.patch("/admin/routes/:id/toggle", async (req, res) => {
 });
 
 // PATCH /admin/buses/:id/toggle — Toggle is_active on a bus
-router.patch("/admin/buses/:id/toggle", async (req, res) => {
+router.patch("/admin/buses/:id/toggle", protect, adminOnly, async (req, res) => {
   try {
     const bus = await Bus.findById(req.params.id);
     if (!bus) {
@@ -2153,6 +3479,321 @@ router.patch("/admin/buses/:id/toggle", async (req, res) => {
   } catch (error) {
     console.error("Error toggling bus:", error);
     res.status(500).json({ success: false, message: error.message || "Failed to toggle bus." });
+  }
+});
+
+// PATCH /admin/buses/:id/booking-toggle — Choose which bus has booking option enabled/disabled
+router.patch("/admin/buses/:id/booking-toggle", protect, adminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { bookingEnabled } = req.body;
+
+    let bus = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      bus = await Bus.findById(id);
+    }
+    if (!bus) {
+      bus = await Bus.findOne({
+        $or: [
+          { busNumber: new RegExp(`^${id}$`, "i") },
+          { vehicleNumber: new RegExp(`^${id}$`, "i") },
+        ],
+      });
+    }
+
+    if (!bus) {
+      // Check if ID belongs to a Schedule record
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        const sch = await Schedule.findById(id);
+        if (sch) {
+          sch.bookingEnabled = typeof bookingEnabled === "boolean" ? bookingEnabled : !sch.bookingEnabled;
+          await sch.save();
+          invalidateBusCache();
+          return res.json({
+            success: true,
+            scheduleId: sch._id,
+            bookingEnabled: sch.bookingEnabled,
+            message: `Online booking option for schedule (${sch.busNumber || sch.start_time}) is now ${sch.bookingEnabled ? "ENABLED 🟢" : "DISABLED 🔒"}!`,
+          });
+        }
+      }
+      return res.status(404).json({ success: false, message: "Bus or Schedule record not found." });
+    }
+
+    const newBookingEnabled = typeof bookingEnabled === "boolean" ? bookingEnabled : !bus.bookingEnabled;
+    bus.bookingEnabled = newBookingEnabled;
+    await bus.save();
+
+    // Synchronize any schedule rows for this bus
+    await Schedule.updateMany(
+      { $or: [{ bus_id: bus._id }, { busNumber: bus.busNumber }] },
+      { $set: { bookingEnabled: newBookingEnabled } }
+    );
+
+    invalidateBusCache();
+
+    res.json({
+      success: true,
+      busId: bus._id,
+      busNumber: bus.busNumber,
+      bookingEnabled: bus.bookingEnabled,
+      message: `Online booking for bus ${bus.busNumber} (${bus.busName}) is now ${bus.bookingEnabled ? "ENABLED 🟢" : "DISABLED 🔒"}!`,
+      bus,
+    });
+  } catch (error) {
+    console.error("Error toggling bus booking option:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to toggle bus booking option." });
+  }
+});
+
+// GET /admin/routes/:routeId/buses — List all buses assigned/selected for a route with live 5-min takeoff cutoff status
+router.get("/admin/routes/:routeId/buses", async (req, res) => {
+  try {
+    const { routeId } = req.params;
+    const { date } = req.query;
+
+    const { dateStr: todayIST } = getCurrentISTInfo();
+    const serviceDate = date && typeof date === "string" && date.trim().match(/^\d{4}-\d{2}-\d{2}$/)
+      ? date.trim()
+      : todayIST;
+
+    // 1. Locate Route document
+    let route = null;
+    if (mongoose.Types.ObjectId.isValid(routeId)) {
+      route = await Route.findById(routeId).lean();
+    }
+    if (!route) {
+      route = await Route.findOne({
+        $or: [
+          { routeId: new RegExp(`^${routeId}$`, "i") },
+          { routeName: new RegExp(`^${routeId}$`, "i") },
+        ],
+      }).lean();
+    }
+
+    if (!route) {
+      return res.status(404).json({ success: false, message: `Route "${routeId}" not found.` });
+    }
+
+    // 2-5. Fetch all required data in parallel
+    const [schedules, activeTrips, [allDrivers, driverLeaves, driverReplacements], matchingBuses] = await Promise.all([
+      Schedule.find({ route_id: route._id }).populate("bus_id").sort({ start_time: 1 }).lean(),
+      TripSession.find({ status: { $in: ["ACTIVE", "PAUSED"] } }).lean(),
+      Promise.all([
+        User.find({ role: { $in: ["driver", "Driver", "DRIVER"] } })
+          .select("_id name email phone role verificationStatus")
+          .lean(),
+        DriverLeave.find({ status: "Approved" }).lean(),
+        DriverReplacement.find({ dutyDate: serviceDate }).lean(),
+      ]),
+      Bus.find({
+        $or: [
+          { routeName: route.routeName },
+          { route_id: route._id },
+          { routeId: route._id },
+          { routeId: route.routeId },
+          {
+            $and: [
+              { fromLocation: new RegExp(`^${route.fromLocation}$`, "i") },
+              { toLocation: new RegExp(`^${route.toLocation}$`, "i") }
+            ]
+          }
+        ]
+      }).lean(),
+    ]);
+
+    const activeTripsMap = new Map();
+    activeTrips.forEach((t) => {
+      if (t.busId) activeTripsMap.set(String(t.busId), t);
+      if (t.busNumber) activeTripsMap.set(String(t.busNumber).trim().toUpperCase(), t);
+    });
+
+    const driverUserMap = new Map();
+    allDrivers.forEach((d) => driverUserMap.set(String(d._id), d));
+
+    const assignedBusesList = [];
+    const seenBusNumbers = new Set();
+
+    // Process from schedules first
+    for (const sch of schedules) {
+      const busDoc = (sch.bus_id && typeof sch.bus_id === "object") ? sch.bus_id : {};
+      const busNumber = sch.busNumber || busDoc.busNumber || `KL-01-${route.routeId ? route.routeId.replace(/[^A-Z0-9]/g, "") : "MS100"}`;
+      const uniqueKey = `${busNumber}_${sch.start_time}`;
+      if (seenBusNumbers.has(uniqueKey)) continue;
+      seenBusNumbers.add(uniqueKey);
+
+      const timetable = generateStationTimetable(route, sch.start_time);
+      const departureTime = timetable.departureTime;
+      const arrivalTime = timetable.arrivalTime;
+
+      // Effective driver resolution
+      const resolverResult = resolveEffectiveDepartureDriver({
+        schedule: sch,
+        bus: busDoc,
+        route,
+        serviceDate,
+        driverReplacements,
+        driverLeaves,
+      });
+
+      const cutoffEval = evaluateBusBookingCutoff({
+        bus: busDoc,
+        schedule: sch,
+        activeTripsMap,
+        serviceDate,
+      });
+
+      assignedBusesList.push({
+        _id: busDoc._id || sch._id,
+        scheduleId: sch._id,
+        busId: busDoc._id || null,
+        busNumber,
+        busName: busDoc.busName || route.routeName || `${route.fromLocation} ➔ ${route.toLocation}`,
+        busType: busDoc.busType || "Standard Route Transit",
+        operator: busDoc.operator || "MoveSmart Transit Ops",
+        fromLocation: route.fromLocation,
+        toLocation: route.toLocation,
+        mainStation: timetable.stations[0]?.name || route.fromLocation,
+        departureTime,
+        mainStationDepartureTime: departureTime,
+        scheduledDepartureTime: departureTime,
+        arrivalTime,
+        duration: timetable.duration,
+        totalSeats: busDoc.totalSeats || 32,
+        availableSeats: busDoc.availableSeats !== undefined ? busDoc.availableSeats : 32,
+        price: route.fare || busDoc.price || 150,
+        shift: resolverResult.shift || sch.shift || "Morning",
+        driverName: resolverResult.passengerView.driverName || sch.driverName || busDoc.driverName || "Not Assigned",
+        driverPhone: busDoc.driverPhone || "",
+        driverVerified: resolverResult.passengerView.status === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED || busDoc.driverVerified || false,
+        driverLicense: busDoc.driverLicense || "",
+        driverStatus: resolverResult.passengerView.status === PASSENGER_ASSIGNMENT_STATUS.ASSIGNED ? "Driver Assigned" : "Assignment Pending",
+        isReplacement: Boolean(resolverResult.isReplacement),
+        // Booking option and 5-min cutoff controls
+        bookingEnabled: cutoffEval.bookingEnabled,
+        isBookingOpen: cutoffEval.isBookingOpen,
+        bookingStatus: cutoffEval.bookingStatus,
+        bookingStatusLabel: cutoffEval.bookingStatusLabel,
+        bookingStatusReason: cutoffEval.bookingStatusReason,
+        bookingCloseTime: cutoffEval.bookingCloseTime,
+        minutesUntilDeparture: cutoffEval.minutesUntilDeparture,
+        minutesUntilCutoff: cutoffEval.minutesUntilCutoff,
+        tripStarted: cutoffEval.tripStarted,
+        activeTripId: cutoffEval.activeTripId,
+        is_active: sch.is_active !== false && busDoc.is_active !== false,
+      });
+    }
+
+    // Also include matching buses that weren't in schedules
+    for (const b of matchingBuses) {
+      const busNumber = b.busNumber || `KL-01-MS-${String(b._id).substring(18).toUpperCase()}`;
+      const uniqueKey = `${busNumber}_${b.departureTime || route.base_start_time || "08:00 AM"}`;
+      if (seenBusNumbers.has(uniqueKey)) continue;
+      seenBusNumbers.add(uniqueKey);
+
+      const timetable = generateStationTimetable(route, b.departureTime || route.base_start_time || "08:00 AM");
+
+      const cutoffEval = evaluateBusBookingCutoff({
+        bus: b,
+        schedule: null,
+        activeTripsMap,
+        serviceDate,
+      });
+
+      assignedBusesList.push({
+        _id: b._id,
+        scheduleId: null,
+        busId: b._id,
+        busNumber,
+        busName: b.busName || route.routeName,
+        busType: b.busType || "Standard Route Transit",
+        operator: b.operator || "MoveSmart Transit Ops",
+        fromLocation: route.fromLocation,
+        toLocation: route.toLocation,
+        mainStation: timetable.stations[0]?.name || route.fromLocation,
+        departureTime: timetable.departureTime,
+        mainStationDepartureTime: timetable.departureTime,
+        scheduledDepartureTime: timetable.departureTime,
+        arrivalTime: timetable.arrivalTime,
+        duration: timetable.duration,
+        totalSeats: b.totalSeats || 32,
+        availableSeats: b.availableSeats !== undefined ? b.availableSeats : 32,
+        price: b.price || route.fare || 150,
+        shift: "Morning",
+        driverName: b.driverName || "Not Assigned",
+        driverPhone: b.driverPhone || "",
+        driverVerified: b.driverVerified || false,
+        driverLicense: b.driverLicense || "",
+        driverStatus: b.driverName && b.driverName !== "Not Assigned" ? "Driver Assigned" : "Assignment Pending",
+        isReplacement: false,
+        // Booking option and 5-min cutoff controls
+        bookingEnabled: cutoffEval.bookingEnabled,
+        isBookingOpen: cutoffEval.isBookingOpen,
+        bookingStatus: cutoffEval.bookingStatus,
+        bookingStatusLabel: cutoffEval.bookingStatusLabel,
+        bookingStatusReason: cutoffEval.bookingStatusReason,
+        bookingCloseTime: cutoffEval.bookingCloseTime,
+        minutesUntilDeparture: cutoffEval.minutesUntilDeparture,
+        minutesUntilCutoff: cutoffEval.minutesUntilCutoff,
+        tripStarted: cutoffEval.tripStarted,
+        activeTripId: cutoffEval.activeTripId,
+        is_active: b.is_active !== false,
+      });
+    }
+
+    // Summary statistics for the route
+    const summary = {
+      totalBuses: assignedBusesList.length,
+      bookingEnabledCount: assignedBusesList.filter((b) => b.bookingEnabled).length,
+      bookingDisabledCount: assignedBusesList.filter((b) => !b.bookingEnabled).length,
+      bookingOpenCount: assignedBusesList.filter((b) => b.isBookingOpen).length,
+      bookingClosedCount: assignedBusesList.filter((b) => !b.isBookingOpen).length,
+      driveStartedCount: assignedBusesList.filter((b) => b.tripStarted).length,
+      cutoffReachedCount: assignedBusesList.filter((b) => b.bookingStatus === "CLOSED_5MIN_CUTOFF").length,
+    };
+
+    res.json({
+      success: true,
+      route: {
+        _id: route._id,
+        routeId: route.routeId,
+        routeName: route.routeName,
+        fromLocation: route.fromLocation,
+        toLocation: route.toLocation,
+        distanceKm: route.distanceKm,
+        duration: route.duration,
+        base_start_time: route.base_start_time,
+        stopsCount: Array.isArray(route.stops) ? route.stops.length : 0,
+      },
+      serviceDate,
+      summary,
+      buses: assignedBusesList,
+    });
+  } catch (error) {
+    console.error("Error fetching buses for route:", error);
+    res.status(500).json({ success: false, message: error.message || "Failed to fetch buses for route." });
+  }
+});
+
+// GET /admin/route-buses (Fetch list of routes for selection)
+router.get("/admin/route-buses", async (req, res) => {
+  try {
+    const routes = await Route.find({ status: { $ne: "Suspended" } }).sort({ routeName: 1 }).lean();
+    res.json({
+      success: true,
+      count: routes.length,
+      routes: routes.map((r) => ({
+        _id: r._id,
+        routeId: r.routeId,
+        routeName: r.routeName,
+        fromLocation: r.fromLocation,
+        toLocation: r.toLocation,
+        distanceKm: r.distanceKm,
+        base_start_time: r.base_start_time,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

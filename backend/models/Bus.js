@@ -34,6 +34,11 @@ const busSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    route_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Route",
+      default: null,
+    },
     stops: {
       type: [String],
       default: [],
@@ -106,6 +111,10 @@ const busSchema = new mongoose.Schema(
     is_active: {
       type: Boolean,
       default: true,
+    },
+    bookingEnabled: {
+      type: Boolean,
+      default: false,
     },
     shifts: {
       morning: {

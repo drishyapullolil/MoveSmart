@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import axios from "axios";
+import { Download, Eye, Ticket, Users, FileText } from "lucide-react";
 import { getStoredUser, setStoredUser, clearStoredSession } from "../utils/session";
 import { validateName } from "../utils/nameValidator";
+import { generateTicketPDF } from "../utils/ticketPdfGenerator";
+import BookingSuccess from "../components/booking/BookingSuccess";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 
 function Profile() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // 1. User State loaded purely from authenticated session
   const [user, setUser] = useState(() => {
@@ -35,7 +39,7 @@ function Profile() {
   });
 
   // 3. Active Tab State ('info', 'activity', 'security', 'settings')
-  const [activeTab, setActiveTab] = useState("info");
+  const [activeTab, setActiveTab] = useState(() => location.state?.openTab || "info");
 
   // 4. Modals State
   const [showEditModal, setShowEditModal] = useState(false);
@@ -56,10 +60,11 @@ function Profile() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
-  // 7. Travel Activity State
+  // 7. Travel Activity & Bookings State
   const [travelHistory, setTravelHistory] = useState([]);
+  const [selectedBookingForPass, setSelectedBookingForPass] = useState(null);
 
-  // Fetch Live RFID Card & Travel Activity from Database
+  // Fetch Live RFID Card, Real Seat Bookings & Travel Activity from Database
   const fetchProfileCardAndActivityData = useCallback(async () => {
     try {
       const u = getStoredUser();
@@ -67,38 +72,82 @@ function Profile() {
       if (u?.id || u?._id) params.userId = u.id || u._id;
       if (u?.email) params.email = u.email;
 
-      const [balRes, txnRes] = await Promise.all([
+      const userIdentifier = u?.id || u?._id || "user";
+
+      const [balRes, txnRes, bookRes] = await Promise.allSettled([
         axios.get("/api/wallet/balance", { params, withCredentials: true }),
         axios.get("/api/wallet/transactions", { params, withCredentials: true }),
+        axios.get(`/api/bookings/user/${userIdentifier}`, {
+          params: { email: u?.email, phone: u?.phone },
+        }),
       ]);
 
-      if (balRes.data) {
-        const hasActive = Boolean(balRes.data.hasCard && balRes.data.cardNumber);
+      if (balRes.status === "fulfilled" && balRes.value?.data) {
+        const balData = balRes.value.data;
+        const hasActive = Boolean(balData.hasCard && balData.cardNumber);
         setCardInfo({
           hasCard: hasActive,
-          cardNumber: balRes.data.cardNumber || "",
-          lastFour: balRes.data.lastFour || "",
-          cardType: balRes.data.cardType || "Regular Pass",
-          balance: Number(balRes.data.balance || 0),
+          cardNumber: balData.cardNumber || "",
+          lastFour: balData.lastFour || "",
+          cardType: balData.cardType || "Regular Pass",
+          balance: Number(balData.balance || 0),
           status: hasActive ? "Active" : "Not Issued",
         });
       }
 
-      if (txnRes.data && Array.isArray(txnRes.data)) {
-        // Derive travel history purely from actual recorded travel transactions
-        const travels = txnRes.data
-          .filter((t) => t.type === "Travel" || t.type === "Bus Booking")
-          .map((t) => ({
-            id: t.transactionId || t._id,
-            busNumber: "MoveSmart Bus",
-            routeName: t.description || "Transit Trip",
-            dateTime: t.createdAt ? new Date(t.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Recent",
-            seat: "Standard",
-            status: "Completed",
-            fare: `₹ ${Number(t.amount || 0).toFixed(2)}`,
-          }));
-        setTravelHistory(travels);
+      const combinedTravels = [];
+
+      // 1. Ingest actual Seat Bookings from MongoDB (with individual passenger details)
+      if (bookRes.status === "fulfilled" && Array.isArray(bookRes.value?.data?.bookings)) {
+        const today = new Date().toISOString().split("T")[0];
+        bookRes.value.data.bookings.forEach((b) => {
+          const isUpcoming = (b.travelDate >= today) && b.status !== "Cancelled";
+          combinedTravels.push({
+            id: b.bookingId || b._id,
+            busNumber: b.busNumber || b.busName || "MoveSmart Fleet Bus",
+            busName: b.busName,
+            routeName: `${b.fromLocation} ➔ ${b.toLocation}`,
+            dateTime: `${b.travelDate}${b.departureTime ? ` at ${b.departureTime}` : ""}`,
+            seat: Array.isArray(b.selectedSeats) ? b.selectedSeats.join(", ") : (b.selectedSeats || "Standard"),
+            passengers: Array.isArray(b.passengers) ? b.passengers : [],
+            passengerName: b.passengerName,
+            status: isUpcoming ? "Upcoming" : (b.status || "Completed"),
+            fare: `₹ ${Number(b.totalPrice || 0).toFixed(2)}`,
+            isSeatBooking: true,
+            rawBooking: b,
+            timestamp: b.createdAt ? new Date(b.createdAt).getTime() : Date.now(),
+          });
+        });
       }
+
+      // 2. Ingest wallet travel transactions
+      if (txnRes.status === "fulfilled" && Array.isArray(txnRes.value?.data)) {
+        txnRes.value.data
+          .filter((t) => t.type === "Travel" || t.type === "Bus Booking")
+          .forEach((t) => {
+            // Avoid duplicate if already in bookings list
+            const alreadyExists = combinedTravels.some((b) => b.id === t.transactionId || b.id === t._id);
+            if (!alreadyExists) {
+              combinedTravels.push({
+                id: t.transactionId || t._id,
+                busNumber: "MoveSmart Bus",
+                routeName: t.description || "Transit Trip",
+                dateTime: t.createdAt ? new Date(t.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Recent",
+                seat: "Standard",
+                passengers: [],
+                status: "Completed",
+                fare: `₹ ${Number(t.amount || 0).toFixed(2)}`,
+                isSeatBooking: false,
+                rawBooking: null,
+                timestamp: t.createdAt ? new Date(t.createdAt).getTime() : 0,
+              });
+            }
+          });
+      }
+
+      // Sort newest first
+      combinedTravels.sort((a, b) => b.timestamp - a.timestamp);
+      setTravelHistory(combinedTravels);
     } catch (err) {
       console.error("Failed to fetch profile card and activity data:", err);
     }
@@ -729,19 +778,82 @@ function Profile() {
                           </span>
                         </div>
 
-                        <div style={{ display: "flex", gap: "16px", marginTop: "4px", fontSize: "13px", color: "#64748b" }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", marginTop: "4px", fontSize: "13px", color: "#64748b" }}>
                           <span>🚌 {item.busNumber}</span>
-                          <span>🪑 Seat: {item.seat}</span>
+                          <span>🪑 Seat: <strong>{item.seat}</strong></span>
                           <span>📅 {item.dateTime}</span>
                         </div>
+
+                        {/* Co-passengers list if multi-seat booking */}
+                        {Array.isArray(item.passengers) && item.passengers.length > 0 && (
+                          <div style={{ marginTop: "6px", fontSize: "12px", color: "#475569", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: "700", color: "#0f172a" }}>👥 Passengers:</span>
+                            {item.passengers.map((p, pIdx) => (
+                              <span key={pIdx} style={{ background: "#ede9fe", color: "#6d28d9", padding: "1px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "700" }}>
+                                Seat {p.seat}: {p.name} {p.age ? `(${p.age}y)` : ""}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div style={{ textAlign: "right" }}>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
                       <div style={{ fontSize: "16px", fontWeight: "800", color: "#1e293b" }}>
                         {item.fare}
                       </div>
-                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>Ticket ID: {item.id}</span>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>Ref: {item.id}</span>
+
+                      {/* Download PDF Ticket & View Pass Action Buttons */}
+                      {item.isSeatBooking && item.rawBooking && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                          <button
+                            type="button"
+                            onClick={() => generateTicketPDF(item.rawBooking)}
+                            title="Download Official MoveSmart E-Ticket PDF Sheet"
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "8px",
+                              background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
+                              color: "#ffffff",
+                              border: "none",
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "5px",
+                              boxShadow: "0 2px 6px rgba(124, 58, 237, 0.25)",
+                              transition: "all 0.15s ease"
+                            }}
+                          >
+                            <Download size={13} />
+                            <span>Download PDF</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBookingForPass(item.rawBooking)}
+                            title="View Boarding Pass"
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: "8px",
+                              background: "#ffffff",
+                              color: "#334155",
+                              border: "1px solid #cbd5e1",
+                              fontSize: "12px",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px"
+                            }}
+                          >
+                            <Eye size={13} />
+                            <span>Pass</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1020,6 +1132,15 @@ function Profile() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* 🎫 BOARDING PASS & PDF MODAL */}
+      {selectedBookingForPass && (
+        <BookingSuccess
+          booking={selectedBookingForPass}
+          onClose={() => setSelectedBookingForPass(null)}
+          onGoToDashboard={() => setSelectedBookingForPass(null)}
+        />
       )}
 
       <Footer />

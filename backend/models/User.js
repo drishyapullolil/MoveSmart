@@ -33,7 +33,8 @@ const userSchema = new mongoose.Schema({
     },
     licenseImage: {
         type: String,
-        default: ""
+        default: "",
+        select: false
     },
     profilePic: {
         type: String,

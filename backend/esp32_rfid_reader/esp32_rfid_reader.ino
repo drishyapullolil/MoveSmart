@@ -64,8 +64,8 @@ String deviceMode = "BUS"; // "BUS" or "BIN"
 // =====================================================
 
 // Base backend server URLs (Current Laptop IPv4: 10.103.189.140)
-const char* busApiUrl = "http://10.103.189.140:5000/api/rfid/tap";
-const char* binApiUrl = "http://10.103.189.140:5000/api/bin/deposit";
+const char* busApiUrl = "http://10.187.91.140:5000/api/rfid/tap";
+const char* binApiUrl = "http://10.187.91.140:5000/api/bin/deposit";
 
 // Device Identifiers
 const char* deviceStopCode = "STOP_VYTTILA";

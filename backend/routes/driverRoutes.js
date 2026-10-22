@@ -163,7 +163,7 @@ router.get("/admin/drivers", async (req, res) => {
       try {
         dbDrivers = await User.find({
           role: { $regex: /^driver$/i }
-        }).select("-password").sort({ createdAt: -1 });
+        }).select("-password -licenseImage -profilePic").sort({ createdAt: -1 }).lean();
       } catch (dbErr) {
         console.warn("User.find query error in /admin/drivers:", dbErr.message);
       }
@@ -421,7 +421,7 @@ router.get("/driver/duty", optionalProtect, async (req, res) => {
 
 router.get("/driver/buses", optionalProtect, async (req, res) => {
   try {
-    let driverId = req.user?._id || req.query.driverId;
+    let driverId = req.user?._id || req.user?.id || req.query.driverId;
     const driverEmail = (req.user?.email || req.query.driverEmail || "").toLowerCase().trim();
     let driverName = (req.user?.name || req.query.driverName || "").trim();
     const driverPhone = String(req.user?.phone || req.query.driverPhone || "").replace(/\D/g, "");
@@ -480,7 +480,7 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
       }
     }
 
-    // 2. Find regular buses strictly assigned to this driver in MongoDB
+    // 2. Find regular buses assigned directly OR via 3-shift roster in MongoDB
     const queryConditions = [];
     if (driverId) {
       if (mongoose.Types.ObjectId.isValid(driverId)) {
@@ -495,10 +495,18 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
       queryConditions.push({ "shifts.night.driverId": String(driverId) });
     }
     if (driverEmail) {
-      queryConditions.push({ driverEmail: { $regex: new RegExp(`^${driverEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } });
+      const emailRegex = { $regex: new RegExp(`^${driverEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      queryConditions.push({ driverEmail: emailRegex });
+      queryConditions.push({ "shifts.morning.driverEmail": emailRegex });
+      queryConditions.push({ "shifts.evening.driverEmail": emailRegex });
+      queryConditions.push({ "shifts.night.driverEmail": emailRegex });
     }
     if (driverName) {
-      queryConditions.push({ driverName: { $regex: new RegExp(`^${driverName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } });
+      const nameRegex = { $regex: new RegExp(`^${driverName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      queryConditions.push({ driverName: nameRegex });
+      queryConditions.push({ "shifts.morning.driverName": nameRegex });
+      queryConditions.push({ "shifts.evening.driverName": nameRegex });
+      queryConditions.push({ "shifts.night.driverName": nameRegex });
     }
     if (userBusNumber) {
       queryConditions.push({ busNumber: userBusNumber });
@@ -516,6 +524,40 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
         if (!seenBusIds.has(String(b._id))) {
           seenBusIds.add(String(b._id));
           const busObj = b.toObject ? b.toObject() : { ...b };
+
+          // Identify all shifts assigned to this driver
+          const assignedShifts = [];
+          if (b.shifts) {
+            ["morning", "evening", "night"].forEach((shiftKey) => {
+              const s = b.shifts[shiftKey];
+              if (s) {
+                const idMatch = driverId && s.driverId && String(s.driverId) === String(driverId);
+                const nameMatch = driverName && s.driverName && s.driverName.toLowerCase().trim() === driverName.toLowerCase().trim();
+                const emailMatch = driverEmail && s.driverEmail && s.driverEmail.toLowerCase().trim() === driverEmail.toLowerCase().trim();
+                if (idMatch || nameMatch || emailMatch) {
+                  const cap = shiftKey.charAt(0).toUpperCase() + shiftKey.slice(1);
+                  assignedShifts.push({
+                    key: shiftKey,
+                    shiftName: cap,
+                    label: `${cap} Shift (${s.startTime || "06:00 AM"} – ${s.endTime || "02:00 PM"})`,
+                    startTime: s.startTime || (shiftKey === "morning" ? "06:00 AM" : shiftKey === "evening" ? "02:00 PM" : "10:00 PM"),
+                    endTime: s.endTime || (shiftKey === "morning" ? "02:00 PM" : shiftKey === "evening" ? "10:00 PM" : "06:00 AM"),
+                  });
+                }
+              }
+            });
+          }
+          busObj.assignedShifts = assignedShifts;
+          if (assignedShifts.length > 0) {
+            busObj.shift = assignedShifts.map((s) => s.shiftName).join(", ");
+            busObj.assignedShift = assignedShifts[0].shiftName;
+            busObj.shiftBadge = assignedShifts.map((s) => s.label).join(" • ");
+          } else {
+            busObj.shift = busObj.shift || "Regular Route";
+            busObj.assignedShift = busObj.assignedShift || "Regular";
+            busObj.shiftBadge = "🚍 Regular Route Assignment";
+          }
+
           if (!busObj.driverName || busObj.driverName === "Not Assigned" || busObj.driverName.includes("Unassigned") || busObj.driverName.includes("Replacement Driver Required")) {
             if (driverName) {
               busObj.driverName = driverName;
@@ -582,12 +624,9 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
 
     // 4. Attach all scheduled departures / trips belonging to each assigned bus
     for (const busObj of assignedBuses) {
-      let driverShift = busObj.shift || "Morning";
-      if (driverId && busObj.shifts) {
-        const dIdStr = String(driverId);
-        if (String(busObj.shifts.morning?.driverId) === dIdStr) driverShift = "Morning";
-        else if (String(busObj.shifts.evening?.driverId) === dIdStr) driverShift = "Evening";
-        else if (String(busObj.shifts.night?.driverId) === dIdStr) driverShift = "Night";
+      let driverShift = busObj.assignedShift || busObj.shift || "Morning";
+      if (busObj.assignedShifts && busObj.assignedShifts.length > 0) {
+        driverShift = busObj.assignedShifts[0].shiftName;
       }
       busObj.assignedShift = driverShift;
 
@@ -618,8 +657,37 @@ router.get("/driver/buses", optionalProtect, async (req, res) => {
         }
       }
 
-      // Add base route corridor if bus has one and not duplicate of existing trip
-      if (busObj.departureTime && !trips.some(t => t.departureTime === busObj.departureTime)) {
+      // If bus has placeholder "Depot" or empty route/stops, inherit from primary trip/schedule
+      if (trips.length > 0) {
+        const primaryTrip = trips.find(t => t.isCurrentDriverShift) || trips[0];
+        if (!busObj.routeName || busObj.routeName === "Depot ➔ Depot" || busObj.fromLocation === "Depot" || busObj.toLocation === "Depot" || !busObj.stops?.length) {
+          if (primaryTrip.routeName) busObj.routeName = primaryTrip.routeName;
+          if (primaryTrip.fromLocation && primaryTrip.fromLocation !== "Depot") busObj.fromLocation = primaryTrip.fromLocation;
+          if (primaryTrip.toLocation && primaryTrip.toLocation !== "Depot") busObj.toLocation = primaryTrip.toLocation;
+          if (primaryTrip.stops && primaryTrip.stops.length > 0) busObj.stops = primaryTrip.stops;
+          busObj.selectedScheduleId = primaryTrip.scheduleId;
+          busObj.departureTime = primaryTrip.departureTime || busObj.departureTime;
+          busObj.arrivalTime = primaryTrip.arrivalTime || busObj.arrivalTime;
+        }
+
+        // Sync bus in DB in background if it still had placeholder "Depot"
+        if (busObj._id && (busObj.fromLocation !== "Depot" && busObj.toLocation !== "Depot")) {
+          Bus.updateOne(
+            { _id: busObj._id, fromLocation: "Depot" },
+            {
+              $set: {
+                fromLocation: busObj.fromLocation,
+                toLocation: busObj.toLocation,
+                routeName: busObj.routeName,
+                stops: busObj.stops,
+              }
+            }
+          ).catch(() => {});
+        }
+      }
+
+      // Add base route corridor if bus has one (and not generic Depot) and not duplicate of existing trip
+      if (busObj.departureTime && busObj.fromLocation !== "Depot" && !trips.some(t => t.departureTime === busObj.departureTime)) {
         trips.unshift({
           id: `BUS-${busObj._id}-CORRIDOR`,
           scheduleId: null,
@@ -1772,7 +1840,7 @@ router.get("/admin/buses/:busId/shifts/:shift/eligible-drivers", async (req, res
     }).select("_id name email phone licenseNumber experienceYears verificationStatus").sort({ name: 1 }).lean();
 
     // 2. Fetch all other fleet buses to check for overlapping shift assignments
-    const allBuses = await Bus.find({ _id: { $ne: targetBus._id } }).lean();
+    const allBuses = await Bus.find({ _id: { $ne: targetBus._id } }).select("busNumber shifts").lean();
 
     // 3. Fetch all approved leaves to check for conflict with this shift's duty interval
     const approvedLeaves = await DriverLeave.find({ status: "Approved" }).lean();
@@ -1897,19 +1965,24 @@ router.put("/admin/buses/:busId/shifts", async (req, res) => {
 
     // CASE 1: UNASSIGN / CLEAR SHIFT (driverId is null, empty string, or "unassigned")
     if (!driverId || driverId === "unassigned" || driverId === "null") {
-      bus.shifts[shiftKey].driverId = null;
-      bus.shifts[shiftKey].driverName = "Not Assigned";
-      bus.shifts[shiftKey].driverEmail = "";
-      bus.shifts[shiftKey].driverPhone = "";
+      const updateFields = {
+        [`shifts.${shiftKey}.driverId`]: null,
+        [`shifts.${shiftKey}.driverName`]: "Not Assigned",
+        [`shifts.${shiftKey}.driverEmail`]: "",
+        [`shifts.${shiftKey}.driverPhone`]: "",
+      };
 
-      bus.markModified("shifts");
-      await bus.save();
+      const updatedBus = await Bus.findByIdAndUpdate(
+        bus._id,
+        { $set: updateFields },
+        { returnDocument: "after", runValidators: false }
+      );
 
       return res.json({
         success: true,
         message: `${shiftConfig.name} shift on Bus ${bus.busNumber} has been unassigned.`,
         shift: shiftConfig.name,
-        bus,
+        bus: updatedBus || bus,
       });
     }
 
@@ -1918,7 +1991,9 @@ router.put("/admin/buses/:busId/shifts", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid driver ID format." });
     }
 
-    const driver = await User.findById(driverId);
+    const driver = await User.findById(driverId)
+      .select("_id name email phone role verificationStatus")
+      .lean();
     if (!driver || String(driver.role || "").toLowerCase().trim() !== "driver") {
       return res.status(400).json({
         success: false,
@@ -1944,7 +2019,7 @@ router.put("/admin/buses/:busId/shifts", async (req, res) => {
         { driverEmail: driver.email ? new RegExp(`^${driver.email.trim()}$`, "i") : null },
       ].filter((c) => c.driverId || c.driverEmail),
       status: "Approved",
-    });
+    }).lean();
 
     for (const lv of approvedLeaves) {
       const intervals = getLeaveIntervals(lv);
@@ -1957,7 +2032,7 @@ router.put("/admin/buses/:busId/shifts", async (req, res) => {
     }
 
     // 2. Overlapping duty check on other fleet buses (actual continuous date/time intervals, including midnight crossing)
-    const otherBuses = await Bus.find({ _id: { $ne: bus._id } });
+    const otherBuses = await Bus.find({ _id: { $ne: bus._id } }).select("busNumber shifts").lean();
     for (const b of otherBuses) {
       if (!b.shifts) continue;
       for (const [sK, sV] of Object.entries(b.shifts)) {
@@ -1977,26 +2052,31 @@ router.put("/admin/buses/:busId/shifts", async (req, res) => {
       }
     }
 
-    // 3. Update ONLY the target shift
-    bus.shifts[shiftKey].driverId = driver._id;
-    bus.shifts[shiftKey].driverName = driver.name;
-    bus.shifts[shiftKey].driverEmail = driver.email || "";
-    bus.shifts[shiftKey].driverPhone = driver.phone || "";
-    bus.shifts[shiftKey].startTime = shiftConfig.startTime;
-    bus.shifts[shiftKey].endTime = shiftConfig.endTime;
+    // 3. Update ONLY the target shift atomically
+    const updateFields = {
+      [`shifts.${shiftKey}.driverId`]: driver._id,
+      [`shifts.${shiftKey}.driverName`]: driver.name,
+      [`shifts.${shiftKey}.driverEmail`]: driver.email || "",
+      [`shifts.${shiftKey}.driverPhone`]: driver.phone || "",
+      [`shifts.${shiftKey}.startTime`]: shiftConfig.startTime,
+      [`shifts.${shiftKey}.endTime`]: shiftConfig.endTime,
+    };
 
-    bus.markModified("shifts");
-    await bus.save();
+    const updatedBus = await Bus.findByIdAndUpdate(
+      bus._id,
+      { $set: updateFields },
+      { returnDocument: "after", runValidators: false }
+    );
 
     res.json({
       success: true,
       message: `Driver ${driver.name} successfully assigned to ${shiftConfig.name} shift (${shiftConfig.startTime}–${shiftConfig.endTime}) on Bus ${bus.busNumber}.`,
       shift: shiftConfig.name,
-      bus,
+      bus: updatedBus || bus,
     });
   } catch (error) {
     console.error("Error updating bus shift driver:", error);
-    res.status(500).json({ success: false, message: "Failed to update shift driver", error: error.message });
+    res.status(500).json({ success: false, message: error.message || "Failed to update shift driver", error: error.message });
   }
 });
 
@@ -2542,7 +2622,7 @@ async function handleDeleteFaceProfile(req, res) {
 const Stop = require("../models/Stop");
 const StopDistance = require("../models/StopDistance");
 const RfidDevice = require("../models/RfidDevice");
-const { getIO } = require("../services/socketService");
+const { getIO, setActiveBusLocation, removeActiveBusLocation } = require("../services/socketService");
 
 // In-Memory Live Drive Active Sessions
 // Key: driverId (String) or busId (String)
@@ -2568,8 +2648,28 @@ async function getDistanceBetweenStops(fromStopId, toStopId) {
 }
 
 // Helper to retrieve the ordered stops for a specific bus route
-async function getStopsForBus(bus) {
+async function getStopsForBus(bus, scheduleId = null) {
   const KERALA_COORDINATES = {
+    "new delhi": { lat: 28.6139, lng: 77.2090 },
+    "delhi": { lat: 28.6139, lng: 77.2090 },
+    "mysuru": { lat: 12.2958, lng: 76.6394 },
+    "mysore": { lat: 12.2958, lng: 76.6394 },
+    "bengaluru": { lat: 12.9716, lng: 77.5946 },
+    "bangalore": { lat: 12.9716, lng: 77.5946 },
+    "chennai": { lat: 13.0827, lng: 80.2707 },
+    "mumbai": { lat: 19.0760, lng: 72.8777 },
+    "hyderabad": { lat: 17.3850, lng: 78.4867 },
+    "coimbatore": { lat: 11.0168, lng: 76.9558 },
+    "madurai": { lat: 9.9252, lng: 78.1198 },
+    "kozhikode": { lat: 11.2588, lng: 75.7804 },
+    "calicut": { lat: 11.2588, lng: 75.7804 },
+    "kannur": { lat: 11.8745, lng: 75.3704 },
+    "kasaragod": { lat: 12.5102, lng: 74.9852 },
+    "palakkad": { lat: 10.7867, lng: 76.6548 },
+    "malappuram": { lat: 11.0510, lng: 76.0711 },
+    "wayanad": { lat: 11.6854, lng: 76.1320 },
+    "idukki": { lat: 9.9189, lng: 77.1025 },
+    "pathanamthitta": { lat: 9.2648, lng: 76.7870 },
     "erumely": { lat: 9.4716, lng: 76.7865 },
     "mukkoottuthara": { lat: 9.4210, lng: 76.8420 },
     "manimala": { lat: 9.5080, lng: 76.7320 },
@@ -2609,81 +2709,119 @@ async function getStopsForBus(bus) {
     };
   };
 
-  if (!bus) {
-    const allStops = await Stop.find({}).sort({ _id: 1 });
-    return allStops.length > 0 ? allStops : [
-      { name: "Kanjirappally Stand", code: "STOP_KANJIRAPPALLY", latitude: 9.5574, longitude: 76.7904 },
-      { name: "Ponkunnam Junction", code: "STOP_PONKUNNAM", latitude: 9.5714, longitude: 76.7584 },
-      { name: "Pala Bus Stand", code: "STOP_PALA", latitude: 9.7118, longitude: 76.6836 },
-      { name: "Erattupetta Central", code: "STOP_ERATTUPETTA", latitude: 9.6917, longitude: 76.7869 }
-    ];
-  }
-
-  // 1. If bus has explicit stops array in MongoDB
-  if (bus.stops && Array.isArray(bus.stops) && bus.stops.length > 0) {
+  // Standardize an array of raw stop names or stop objects into { name, code, latitude, longitude }
+  const convertStopsList = async (rawStops) => {
     const matchedStops = [];
-    for (let idx = 0; idx < bus.stops.length; idx++) {
-      const stopNameOrCode = bus.stops[idx];
-      const cleanName = String(stopNameOrCode).trim();
+    for (let idx = 0; idx < rawStops.length; idx++) {
+      const raw = rawStops[idx];
+      const cleanName = (typeof raw === "object" ? (raw.name || raw.stopName || raw.code) : String(raw)).trim();
+      if (!cleanName || cleanName.toLowerCase() === "depot") continue;
+
       const stopDoc = await Stop.findOne({
         $or: [
-          { name: { $regex: new RegExp(cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "i") } },
-          { code: { $regex: new RegExp(cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "i") } }
+          { name: { $regex: new RegExp(`^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } },
+          { code: { $regex: new RegExp(`^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") } }
         ]
       });
+
       if (stopDoc) {
         matchedStops.push(stopDoc);
       } else {
-        const coords = getCoordForName(cleanName, idx);
+        const coords = (typeof raw === "object" && raw.latitude && raw.longitude)
+          ? { latitude: raw.latitude, longitude: raw.longitude }
+          : getCoordForName(cleanName, idx);
         matchedStops.push({
           name: cleanName,
-          code: `STOP_${cleanName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+          code: (typeof raw === "object" && raw.code) ? raw.code : `STOP_${cleanName.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
           latitude: coords.latitude,
           longitude: coords.longitude
         });
       }
     }
-    if (matchedStops.length > 0) return matchedStops;
+    return matchedStops;
+  };
+
+  // 1. Look up Schedule if scheduleId provided or if bus has active schedules
+  let targetSchedule = null;
+  if (scheduleId && mongoose.Types.ObjectId.isValid(scheduleId)) {
+    targetSchedule = await Schedule.findById(scheduleId).populate("route_id");
+  }
+  if (!targetSchedule && bus) {
+    targetSchedule = await Schedule.findOne({
+      $or: [{ bus_id: bus._id }, { busNumber: bus.busNumber }],
+      is_active: true
+    }).populate("route_id").sort({ start_time: 1 });
   }
 
-  // 2. Look up stops matching fromLocation and toLocation
-  if (bus.fromLocation && bus.toLocation) {
-    const fromStop = await Stop.findOne({
-      $or: [
-        { name: { $regex: new RegExp(bus.fromLocation.trim(), "i") } },
-        { code: { $regex: new RegExp(bus.fromLocation.trim(), "i") } }
-      ]
-    });
-    const toStop = await Stop.findOne({
-      $or: [
-        { name: { $regex: new RegExp(bus.toLocation.trim(), "i") } },
-        { code: { $regex: new RegExp(bus.toLocation.trim(), "i") } }
-      ]
-    });
+  // 2. Identify associated Route
+  let routeDoc = targetSchedule?.route_id || null;
+  if (!routeDoc && bus?.route_id && mongoose.Types.ObjectId.isValid(bus.route_id)) {
+    routeDoc = await Route.findById(bus.route_id);
+  }
+  if (!routeDoc && bus?.routeName && !bus.routeName.toLowerCase().includes("depot")) {
+    routeDoc = await Route.findOne({ routeName: bus.routeName });
+  }
 
-    if (fromStop && toStop) {
-      return [fromStop, toStop];
+  // 3. If Route found, use its stops / endpoints
+  if (routeDoc) {
+    let routeStops = [];
+    if (routeDoc.stops && Array.isArray(routeDoc.stops) && routeDoc.stops.length > 0) {
+      routeStops = routeDoc.stops;
+    } else if (routeDoc.fromLocation && routeDoc.toLocation) {
+      routeStops = [routeDoc.fromLocation, ...(routeDoc.intermediateStops || []), routeDoc.toLocation];
     }
 
-    const fromCoords = getCoordForName(bus.fromLocation, 0);
-    const toCoords = getCoordForName(bus.toLocation, 1);
-    return [
-      {
-        name: bus.fromLocation,
-        code: `STOP_${bus.fromLocation.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
-        latitude: fromCoords.latitude,
-        longitude: fromCoords.longitude
-      },
-      {
-        name: bus.toLocation,
-        code: `STOP_${bus.toLocation.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
-        latitude: toCoords.latitude,
-        longitude: toCoords.longitude
+    if (routeStops.length > 0) {
+      const converted = await convertStopsList(routeStops);
+      if (converted.length > 0) {
+        // Sync bus document in background if it currently has placeholder "Depot"
+        if (bus?._id && (bus.fromLocation === "Depot" || bus.toLocation === "Depot" || !bus.routeName || !bus.stops?.length)) {
+          Bus.updateOne(
+            { _id: bus._id },
+            {
+              $set: {
+                fromLocation: routeDoc.fromLocation || converted[0].name,
+                toLocation: routeDoc.toLocation || converted[converted.length - 1].name,
+                routeName: routeDoc.routeName || `${converted[0].name} ➔ ${converted[converted.length - 1].name}`,
+                stops: routeStops,
+                route_id: routeDoc._id
+              }
+            }
+          ).catch(() => {});
+        }
+        return converted;
       }
-    ];
+    }
   }
 
-  return await Stop.find({}).sort({ _id: 1 });
+  // 4. If bus has explicit non-depot stops array in MongoDB
+  if (bus?.stops && Array.isArray(bus.stops) && bus.stops.length > 0) {
+    const validStops = bus.stops.filter(s => {
+      const n = (typeof s === "object" ? s.name : String(s)).trim().toLowerCase();
+      return n && n !== "depot";
+    });
+    if (validStops.length > 0) {
+      const converted = await convertStopsList(validStops);
+      if (converted.length > 0) return converted;
+    }
+  }
+
+  // 5. Look up stops matching fromLocation and toLocation (rejecting placeholder "Depot")
+  const isDepot = (loc) => !loc || String(loc).trim().toLowerCase() === "depot" || String(loc).trim().toLowerCase() === "origin";
+  if (bus && !isDepot(bus.fromLocation) && !isDepot(bus.toLocation)) {
+    const converted = await convertStopsList([bus.fromLocation, bus.toLocation]);
+    if (converted.length > 0) return converted;
+  }
+
+  // 6. Fallback: all non-depot stops or default Kerala stops
+  const allStops = await Stop.find({}).sort({ _id: 1 });
+  const nonDepotAll = allStops.filter(s => s.name && s.name.toLowerCase() !== "depot");
+  return nonDepotAll.length > 0 ? nonDepotAll : [
+    { name: "Kanjirappally Stand", code: "STOP_KANJIRAPPALLY", latitude: 9.5574, longitude: 76.7904 },
+    { name: "Ponkunnam Junction", code: "STOP_PONKUNNAM", latitude: 9.5714, longitude: 76.7584 },
+    { name: "Pala Bus Stand", code: "STOP_PALA", latitude: 9.7118, longitude: 76.6836 },
+    { name: "Erattupetta Central", code: "STOP_ERATTUPETTA", latitude: 9.6917, longitude: 76.7869 }
+  ];
 }
 
 // Helper: Generate Unique Trip Session ID (e.g. TRIP-2026-09-25-001)
@@ -2800,21 +2938,17 @@ router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) =>
         is_active: true
       });
 
-      if (busSchedules.length === 1) {
-        schedule = busSchedules[0];
-      } else if (busSchedules.length > 1) {
-        // If departureTime was explicitly provided, match on it
-        if (departureTime) {
-          schedule = busSchedules.find(s => s.start_time === departureTime || s.departure_time === departureTime);
-          if (!schedule) {
-            return res.status(404).json({
-              success: false,
-              message: `No active schedule found for bus ${bus.busNumber} matching departure time ${departureTime}.`,
-              code: "SCHEDULE_TIME_NOT_FOUND"
-            });
-          }
-        }
+      // If departureTime was explicitly provided, match on it first
+      if (departureTime) {
+        schedule = busSchedules.find(s => s.start_time === departureTime || s.departure_time === departureTime);
+      }
 
+      if (!schedule && busSchedules.length === 1) {
+        // Only select the single schedule if no conflicting departureTime was requested
+        if (!departureTime || busSchedules[0].start_time === departureTime || busSchedules[0].departure_time === departureTime) {
+          schedule = busSchedules[0];
+        }
+      } else if (!schedule && busSchedules.length > 1) {
         if (!schedule) {
           // Identify driver's assigned shift on this bus or active replacement duty
           let targetShift = null;
@@ -2871,8 +3005,8 @@ router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) =>
 
     // Fallback: Synthesize schedule from Bus attributes if no schedule documents exist
     if (!schedule) {
-      const busDepartureTime = bus.departureTime || "08:00 AM";
-      const busShift = bus.shift || inferShiftFromTime(busDepartureTime);
+      const busDepartureTime = departureTime || bus.departureTime || "08:00 AM";
+      const busShift = inferShiftFromTime(busDepartureTime);
       schedule = {
         _id: null,
         bus_id: bus._id,
@@ -2989,7 +3123,7 @@ router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) =>
     }
 
     // Load available stops strictly matching this assigned bus route
-    const stops = await getStopsForBus(bus);
+    const stops = await getStopsForBus(bus, schedule?._id || scheduleId);
     const initialStop = stops.length > 0 ? stops[0] : {
       name: bus.fromLocation || "Origin Terminal",
       code: "STOP_ORIGIN",
@@ -3122,20 +3256,39 @@ router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) =>
       // Broadcast live drive start via Socket.IO
       try {
         const io = getIO();
+        const trackingPayload = {
+          ...sessionObj,
+          busId: String(bus._id),
+          busNumber: bus.busNumber,
+          busName: bus.busName,
+          routeName: sessionObj.routeName || `${bus.fromLocation} ➔ ${bus.toLocation}`,
+          fromLocation: bus.fromLocation,
+          toLocation: bus.toLocation,
+          driverId: driver?._id ? String(driver._id) : null,
+          driverName: driver?.name || sessionObj.driverName || "Driver",
+          tripSessionId: newTripSessionId,
+          currentStopName: initialStop.name,
+          currentStopCode: initialStop.code,
+          latitude: Number(initialStop.latitude || 9.9658),
+          longitude: Number(initialStop.longitude || 76.3204),
+          speed: 25,
+          heading: 45,
+          isTracking: true,
+          status: "LIVE",
+          lastUpdated: Date.now(),
+          timestamp: new Date().toISOString()
+        };
+
+        setActiveBusLocation(bus._id, trackingPayload);
+
         if (io) {
-          const payload = {
-            ...sessionObj,
-            tripSessionId: newTripSessionId,
-            latitude: initialStop.latitude || 9.9658,
-            longitude: initialStop.longitude || 76.3204,
-            speed: 25,
-            heading: 45
-          };
-          io.to(`bus:${bus._id}`).emit("bus:trackingStarted", payload);
-          io.to(`bus:${bus._id}`).emit("bus:locationUpdate", payload);
-          io.to("admin-safety").emit("bus:trackingStarted", payload);
-          io.to("admin-safety").emit("bus:locationUpdate", payload);
-          io.emit("admin:fleet-location", payload);
+          io.to(`bus:${bus._id}`).emit("bus:trackingStarted", trackingPayload);
+          io.to(`bus:${bus._id}`).emit("bus:locationUpdate", trackingPayload);
+          io.to(`bus-${bus._id}`).emit("bus:trackingStarted", trackingPayload);
+          io.to(`bus-${bus._id}`).emit("bus:locationUpdate", trackingPayload);
+          io.to("admin-safety").emit("bus:trackingStarted", trackingPayload);
+          io.to("admin-safety").emit("bus:locationUpdate", trackingPayload);
+          io.emit("admin:fleet-location", trackingPayload);
           io.emit("rfid:location-updated", {
             tripSessionId: newTripSessionId,
             busId: bus._id,
@@ -3175,7 +3328,7 @@ router.post("/driver/live-drive/start", protect, driverOnly, async (req, res) =>
 // 2. POST /api/driver/live-drive/location - Update Stop & Location (Manual / GPS)
 router.post("/driver/live-drive/location", async (req, res) => {
   try {
-    const { driverId, busId, stopCode, mode = "manual", latitude, longitude, speed = 35 } = req.body;
+    const { driverId, busId, stopCode, mode = "manual", latitude, longitude, speed = 35, scheduleId } = req.body;
 
     let bus = null;
     if (busId && mongoose.Types.ObjectId.isValid(busId)) {
@@ -3184,7 +3337,7 @@ router.post("/driver/live-drive/location", async (req, res) => {
       bus = await Bus.findOne({ $or: [{ driverId }, { driverEmail: driverId }] });
     }
 
-    const stops = await getStopsForBus(bus);
+    const stops = await getStopsForBus(bus, scheduleId);
     let targetStop = null;
     let targetIndex = 0;
 
@@ -3264,28 +3417,42 @@ router.post("/driver/live-drive/location", async (req, res) => {
       }
     } catch {}
 
-    const effectiveLat = latitude || targetStop.latitude || 9.9658;
-    const effectiveLng = longitude || targetStop.longitude || 76.3204;
+    const effectiveLat = Number(latitude || targetStop.latitude || 9.9658);
+    const effectiveLng = Number(longitude || targetStop.longitude || 76.3204);
+
+    const trackingPayload = {
+      ...sessionObj,
+      busId: String(sessionObj.busId),
+      busNumber: sessionObj.busNumber,
+      busName: sessionObj.busName,
+      routeName: sessionObj.routeName,
+      driverId: sessionObj.driverId ? String(sessionObj.driverId) : null,
+      driverName: sessionObj.driverName || "Driver",
+      tripSessionId: sessionObj.tripSessionId,
+      latitude: effectiveLat,
+      longitude: effectiveLng,
+      speed: Number(speed) || 30,
+      heading: 65,
+      currentStopName: targetStop.name,
+      currentStopCode: targetStop.code,
+      currentStopIndex: targetIndex,
+      segmentDistance,
+      isTracking: true,
+      status: "LIVE",
+      lastUpdated: Date.now(),
+      timestamp: new Date().toISOString()
+    };
+
+    setActiveBusLocation(sessionObj.busId, trackingPayload);
 
     // Broadcast location update
     try {
       const io = getIO();
       if (io) {
-        const payload = {
-          ...sessionObj,
-          tripSessionId: sessionObj.tripSessionId,
-          latitude: effectiveLat,
-          longitude: effectiveLng,
-          speed: Number(speed) || 30,
-          heading: 65,
-          currentStopName: targetStop.name,
-          currentStopCode: targetStop.code,
-          segmentDistance,
-          timestamp: new Date().toISOString()
-        };
-        io.to(`bus:${sessionObj.busId}`).emit("bus:locationUpdate", payload);
-        io.to("admin-safety").emit("bus:locationUpdate", payload);
-        io.emit("admin:fleet-location", payload);
+        io.to(`bus:${sessionObj.busId}`).emit("bus:locationUpdate", trackingPayload);
+        io.to(`bus-${sessionObj.busId}`).emit("bus:locationUpdate", trackingPayload);
+        io.to("admin-safety").emit("bus:locationUpdate", trackingPayload);
+        io.emit("admin:fleet-location", trackingPayload);
         io.emit("rfid:location-updated", {
           tripSessionId: sessionObj.tripSessionId,
           busNumber: sessionObj.busNumber,
@@ -3341,11 +3508,21 @@ router.post("/driver/live-drive/pause", async (req, res) => {
     if (sessionObj.busId) liveDriveSessions.set(String(sessionObj.busId), sessionObj);
     liveDriveSessions.set(sessionObj.tripSessionId, sessionObj);
 
+    const isPaused = sessionObj.status === "PAUSED";
+    const pausePayload = {
+      busId: String(sessionObj.busId),
+      isTracking: true,
+      status: isPaused ? "PAUSED" : "LIVE",
+      lastUpdated: Date.now(),
+    };
+    setActiveBusLocation(sessionObj.busId, pausePayload);
+
     try {
       const io = getIO();
       if (io) {
-        io.to(`bus:${sessionObj.busId}`).emit("bus:locationUpdate", sessionObj);
-        io.to("admin-safety").emit("bus:locationUpdate", sessionObj);
+        io.to(`bus:${sessionObj.busId}`).emit("bus:locationUpdate", { ...sessionObj, ...pausePayload });
+        io.to(`bus-${sessionObj.busId}`).emit("bus:locationUpdate", { ...sessionObj, ...pausePayload });
+        io.to("admin-safety").emit("bus:locationUpdate", { ...sessionObj, ...pausePayload });
       }
     } catch {}
 
@@ -3500,27 +3677,32 @@ router.post("/driver/live-drive/end", async (req, res) => {
       }
     }
 
-    // Clean up in-memory map
+    // Clean up in-memory map & cache
     const sessionKey = driverId ? String(driverId) : String(busId);
     liveDriveSessions.delete(sessionKey);
-    if (activeTripDoc.busId) liveDriveSessions.delete(String(activeTripDoc.busId));
+    if (activeTripDoc.busId) {
+      liveDriveSessions.delete(String(activeTripDoc.busId));
+      removeActiveBusLocation(activeTripDoc.busId);
+    }
     liveDriveSessions.delete(currentTripSessionId);
 
     // Broadcast tracking completion
     try {
       const io = getIO();
       if (io) {
-        io.to(`bus:${activeTripDoc.busId}`).emit("bus:trackingStopped", {
+        const stopPayload = {
           tripSessionId: currentTripSessionId,
-          busId: activeTripDoc.busId,
+          busId: String(activeTripDoc.busId),
+          busNumber: activeTripDoc.busNumber,
+          isTracking: false,
           status: "COMPLETED",
+          lastUpdated: Date.now(),
           timestamp: new Date().toISOString()
-        });
-        io.to("admin-safety").emit("bus:trackingStopped", {
-          tripSessionId: currentTripSessionId,
-          busId: activeTripDoc.busId,
-          status: "COMPLETED"
-        });
+        };
+        io.to(`bus:${activeTripDoc.busId}`).emit("bus:trackingStopped", stopPayload);
+        io.to(`bus-${activeTripDoc.busId}`).emit("bus:trackingStopped", stopPayload);
+        io.to("admin-safety").emit("bus:trackingStopped", stopPayload);
+        io.emit("admin:fleet-location", stopPayload);
       }
     } catch {}
 
@@ -3556,7 +3738,7 @@ router.post("/driver/live-drive/end", async (req, res) => {
 // 5. GET /api/driver/live-drive/status - Get Current Drive Status
 router.get("/driver/live-drive/status", optionalProtect, async (req, res) => {
   try {
-    const { driverId, busId } = req.query;
+    const { driverId, busId, scheduleId } = req.query;
 
     let bus = null;
     if (busId && mongoose.Types.ObjectId.isValid(busId)) {
@@ -3587,8 +3769,22 @@ router.get("/driver/live-drive/status", optionalProtect, async (req, res) => {
       liveDriveSessions.set(sessionObj.tripSessionId, sessionObj);
     }
 
-    const stops = await getStopsForBus(bus);
+    const effectiveScheduleId = scheduleId || activeTripDoc?.scheduleId || null;
+    const stops = await getStopsForBus(bus, effectiveScheduleId);
     const distances = await StopDistance.find({}).populate("fromStop").populate("toStop");
+
+    const busObj = bus ? (bus.toObject ? bus.toObject() : { ...bus }) : null;
+    if (busObj && stops.length > 0) {
+      if (!busObj.fromLocation || busObj.fromLocation === "Depot") {
+        busObj.fromLocation = stops[0].name;
+      }
+      if (!busObj.toLocation || busObj.toLocation === "Depot") {
+        busObj.toLocation = stops[stops.length - 1].name;
+      }
+      if (!busObj.routeName || busObj.routeName === "Depot ➔ Depot") {
+        busObj.routeName = `${stops[0].name} ➔ ${stops[stops.length - 1].name}`;
+      }
+    }
 
     res.json({
       success: true,
@@ -3597,7 +3793,7 @@ router.get("/driver/live-drive/status", optionalProtect, async (req, res) => {
       tripSessionId: activeTripDoc ? activeTripDoc.tripSessionId : null,
       stops,
       distances,
-      bus
+      bus: busObj
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

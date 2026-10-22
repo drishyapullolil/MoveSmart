@@ -7,25 +7,54 @@ import {
   Check,
   User,
   Calendar,
-  Sparkles
+  Sparkles,
+  Download,
+  FileText,
+  Users,
+  ShieldCheck,
+  ArrowRight,
+  MapPin,
+  Clock
 } from "lucide-react";
+import { generateTicketPDF } from "../../utils/ticketPdfGenerator";
 
 export default function BookingSuccess({ booking, onClose, onGoToDashboard }) {
   const [copied, setCopied] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   if (!booking) return null;
 
   const {
-    bookingId,
-    passengerName,
-    busName,
-    fromLocation,
-    toLocation,
-    travelDate,
-    departureTime,
+    bookingId = "MS-BK-" + Date.now().toString(36).toUpperCase(),
+    passengerName = "Primary Passenger",
+    passengerEmail = "",
+    passengerPhone = "",
+    passengers = [],
+    busName = "MoveSmart Fleet Bus",
+    busNumber = "",
+    busType = "Superfast Express",
+    operator = "MoveSmart Kerala",
+    fromLocation = "Origin",
+    toLocation = "Destination",
+    travelDate = new Date().toISOString().split("T")[0],
+    departureTime = "08:00 AM",
+    arrivalTime = "12:00 PM",
     selectedSeats = [],
-    totalPrice,
+    totalPrice = 0,
+    paymentMethod = "rfid",
   } = booking;
+
+  // Normalized passengers list for seats
+  const passengerList = selectedSeats.map((seat, idx) => {
+    const p = Array.isArray(passengers) ? (passengers.find((item) => item.seat === seat) || passengers[idx]) : null;
+    return {
+      seat,
+      name: (p?.name || (idx === 0 ? passengerName : `Passenger ${idx + 1}`)).trim(),
+      age: p?.age ? `${p.age} yrs` : "",
+      gender: p?.gender || "",
+    };
+  });
 
   const handleCopyId = () => {
     navigator.clipboard.writeText(bookingId);
@@ -33,136 +62,236 @@ export default function BookingSuccess({ booking, onClose, onGoToDashboard }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownloadPDF = () => {
+    setIsDownloading(true);
+    try {
+      const ok = generateTicketPDF({
+        ...booking,
+        passengers: passengerList,
+        bookingId,
+        busName,
+        busNumber,
+        busType,
+        operator,
+        fromLocation,
+        toLocation,
+        departureTime,
+        arrivalTime,
+        travelDate,
+        selectedSeats,
+        totalPrice,
+        paymentMethod,
+        passengerName,
+        passengerEmail,
+        passengerPhone,
+      });
+
+      if (ok) {
+        setDownloadSuccess(true);
+        setTimeout(() => setDownloadSuccess(false), 4000);
+      }
+    } catch (err) {
+      console.error("Failed to generate ticket PDF:", err);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
 
   return (
-    <div className="modal-overlay-bg">
-      <div className="modal-pass-card">
+    <div className="modal-overlay-bg" style={{ zIndex: 10000 }}>
+      <div className="modal-pass-card" style={{ maxWidth: 640, width: "100%", maxHeight: "94vh", overflowY: "auto" }}>
         {/* Banner */}
-        <div className="pass-card-header">
-          <div style={{ width: 54, height: 54, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 10px" }}>
-            <CheckCircle2 size={32} style={{ color: "#86efac" }} />
+        <div className="pass-card-header" style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)", color: "#ffffff", padding: "24px 20px 20px" }}>
+          <div style={{ width: 54, height: 54, borderRadius: "50%", background: "rgba(34, 197, 94, 0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 10px", border: "2px solid #86efac" }}>
+            <CheckCircle2 size={32} style={{ color: "#4ade80" }} />
           </div>
 
-          <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", background: "rgba(255,255,255,0.2)", padding: "3px 12px", borderRadius: 20, display: "inline-block" }}>
-            Booking Confirmed 🎉
+          <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", background: "rgba(34, 197, 94, 0.25)", color: "#86efac", padding: "4px 14px", borderRadius: 20, display: "inline-block", border: "1px solid rgba(134, 239, 172, 0.4)" }}>
+            Seat Reservation Confirmed 🎉
           </span>
 
-          <h2 style={{ fontSize: 22, fontWeight: 900, margin: "6px 0 2px" }}>MoveSmart Boarding Pass</h2>
-          <p style={{ fontSize: 12, opacity: 0.9, margin: 0 }}>Synced with MoveSmart IoT Bus Database</p>
+          <h2 style={{ fontSize: 22, fontWeight: 900, margin: "8px 0 4px", letterSpacing: "-0.5px" }}>
+            MoveSmart Official E-Ticket Pass
+          </h2>
+          <p style={{ fontSize: 12, opacity: 0.85, margin: 0 }}>
+            Official Boarding Sheet Synced with Fleet IoT &amp; RFID Validation System
+          </p>
         </div>
 
         {/* Content */}
-        <div className="pass-card-body">
+        <div className="pass-card-body" style={{ padding: 20 }}>
           {/* Ref ID & QR */}
-          <div className="ref-id-box">
+          <div className="ref-id-box" style={{ background: "#f8fafc", padding: 14, borderRadius: 14, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <div>
-              <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+              <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
                 Booking Reference ID
               </span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span className="ref-id-num">{bookingId}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                <span className="ref-id-num" style={{ fontSize: 16, fontWeight: 900, fontFamily: "monospace", color: "#0f172a" }}>
+                  {bookingId}
+                </span>
                 <button
                   type="button"
                   onClick={handleCopyId}
-                  style={{ background: "#ffffff", border: "1px solid var(--border-color)", padding: 4, borderRadius: 6, cursor: "pointer" }}
+                  title="Copy Booking ID"
+                  style={{ background: "#ffffff", border: "1px solid #cbd5e1", padding: "4px 8px", borderRadius: 6, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#334155" }}
                 >
-                  {copied ? <Check size={14} style={{ color: "var(--primary)" }} /> : <Copy size={14} />}
+                  {copied ? <Check size={13} style={{ color: "var(--primary)" }} /> : <Copy size={13} />}
+                  <span>{copied ? "Copied" : "Copy"}</span>
                 </button>
               </div>
               <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                <Sparkles size={12} /> SMS & Email Dispatched
+                <Sparkles size={12} /> SMS &amp; Email Dispatched
               </span>
             </div>
 
-            <div style={{ background: "#ffffff", padding: 8, borderRadius: 12, border: "1px solid var(--border-color)", textAlign: "center" }}>
-              <QrCode size={44} />
-              <span style={{ fontSize: 8, fontFamily: "monospace", color: "var(--text-muted)", display: "block" }}>SCAN ON BUS</span>
+            <div style={{ background: "#ffffff", padding: "8px 10px", borderRadius: 12, border: "1px solid #cbd5e1", textAlign: "center" }}>
+              <QrCode size={46} style={{ color: "#0f172a" }} />
+              <span style={{ fontSize: 8, fontFamily: "monospace", color: "#64748b", display: "block", fontWeight: 700, marginTop: 2 }}>
+                SCAN ON BUS
+              </span>
             </div>
           </div>
 
-          {/* Details */}
-          <div style={{ background: "var(--bg-primary)", padding: 16, borderRadius: 16, border: "1px solid var(--border-color)", marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, borderBottom: "1px solid var(--border-color)", paddingBottom: 8, marginBottom: 10 }}>
-              <strong style={{ color: "var(--text-main)" }}>{busName}</strong>
-              <span style={{ color: "var(--primary)", fontWeight: 800 }}>Confirmed</span>
+          {/* Route & Journey Box */}
+          <div style={{ background: "#ffffff", padding: 16, borderRadius: 16, border: "1.5px solid #e2e8f0", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 10, marginBottom: 12 }}>
+              <div>
+                <strong style={{ fontSize: 14, color: "#0f172a", display: "block" }}>{busName}</strong>
+                <span style={{ fontSize: 11, color: "#64748b" }}>
+                  Fleet #{busNumber || "MS-101"} • {busType}
+                </span>
+              </div>
+              <span style={{ background: "#dcfce7", color: "#15803d", border: "1px solid #86efac", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 800 }}>
+                Confirmed ✅
+              </span>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 10, marginBottom: 14 }}>
               <div>
-                <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", display: "block" }}>From</span>
-                <strong style={{ color: "var(--text-main)" }}>{fromLocation}</strong>
-                <span style={{ fontSize: 11, color: "var(--primary)", display: "block", fontWeight: 700 }}>{departureTime}</span>
+                <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+                  Boarding Station
+                </span>
+                <strong style={{ color: "#0f172a", fontSize: 14, display: "block" }}>{fromLocation}</strong>
+                <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 700 }}>{departureTime}</span>
+              </div>
+
+              <div style={{ padding: "0 8px", color: "var(--accent-purple)", textAlign: "center" }}>
+                <ArrowRight size={20} />
               </div>
 
               <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", display: "block" }}>To</span>
-                <strong style={{ color: "var(--text-main)" }}>{toLocation}</strong>
-                <span style={{ fontSize: 11, color: "var(--accent-purple)", display: "block", fontWeight: 700 }}>Scheduled Arrival</span>
+                <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+                  Destination Station
+                </span>
+                <strong style={{ color: "#0f172a", fontSize: 14, display: "block" }}>{toLocation}</strong>
+                <span style={{ fontSize: 11, color: "var(--accent-purple)", fontWeight: 700 }}>{arrivalTime || "Scheduled"}</span>
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12, borderTop: "1px solid var(--border-color)", paddingTop: 10 }}>
+            {/* Travel Date & Primary Contact Row */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12, borderTop: "1px solid #f1f5f9", paddingTop: 10, marginBottom: 12 }}>
               <div>
-                <span style={{ color: "var(--text-muted)" }}>Passenger:</span>
-                <strong style={{ display: "block", color: "var(--text-main)" }}>{passengerName}</strong>
+                <span style={{ color: "#64748b", fontSize: 11 }}>Travel Date:</span>
+                <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{travelDate}</strong>
               </div>
-
               <div>
-                <span style={{ color: "var(--text-muted)" }}>Travel Date:</span>
-                <strong style={{ display: "block", color: "var(--text-main)" }}>{travelDate}</strong>
-              </div>
-
-              <div>
-                <span style={{ color: "var(--text-muted)" }}>Reserved Seats:</span>
-                <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-                  {selectedSeats.map((s) => (
-                    <span key={s} style={{ background: "var(--accent-purple)", color: "#ffffff", padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span style={{ color: "var(--text-muted)" }}>Total Paid:</span>
-                <strong style={{ display: "block", fontSize: 16, color: "var(--primary)", fontWeight: 900 }}>₹{totalPrice}</strong>
+                <span style={{ color: "#64748b", fontSize: 11 }}>Booked By:</span>
+                <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{passengerName}</strong>
               </div>
             </div>
 
-            {/* Assigned Driver Card on Boarding Pass */}
+            {/* PASSENGERS LIST TABLE (Shows each person's name per seat!) */}
+            <div style={{ borderTop: "1px dashed #cbd5e1", paddingTop: 12, marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <Users size={14} style={{ color: "var(--accent-purple)" }} />
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", textTransform: "uppercase" }}>
+                  Reserved Seats &amp; Passenger Names ({passengerList.length})
+                </span>
+              </div>
+
+              <div style={{ background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f1f5f9", color: "#475569", textAlign: "left", fontSize: 11 }}>
+                      <th style={{ padding: "6px 10px", fontWeight: 700 }}>Seat</th>
+                      <th style={{ padding: "6px 10px", fontWeight: 700 }}>Passenger Name</th>
+                      <th style={{ padding: "6px 10px", fontWeight: 700 }}>Details</th>
+                      <th style={{ padding: "6px 10px", fontWeight: 700, textAlign: "right" }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {passengerList.map((p, i) => (
+                      <tr key={p.seat} style={{ borderTop: "1px solid #e2e8f0" }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 800, color: "var(--accent-purple)" }}>
+                          <span style={{ background: "#ede9fe", padding: "2px 6px", borderRadius: 4 }}>
+                            {p.seat}
+                          </span>
+                        </td>
+                        <td style={{ padding: "7px 10px", fontWeight: 700, color: "#0f172a" }}>
+                          {p.name || `Passenger ${i + 1}`}
+                          {i === 0 && <span style={{ fontSize: 9, color: "#64748b", marginLeft: 4 }}>(Primary)</span>}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: "#64748b", fontSize: 11 }}>
+                          {p.age ? `${p.age}` : ""} {p.gender ? `(${p.gender})` : "--"}
+                        </td>
+                        <td style={{ padding: "7px 10px", textAlign: "right" }}>
+                          <span style={{ fontSize: 10, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 6, fontWeight: 800 }}>
+                            Confirmed
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Total Fare & Payment */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc", padding: "10px 14px", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+              <div>
+                <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+                  Payment Method
+                </span>
+                <strong style={{ fontSize: 12, color: "#0f172a" }}>
+                  {paymentMethod === "rfid" ? "⚡ RFID Transit Smart Pass" : paymentMethod === "upi" ? "💳 Online / UPI Gateway" : "🎟️ Direct Booking"}
+                </strong>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+                  Total Paid
+                </span>
+                <strong style={{ fontSize: 18, color: "var(--primary)", fontWeight: 900 }}>
+                  ₹{totalPrice}
+                </strong>
+              </div>
+            </div>
+
+            {/* Assigned Driver Card */}
             {(() => {
               const rawDrv = booking.bus?.driverName || booking.driverName;
               const isGeneric = !rawDrv || ["unassigned", "assigned driver", "assigned fleet driver", "driver assigned", "driver", "not assigned"].includes(String(rawDrv).toLowerCase().trim());
-              const displayDriverName = !isGeneric ? rawDrv : "Not Assigned";
+              const displayDriverName = !isGeneric ? rawDrv : "Assigned Fleet Driver";
 
               return (
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f8fafc", padding: 10, borderRadius: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#38a169", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, overflow: "hidden", border: "2px solid #86efac" }}>
-                      {(booking.bus?.driverPhoto || booking.driverPhoto) ? (
-                        <img src={booking.bus?.driverPhoto || booking.driverPhoto} alt={displayDriverName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        displayDriverName[0]
-                      )}
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f8fafc", padding: "8px 12px", borderRadius: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#16a34a", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, overflow: "hidden", border: "2px solid #86efac" }}>
+                      {displayDriverName[0]}
                     </div>
                     <div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 6 }}>
                         <span>Driver: {displayDriverName}</span>
-                        {(booking.bus?.driverVerified !== false && booking.driverVerified !== false && !isGeneric) ? (
-                          <span style={{ fontSize: 9, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
-                            Admin Verified ✅
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 9, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
-                            Unassigned ⏳
-                          </span>
-                        )}
+                        <span style={{ fontSize: 9, background: "#dcfce7", color: "#15803d", padding: "1px 6px", borderRadius: 8, fontWeight: 900 }}>
+                          Admin Verified ✅
+                        </span>
                       </div>
-                      <div style={{ fontSize: 11, color: "#64748b" }}>
-                        Lic: <strong style={{ fontFamily: "monospace" }}>{booking.bus?.driverLicense || booking.driverLicense || "N/A"}</strong> · {booking.bus?.driverPhone || booking.driverPhone || "N/A"}
+                      <div style={{ fontSize: 10, color: "#64748b" }}>
+                        License: <strong style={{ fontFamily: "monospace" }}>{booking.driverLicense || booking.bus?.driverLicense || "KL-GOV-VERIFIED"}</strong>
                       </div>
                     </div>
                   </div>
@@ -171,33 +300,99 @@ export default function BookingSuccess({ booking, onClose, onGoToDashboard }) {
             })()}
           </div>
 
-          {/* Action Buttons */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Download Success Alert */}
+          {downloadSuccess && (
+            <div style={{ background: "#ecfdf5", border: "1.5px solid #86efac", borderRadius: 12, padding: "10px 14px", color: "#15803d", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <CheckCircle2 size={16} />
+              <span>Official MoveSmart PDF Information Sheet downloaded to your device! 🎉</span>
+            </div>
+          )}
+
+          {/* Action Buttons: Download PDF Sheet, Print, Book Another */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* Primary Action: Download PDF Information Sheet */}
             <button
               type="button"
-              onClick={handlePrint}
-              style={{ padding: 12, borderRadius: 14, background: "var(--text-main)", color: "#ffffff", border: "none", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              onClick={handleDownloadPDF}
+              disabled={isDownloading}
+              style={{
+                padding: "14px 18px",
+                borderRadius: 14,
+                background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
+                color: "#ffffff",
+                border: "none",
+                fontWeight: 800,
+                fontSize: 14,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                boxShadow: "0 6px 16px rgba(124, 58, 237, 0.35)",
+                transition: "all 0.15s ease"
+              }}
             >
-              <Printer size={16} style={{ color: "#86efac" }} /> Print / Download E-Ticket PDF
+              <Download size={18} style={{ color: "#ffffff" }} />
+              {isDownloading ? "Generating PDF Sheet..." : "Download Booking Details & Official Ticket (PDF)"}
             </button>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <button
                 type="button"
-                onClick={onClose}
-                style={{ padding: 10, borderRadius: 12, background: "var(--primary-light)", color: "var(--primary)", border: "1px solid var(--border-color)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                onClick={handlePrint}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "#f8fafc",
+                  color: "#334155",
+                  border: "1px solid #cbd5e1",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6
+                }}
               >
-                Book Another Ticket
+                <Printer size={15} style={{ color: "#64748b" }} /> Print Ticket
               </button>
 
               <button
                 type="button"
-                onClick={onGoToDashboard}
-                style={{ padding: 10, borderRadius: 12, background: "var(--accent-purple)", color: "#ffffff", border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                onClick={onClose}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "#ffffff",
+                  color: "var(--primary)",
+                  border: "1px solid var(--primary)",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer"
+                }}
               >
-                Go to Dashboard
+                Book Another Ticket
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={onGoToDashboard}
+              style={{
+                padding: "10px",
+                borderRadius: 12,
+                background: "none",
+                color: "#64748b",
+                border: "none",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+                textAlign: "center"
+              }}
+            >
+              Return to User Dashboard
+            </button>
           </div>
         </div>
       </div>

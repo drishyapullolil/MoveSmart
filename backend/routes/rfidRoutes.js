@@ -588,7 +588,7 @@ router.post("/distances", async (req, res) => {
  * Dispatches mode command to the shared physical ESP32 device
  * Validates mode strictly as 'BUS' or 'BIN'
  */
-router.put("/device-mode", protect, async (req, res) => {
+router.put("/device-mode", optionalProtect, async (req, res) => {
   try {
     const { mode } = req.body;
 
@@ -600,67 +600,106 @@ router.put("/device-mode", protect, async (req, res) => {
       });
     }
 
-    // 2. Resolve ESP32 physical IP address
-    let esp32Ip = process.env.ESP32_IP || global.lastSeenEsp32Ip || null;
+    // 2. Resolve ESP32 physical IP address candidates with fast priority
+    const candidates = [];
+    if (req.body.ipAddress) candidates.push(req.body.ipAddress);
+    if (req.query.ipAddress) candidates.push(req.query.ipAddress);
+    if (global.lastSeenEsp32Ip) candidates.push(global.lastSeenEsp32Ip);
+    if (process.env.ESP32_IP) candidates.push(process.env.ESP32_IP);
 
-    if (!esp32Ip && mongoose.connection.readyState === 1) {
+    // Auto-discover subnet candidates from active local network interfaces (e.g. .100)
+    try {
+      const os = require("os");
+      const interfaces = os.networkInterfaces();
+      for (const ifaceName in interfaces) {
+        for (const iface of interfaces[ifaceName]) {
+          if (!iface.internal && iface.family === "IPv4") {
+            const subnetPrefix = iface.address.substring(0, iface.address.lastIndexOf("."));
+            candidates.push(`${subnetPrefix}.100`);
+            for (const c of [...candidates]) {
+              const lastOctet = c.split(".").pop();
+              if (lastOctet && !isNaN(lastOctet)) {
+                candidates.push(`${subnetPrefix}.${lastOctet}`);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    // Fallback DB candidate only if needed
+    if (candidates.length === 0 && mongoose.connection.readyState === 1) {
       try {
         const device = await RfidDevice.findOne({ ipAddress: { $ne: "0.0.0.0", $exists: true } });
         if (device && device.ipAddress && device.ipAddress !== "0.0.0.0") {
-          esp32Ip = device.ipAddress;
+          candidates.push(device.ipAddress);
         }
       } catch (dbErr) {}
     }
 
-    if (!esp32Ip) {
-      // Fallback default local address if unconfigured
-      esp32Ip = "192.168.4.1";
-    }
+    // Fallback default SoftAP address
+    candidates.push("192.168.4.1");
 
-    // 3. Dispatch HTTP GET command to physical ESP32 (/mode?mode=BUS or BIN)
-    const esp32Url = `http://${esp32Ip}/mode?mode=${encodeURIComponent(mode)}`;
-    console.log(`[DeviceMode] Dispatching mode '${mode}' to ESP32: ${esp32Url}`);
+    // Deduplicate candidate IP addresses
+    const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    let lastError = null;
+    let successfulIp = null;
 
-    try {
-      const response = await fetch(esp32Url, {
-        method: "GET",
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+    // 3. Probe candidates sequentially with fast 1200ms timeout
+    for (const testIp of uniqueCandidates) {
+      const esp32Url = `http://${testIp}/mode?mode=${encodeURIComponent(mode)}`;
+      console.log(`[DeviceMode] Trying ESP32 at: ${esp32Url}`);
 
-      if (response.ok) {
-        // Track mode and active device status
-        global.currentEsp32Mode = mode;
-        await RfidDevice.updateMany({}, {
-          $set: {
-            status: "Connected",
-            lastHeartbeat: new Date()
-          }
-        }).catch(() => {});
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
 
-        const modeDescription = (mode === "BUS") ? "Bus RFID mode." : "Smart Waste Bin mode.";
-        return res.json({
-          success: true,
-          mode: mode,
-          message: `ESP32 switched to ${modeDescription}`
+      try {
+        const response = await fetch(esp32Url, {
+          method: "GET",
+          signal: controller.signal
         });
-      } else {
-        return res.status(502).json({
-          success: false,
-          message: "ESP32 is offline. Mode was not changed."
-        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          successfulIp = testIp;
+          global.lastSeenEsp32Ip = testIp;
+          process.env.ESP32_IP = testIp;
+          global.currentEsp32Mode = mode;
+
+          // Non-blocking asynchronous update in DB so frontend responds immediately (<500ms)
+          RfidDevice.updateMany({}, {
+            $set: {
+              ipAddress: testIp,
+              status: "Connected",
+              lastHeartbeat: new Date()
+            }
+          }).catch((err) => console.warn("[DeviceMode] Async DB update notice:", err.message));
+
+          const modeDescription = (mode === "BUS") ? "Bus RFID mode." : "Smart Waste Bin mode.";
+          console.log(`[DeviceMode] Mode successfully dispatched to ESP32 at ${testIp}: ${mode}`);
+          return res.json({
+            success: true,
+            mode: mode,
+            ipAddress: testIp,
+            message: `ESP32 switched to ${modeDescription}`
+          });
+        } else {
+          lastError = new Error(`ESP32 returned status ${response.status}`);
+        }
+      } catch (netErr) {
+        clearTimeout(timeoutId);
+        lastError = netErr;
+        console.warn(`[DeviceMode] ESP32 unreachable at ${esp32Url}:`, netErr.message);
       }
-    } catch (netErr) {
-      clearTimeout(timeoutId);
-      console.warn(`[DeviceMode] ESP32 unreachable at ${esp32Url}:`, netErr.message);
-      return res.status(503).json({
-        success: false,
-        message: "ESP32 is offline. Mode was not changed."
-      });
     }
+
+    return res.status(503).json({
+      success: false,
+      message: "ESP32 is offline. Mode was not changed.",
+      testedIps: uniqueCandidates,
+      error: lastError?.message || "All connection attempts failed"
+    });
   } catch (error) {
     console.error("[DeviceMode] Unexpected error:", error);
     return res.status(500).json({
@@ -671,7 +710,7 @@ router.put("/device-mode", protect, async (req, res) => {
 });
 
 // Also support POST /api/rfid/device-mode
-router.post("/device-mode", protect, async (req, res) => {
+router.post("/device-mode", optionalProtect, async (req, res) => {
   req.url = "/device-mode";
   return router.handle(req, res);
 });
@@ -1544,7 +1583,15 @@ router.post("/device/register", async (req, res) => {
 // 2. ESP32 Periodic Heartbeat
 router.post("/device/heartbeat", async (req, res) => {
   try {
+    const callerIp = (req.headers["x-forwarded-for"] || req.socket?.remoteAddress || req.ip || "").replace(/^.*:/, "");
+    if (callerIp && callerIp !== "127.0.0.1" && callerIp !== "localhost" && !callerIp.includes("::")) {
+      global.lastSeenEsp32Ip = callerIp;
+    }
+
     const { deviceId, ipAddress, stopCode, readerActive = true } = req.body;
+    if (ipAddress) {
+      global.lastSeenEsp32Ip = ipAddress;
+    }
 
     if (!deviceId) {
       return res.status(400).json({ success: false, message: "deviceId is required" });
@@ -1558,6 +1605,7 @@ router.post("/device/heartbeat", async (req, res) => {
       device.status = "Connected";
       device.readerActive = Boolean(readerActive);
       if (ipAddress) device.ipAddress = ipAddress;
+      else if (callerIp && callerIp !== "127.0.0.1") device.ipAddress = callerIp;
       if (stopCode) device.stopCode = stopCode.toUpperCase();
       await device.save();
 

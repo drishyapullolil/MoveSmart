@@ -534,10 +534,14 @@ function buildPassengerView({
 
   // Case 1: Duty parameters require operational review (unresolved duration, overrun > grace, etc.)
   if (status === RESOLVER_STATUS.INVALID_OR_AMBIGUOUS_DUTY) {
+    const rawAssigned = (driverName && !isGenericDriverName(driverName))
+      ? String(driverName).trim()
+      : ((bus && bus.driverName && !isGenericDriverName(bus.driverName)) ? String(bus.driverName).trim() : null);
+
     return {
-      status: PASSENGER_ASSIGNMENT_STATUS.SCHEDULE_REVIEW_REQUIRED,
+      status: rawAssigned ? PASSENGER_ASSIGNMENT_STATUS.ASSIGNED : PASSENGER_ASSIGNMENT_STATUS.SCHEDULE_REVIEW_REQUIRED,
       busNumber,
-      driverName: "Not Assigned",
+      driverName: rawAssigned || "Not Assigned",
       departureTime,
       serviceDate,
       shift: shift || null,
@@ -767,12 +771,20 @@ function resolveEffectiveDepartureDriver(params = {}) {
   }
 
   // 3. Resolve Shift and Operational Service Date
-  const shift = schedule.shift && Object.values(SHIFT_TYPES).includes(schedule.shift)
+  // Prioritize canonical shift matching departure time if schedule.shift contradicts start time
+  const timeBasedShift = inferShiftFromTime(startTimeStr);
+  const shift = (schedule.shift && Object.values(SHIFT_TYPES).includes(schedule.shift) && schedule.shift === timeBasedShift)
     ? schedule.shift
-    : inferShiftFromTime(startTimeStr);
+    : timeBasedShift;
   const shiftKey = shift.toLowerCase();
   const serviceDateStr = resolveOperationalServiceDate(params.serviceDate || new Date(), startTimeStr);
   const delayBufferMinutes = Number(schedule.delay_buffer_minutes || 0);
+
+  const busDoc = bus || {};
+  const busShifts = busDoc.shifts || {};
+  const shiftRosterDriver = busShifts[shiftKey];
+  const busNumber = busDoc.busNumber || schedule.busNumber || "Bus";
+  const busId = busDoc._id || schedule.bus_id;
 
   // 4. Validate Trip Duration Against Canonical Shift Boundaries with Grace Period Policy
   const boundaryCheck = validateTripShiftBoundary({
@@ -786,14 +798,24 @@ function resolveEffectiveDepartureDriver(params = {}) {
 
   // If overrun exceeds grace period (> 15 mins) or starts before shift begins
   if (!boundaryCheck.fitsWithinShift) {
+    const rawShiftDriver = shiftRosterDriver && !isGenericDriverName(shiftRosterDriver.driverName)
+      ? shiftRosterDriver.driverName
+      : null;
+    const rawShiftDriverId = shiftRosterDriver && shiftRosterDriver.driverId
+      ? shiftRosterDriver.driverId
+      : null;
+
+    const rawDriverName = rawShiftDriver || (!isGenericDriverName(busDoc.driverName) ? busDoc.driverName : (!isGenericDriverName(schedule.driverName) ? schedule.driverName : null));
+    const rawDriverId = rawShiftDriverId || busDoc.driverId || schedule.driver_id || null;
+
     return formatOutput({
       success: false,
       status: RESOLVER_STATUS.INVALID_OR_AMBIGUOUS_DUTY,
       substatus: boundaryCheck.substatus,
-      driverId: null,
-      driverName: "Not Assigned",
-      driverPhone: "N/A",
-      driverEmail: "",
+      driverId: rawDriverId ? String(rawDriverId) : null,
+      driverName: rawDriverName ? String(rawDriverName).trim() : "Not Assigned",
+      driverPhone: busDoc.driverPhone || schedule.driverPhone || "N/A",
+      driverEmail: busDoc.driverEmail || schedule.driverEmail || "",
       shift,
       shiftKey,
       serviceDate: serviceDateStr,
@@ -881,12 +903,6 @@ function resolveEffectiveDepartureDriver(params = {}) {
     });
   }
 
-  const busDoc = bus || {};
-  const busShifts = busDoc.shifts || {};
-  const shiftRosterDriver = busShifts[shiftKey];
-  const busNumber = busDoc.busNumber || schedule.busNumber || "Bus";
-  const busId = busDoc._id || schedule.bus_id;
-
   // 7. Check if Regular Shift Driver is Configured in Roster
   const hasRosterDriver = Boolean(
     shiftRosterDriver &&
@@ -894,9 +910,44 @@ function resolveEffectiveDepartureDriver(params = {}) {
     !isGenericDriverName(shiftRosterDriver.driverName)
   );
 
-  // If no regular shift driver is assigned in the 3-shift roster:
-  // NEVER fall back to legacy Bus.driverId or Bus.driverName for new roster assignments!
+  // If no regular shift driver is assigned in the 3-shift roster,
+  // fall back gracefully to explicit Bus or Schedule driver if present
   if (!hasRosterDriver) {
+    const rawLegacyName = busDoc.driverName || schedule.driverName || "";
+    const rawLegacyId = busDoc.driverId || schedule.driver_id || null;
+    const hasLegacy = Boolean(
+      (rawLegacyId && !isGenericDriverName(rawLegacyId)) ||
+      (rawLegacyName && !isGenericDriverName(rawLegacyName))
+    );
+
+    if (hasLegacy) {
+      return formatOutput({
+        success: true,
+        status: RESOLVER_STATUS.EXPLICIT_SCHEDULE_DRIVER,
+        substatus: overrunSubstatus || RESOLVER_SUBSTATUS.HISTORICAL_EXPLICIT_PRESERVED,
+        driverId: rawLegacyId ? String(rawLegacyId) : null,
+        driverName: !isGenericDriverName(rawLegacyName) ? String(rawLegacyName).trim() : "Assigned Driver",
+        driverPhone: busDoc.driverPhone || schedule.driverPhone || "N/A",
+        driverEmail: busDoc.driverEmail || schedule.driverEmail || "",
+        driverLicense: busDoc.driverLicense || "N/A",
+        driverVerified: Boolean(busDoc.driverVerified),
+        shift,
+        shiftKey,
+        serviceDate: serviceDateStr,
+        isReplacement: false,
+        replacementDutyId: null,
+        originalDriverId: null,
+        originalDriverName: null,
+        isOnLeave: false,
+        leaveId: null,
+        durationMinutes,
+        tripStartTime: startTimeStr,
+        tripEndTime: boundaryCheck.tripEndTimeStr,
+        boundaryCheck,
+        reason: `Assigned driver ${rawLegacyName} active for Bus ${busNumber}.`,
+      });
+    }
+
     return formatOutput({
       success: true,
       status: RESOLVER_STATUS.NO_ASSIGNED_DRIVER,
